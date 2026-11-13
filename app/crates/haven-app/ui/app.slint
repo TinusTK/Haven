@@ -1,0 +1,229 @@
+import { Switch, Palette } from "std-widgets.slint";
+
+export global Theme {
+    in-out property <bool> dark: true;
+    out property <color> background: dark ? #0d0f14 : #f3f4f7;
+    out property <color> surface: dark ? #151821 : #ffffff;
+    out property <color> border: dark ? #232733 : #dfe2ea;
+    out property <color> hover: dark ? #1c202b : #eceef4;
+    out property <color> selected: dark ? #262b3a : #e1e6f5;
+    out property <color> text: dark ? #eef0f6 : #171a22;
+    out property <color> text-dim: dark ? #9aa1b3 : #5d6475;
+    out property <color> accent: dark ? #f2c66d : #b9851a;
+}
+
+component NavItem inherits Rectangle {
+    in property <string> label;
+    in property <bool> selected;
+    callback clicked();
+
+    height: 38px;
+    border-radius: 8px;
+    background: selected ? Theme.selected : touch.has-hover || focus.has-focus ? Theme.hover : transparent;
+    accessible-role: button;
+    accessible-label: label;
+    accessible-action-default => { root.clicked(); }
+
+    focus := FocusScope {
+        key-pressed(event) => {
+            if (event.text == Key.Return || event.text == " ") {
+                root.clicked();
+                return accept;
+            }
+            return reject;
+        }
+    }
+    touch := TouchArea {
+        clicked => { root.clicked(); }
+    }
+    Rectangle {
+        x: 0;
+        width: 3px;
+        height: 18px;
+        border-radius: 1.5px;
+        background: selected ? Theme.accent : transparent;
+    }
+    Text {
+        x: 16px;
+        width: parent.width - 28px;
+        text: root.label;
+        color: selected ? Theme.text : Theme.text-dim;
+        font-size: 14px;
+        font-weight: selected ? 600 : 400;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+}
+
+component EmptyPage inherits VerticalLayout {
+    in property <string> title;
+    in property <string> hint;
+
+    padding: 32px;
+    spacing: 8px;
+    alignment: start;
+
+    Text {
+        text: root.title;
+        color: Theme.text;
+        font-size: 26px;
+        font-weight: 700;
+    }
+    Text {
+        text: root.hint;
+        color: Theme.text-dim;
+        font-size: 14px;
+        wrap: word-wrap;
+    }
+}
+
+component SettingsRow inherits Rectangle {
+    in property <string> label;
+    in property <string> detail;
+
+    height: 64px;
+    border-radius: 10px;
+    background: Theme.surface;
+    border-width: 1px;
+    border-color: Theme.border;
+
+    HorizontalLayout {
+        padding-left: 16px;
+        padding-right: 16px;
+        spacing: 16px;
+        VerticalLayout {
+            alignment: center;
+            spacing: 2px;
+            Text {
+                text: root.label;
+                color: Theme.text;
+                font-size: 14px;
+                font-weight: 600;
+            }
+            Text {
+                text: root.detail;
+                color: Theme.text-dim;
+                font-size: 12px;
+                overflow: elide;
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            @children
+        }
+    }
+}
+
+export component AppWindow inherits Window {
+    in-out property <int> page: 0;
+    in-out property <bool> dark <=> Theme.dark;
+    in property <string> version;
+    in property <string> data-path;
+    in property <[string]> pages: ["Home", "Search", "Media Servers", "Live TV", "Radio", "Watchlist", "Add-ons", "Settings"];
+    private property <[string]> hints: [
+        "Shelves from your add-ons and media servers will show here.",
+        "Search across add-ons and media servers.",
+        "Connect Jellyfin, Emby or Plex to browse and play your own libraries.",
+        "Add an M3U or Xtream source to watch channels with a guide.",
+        "Radio stations will show here.",
+        "Films and shows you save to watch later.",
+        "Install add-ons by address to add catalogues and streams.",
+        ""
+    ];
+
+    callback page-selected(int);
+    callback dark-toggled(bool);
+
+    title: "Haven";
+    preferred-width: 1180px;
+    preferred-height: 720px;
+    min-width: 820px;
+    min-height: 520px;
+    background: Theme.background;
+    default-font-size: 14px;
+
+    init => {
+        Palette.color-scheme = root.dark ? ColorScheme.dark : ColorScheme.light;
+    }
+    changed dark => {
+        Palette.color-scheme = root.dark ? ColorScheme.dark : ColorScheme.light;
+    }
+
+    HorizontalLayout {
+        Rectangle {
+            width: 220px;
+            background: Theme.surface;
+
+            VerticalLayout {
+                padding: 12px;
+                spacing: 4px;
+                alignment: start;
+
+                Text {
+                    text: "Haven";
+                    color: Theme.text;
+                    font-size: 20px;
+                    font-weight: 700;
+                    height: 44px;
+                    vertical-alignment: center;
+                    x: 16px;
+                }
+                for label[index] in root.pages: NavItem {
+                    label: label;
+                    selected: root.page == index;
+                    clicked => {
+                        root.page = index;
+                        root.page-selected(index);
+                    }
+                }
+            }
+            Rectangle {
+                x: parent.width - 1px;
+                width: 1px;
+                background: Theme.border;
+            }
+        }
+
+        Rectangle {
+            horizontal-stretch: 1;
+
+            if root.page != root.pages.length - 1: EmptyPage {
+                title: root.pages[root.page];
+                hint: root.hints[root.page];
+            }
+            if root.page == root.pages.length - 1: VerticalLayout {
+                padding: 32px;
+                spacing: 12px;
+                alignment: start;
+
+                Text {
+                    text: "Settings";
+                    color: Theme.text;
+                    font-size: 26px;
+                    font-weight: 700;
+                }
+                Rectangle { height: 8px; }
+                SettingsRow {
+                    label: "Dark theme";
+                    detail: "Switch between the dark and light look.";
+                    Switch {
+                        checked: root.dark;
+                        accessible-label: "Dark theme";
+                        toggled => {
+                            root.dark = self.checked;
+                            root.dark-toggled(self.checked);
+                        }
+                    }
+                }
+                SettingsRow {
+                    label: "Data folder";
+                    detail: root.data-path;
+                }
+                SettingsRow {
+                    label: "Version";
+                    detail: root.version;
+                }
+            }
+        }
+    }
+}
