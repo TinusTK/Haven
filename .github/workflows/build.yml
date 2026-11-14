@@ -12,6 +12,9 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  # One of the libraries (Chromecast support) brings in aws-lc, which
+  # otherwise wants the NASM assembler installed on Windows.
+  AWS_LC_SYS_PREBUILT_NASM: 1
 
 jobs:
   windows:
@@ -28,12 +31,33 @@ jobs:
           workspaces: app
       - name: Test
         run: cargo test --workspace
+      # The player is built in only when an LGPL libmpv has been put in
+      # packaging/windows/libmpv (see the README there).
       - name: Build release
-        run: cargo build --release -p haven-app
+        shell: pwsh
+        run: |
+          if (Test-Path packaging/windows/libmpv/mpv.lib) {
+            Write-Host "libmpv found: building with the player"
+            cargo build --release -p haven-app --features player
+          } else {
+            Write-Host "::warning::No libmpv in packaging/windows/libmpv: building without the player"
+            cargo build --release -p haven-app
+          }
+      - name: Build installer
+        shell: pwsh
+        run: |
+          $version = (cargo metadata --no-deps --format-version 1 | ConvertFrom-Json).packages |
+            Where-Object { $_.name -eq "haven-app" } | Select-Object -ExpandProperty version
+          iscc "/DAppVersion=$version" packaging\windows\haven.iss
       - uses: actions/upload-artifact@v4
         with:
           name: haven-windows-x64
           path: app/target/release/haven.exe
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: haven-windows-x64-setup
+          path: app/target/installer/*.exe
           if-no-files-found: error
 
   linux:
@@ -47,17 +71,26 @@ jobs:
       - name: Install build packages
         run: |
           sudo apt-get update
-          sudo apt-get install -y libfontconfig1-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev
+          sudo apt-get install -y libfontconfig1-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libmpv-dev
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: app
       - name: Test
         run: cargo test --workspace
-      - name: Build release
-        run: cargo build --release -p haven-app
+      - name: Build release with the player
+        run: cargo build --release -p haven-app --features player
+      - name: Build the .deb package
+        run: |
+          cargo install cargo-deb --locked
+          cargo deb -p haven-app --features player --no-build
       - uses: actions/upload-artifact@v4
         with:
           name: haven-linux-x64
           path: app/target/release/haven
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: haven-linux-x64-deb
+          path: app/target/debian/*.deb
           if-no-files-found: error

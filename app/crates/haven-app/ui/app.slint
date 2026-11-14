@@ -82,6 +82,26 @@ export struct SourceRow {
     channels: int,
 }
 
+// A media server the user signed in to.
+export struct ServerRow {
+    id: int,
+    name: string,
+    // "Jellyfin", "Emby" or "Plex".
+    kind: string,
+    address: string,
+}
+
+// Trakt or Simkl in Settings.
+export struct TrackingRow {
+    // 0 Trakt, 1 Simkl.
+    service: int,
+    name: string,
+    state: string,
+    connected: bool,
+    // Its keys are set, so signing in can be tried.
+    can-connect: bool,
+}
+
 export struct AddonRow {
     url: string,
     name: string,
@@ -1068,6 +1088,7 @@ component SettingsRow inherits Rectangle {
         padding-right: 16px;
         spacing: 16px;
         VerticalLayout {
+            horizontal-stretch: 1;
             alignment: center;
             spacing: 2px;
             Text {
@@ -1084,6 +1105,7 @@ component SettingsRow inherits Rectangle {
             }
         }
         VerticalLayout {
+            horizontal-stretch: 0;
             alignment: center;
             @children
         }
@@ -1132,6 +1154,46 @@ export component AppWindow inherits Window {
     // Titles to carry on with, shown first on Home when there are any.
     in property <Shelf> continue-shelf;
 
+    // Chromecasts found on the network, by name.
+    in property <[string]> cast-devices;
+    // Where a stream plays: -1 this computer, else an index into cast-devices.
+    in-out property <int> cast-target: -1;
+    in property <bool> cast-finding;
+    in property <string> cast-note;
+    // A stream is playing on a Chromecast.
+    in property <bool> casting;
+    in property <string> cast-title;
+    in property <string> cast-device-name;
+    in property <string> cast-time;
+    in property <bool> cast-paused;
+    in property <string> cast-status;
+
+    in-out property <string> keys-tmdb;
+    in-out property <string> keys-trakt-id;
+    in-out property <string> keys-trakt-secret;
+    in-out property <string> keys-simkl-id;
+    in property <string> keys-status;
+    in property <[TrackingRow]> tracking;
+    in property <bool> tracking-busy;
+    in property <string> tracking-status;
+    // While a sign-in waits for approval: the code and the page.
+    in property <string> tracking-code;
+    in property <string> tracking-link;
+
+    in property <[ServerRow]> servers;
+    in property <[Shelf]> server-shelves;
+    // Which kind the sign-in form is for: 0 Jellyfin, 1 Emby, 2 Plex.
+    in-out property <int> server-kind;
+    in-out property <string> server-address;
+    in-out property <string> server-user;
+    in-out property <string> server-password;
+    in property <bool> server-busy;
+    in property <string> server-status;
+    in property <bool> server-status-is-error;
+    // While a Plex sign-in waits for approval: the code and the page.
+    in property <string> plex-code;
+    in property <string> plex-link;
+
     in property <[SourceRow]> tv-sources;
     in-out property <string> tv-address;
     in property <bool> tv-busy;
@@ -1168,6 +1230,7 @@ export component AppWindow inherits Window {
     in-out property <int> player-menu;
     private property <int> home-page: 0;
     private property <int> search-page: 1;
+    private property <int> servers-page: 2;
     private property <int> tv-page: 3;
     private property <int> radio-page: 4;
     private property <int> watchlist-page: 5;
@@ -1185,6 +1248,23 @@ export component AppWindow inherits Window {
     callback episode-selected(string);
     // Puts the open title on the watchlist, or takes it off.
     callback toggle-watchlist();
+    // Kind (0 Jellyfin, 1 Emby), address, user name, password.
+    callback server-sign-in(int, string, string, string);
+    callback plex-sign-in();
+    callback plex-cancel();
+    callback remove-server(int);
+    // Opens a web address in the user's browser.
+    callback open-link(string);
+    callback find-cast-devices();
+    // "pause" (toggles), "back", "forward" or "stop".
+    callback cast-command(string);
+    callback save-keys();
+    // 0 Trakt, 1 Simkl.
+    callback tracking-connect(int);
+    callback tracking-cancel();
+    callback tracking-disconnect(int);
+    // Copies that service's watchlist into Haven's.
+    callback tracking-import(int);
     callback add-tv-source(string);
     callback remove-tv-source(string);
     // Radio or television, the words to look for, the group ("" for all).
@@ -1428,6 +1508,40 @@ export component AppWindow inherits Window {
                                 color: Theme.accent;
                                 wrap: word-wrap;
                             }
+                            HorizontalLayout {
+                                spacing: 8px;
+                                alignment: start;
+                                Text {
+                                    text: "Play on";
+                                    color: Theme.text-dim;
+                                    font-size: 13px;
+                                    vertical-alignment: center;
+                                }
+                                Chip {
+                                    label: "This computer";
+                                    selected: root.cast-target < 0;
+                                    clicked => { root.cast-target = -1; }
+                                }
+                                for name[index] in root.cast-devices: Chip {
+                                    label: name;
+                                    selected: root.cast-target == index;
+                                    clicked => { root.cast-target = index; }
+                                }
+                                Chip {
+                                    label: root.cast-finding ? "Looking…" : "Find Chromecasts";
+                                    clicked => {
+                                        if (!root.cast-finding) {
+                                            root.find-cast-devices();
+                                        }
+                                    }
+                                }
+                            }
+                            if root.cast-note != "": Text {
+                                text: root.cast-note;
+                                color: Theme.text-dim;
+                                font-size: 12px;
+                                wrap: word-wrap;
+                            }
                             for stream[index] in root.streams: StreamItem {
                                 stream: stream;
                                 play => { root.play-stream(index); }
@@ -1499,6 +1613,120 @@ export component AppWindow inherits Window {
                 }
             }
 
+            if !root.detail-open && root.page == root.servers-page: servers-view := ScrollView {
+                content-width: self.visible-width;
+                content-height: servers-content.preferred-height;
+
+                servers-content := VerticalLayout {
+                    width: servers-view.visible-width;
+                    padding: 32px;
+                    spacing: 14px;
+                    alignment: start;
+
+                    PageTitle { text: "Media Servers"; }
+                    Text {
+                        text: "Sign in to your own Jellyfin, Emby or Plex server to browse and play its libraries here.";
+                        color: Theme.text-dim;
+                        wrap: word-wrap;
+                    }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        alignment: start;
+                        for name[index] in ["Jellyfin", "Emby", "Plex"]: Chip {
+                            label: name;
+                            selected: root.server-kind == index;
+                            clicked => {
+                                if (!root.server-busy) {
+                                    root.server-kind = index;
+                                }
+                            }
+                        }
+                    }
+                    if root.server-kind != 2: HorizontalLayout {
+                        spacing: 8px;
+                        LineEdit {
+                            horizontal-stretch: 3;
+                            text <=> root.server-address;
+                            placeholder-text: "Server address, for example 192.168.1.10:8096";
+                            enabled: !root.server-busy;
+                            accessible-label: "Server address";
+                        }
+                        LineEdit {
+                            horizontal-stretch: 2;
+                            text <=> root.server-user;
+                            placeholder-text: "User name";
+                            enabled: !root.server-busy;
+                            accessible-label: "User name";
+                        }
+                        LineEdit {
+                            horizontal-stretch: 2;
+                            text <=> root.server-password;
+                            placeholder-text: "Password";
+                            input-type: password;
+                            enabled: !root.server-busy;
+                            accessible-label: "Password";
+                            accepted => { root.server-sign-in(root.server-kind, root.server-address, root.server-user, root.server-password); }
+                        }
+                        Button {
+                            text: root.server-busy ? "Signing in…" : "Sign in";
+                            primary: true;
+                            enabled: !root.server-busy && root.server-address != "" && root.server-user != "";
+                            clicked => { root.server-sign-in(root.server-kind, root.server-address, root.server-user, root.server-password); }
+                        }
+                    }
+                    if root.server-kind == 2: HorizontalLayout {
+                        spacing: 12px;
+                        alignment: start;
+                        Button {
+                            text: root.server-busy ? "Waiting for Plex…" : "Sign in with Plex";
+                            primary: true;
+                            enabled: !root.server-busy;
+                            clicked => { root.plex-sign-in(); }
+                        }
+                        if root.server-busy: Button {
+                            text: "Cancel";
+                            clicked => { root.plex-cancel(); }
+                        }
+                        if root.plex-code != "": Text {
+                            text: "Code: " + root.plex-code;
+                            color: Theme.accent;
+                            font-size: 16px;
+                            font-weight: 700;
+                            vertical-alignment: center;
+                        }
+                        if root.plex-link != "": Button {
+                            text: "Open the Plex page again";
+                            clicked => { root.open-link(root.plex-link); }
+                        }
+                    }
+                    if root.server-status != "": Text {
+                        text: root.server-status;
+                        color: root.server-status-is-error ? (Theme.dark ? #ff8b8b : #b3261e) : Theme.text-dim;
+                        wrap: word-wrap;
+                    }
+                    for server in root.servers: HorizontalLayout {
+                        spacing: 12px;
+                        Text {
+                            horizontal-stretch: 1;
+                            text: server.name + "  ·  " + server.kind + "  ·  " + server.address;
+                            color: Theme.text;
+                            vertical-alignment: center;
+                            overflow: elide;
+                        }
+                        Button {
+                            text: "Remove";
+                            accessible-label: "Remove " + server.name;
+                            clicked => { root.remove-server(server.id); }
+                        }
+                    }
+                    Rectangle { height: 6px; }
+                    for shelf in root.server-shelves: ShelfRow {
+                        shelf: shelf;
+                        open(poster) => { root.open-title(poster); }
+                    }
+                }
+            }
+
             if !root.detail-open && root.page == root.tv-page: ChannelsPage {
                 title: "Live TV";
                 hint: "Add the address of an M3U playlist to see its channels here.";
@@ -1562,7 +1790,7 @@ export component AppWindow inherits Window {
                 play(index) => { root.play-channel(true, index); }
             }
 
-            if !root.detail-open && root.page != root.home-page && root.page != root.search-page && root.page != root.tv-page && root.page != root.radio-page && root.page != root.watchlist-page && root.page != root.addons-page && root.page != root.settings-page: EmptyPage {
+            if !root.detail-open && root.page != root.home-page && root.page != root.search-page && root.page != root.servers-page && root.page != root.tv-page && root.page != root.radio-page && root.page != root.watchlist-page && root.page != root.addons-page && root.page != root.settings-page: EmptyPage {
                 title: root.pages[root.page];
                 hint: root.hints[root.page];
             }
@@ -1666,32 +1894,229 @@ export component AppWindow inherits Window {
                 }
             }
 
-            if !root.detail-open && root.page == root.settings-page: VerticalLayout {
-                padding: 32px;
-                spacing: 12px;
-                alignment: start;
+            if !root.detail-open && root.page == root.settings-page: settings-view := ScrollView {
+                content-width: self.visible-width;
+                content-height: settings-content.preferred-height;
 
-                PageTitle { text: "Settings"; }
-                Rectangle { height: 8px; }
-                SettingsRow {
-                    label: "Dark theme";
-                    detail: "Switch between the dark and light look.";
-                    Switch {
-                        checked: root.dark;
-                        accessible-label: "Dark theme";
-                        toggled => {
-                            root.dark = self.checked;
-                            root.dark-toggled(self.checked);
+                settings-content := VerticalLayout {
+                    width: settings-view.visible-width;
+                    padding: 32px;
+                    spacing: 12px;
+                    alignment: start;
+
+                    PageTitle { text: "Settings"; }
+                    Rectangle { height: 8px; }
+                    SettingsRow {
+                        label: "Dark theme";
+                        detail: "Switch between the dark and light look.";
+                        Switch {
+                            checked: root.dark;
+                            accessible-label: "Dark theme";
+                            toggled => {
+                                root.dark = self.checked;
+                                root.dark-toggled(self.checked);
+                            }
                         }
                     }
+
+                    Rectangle { height: 8px; }
+                    SectionTitle { text: "Tracking"; }
+                    for row in root.tracking: SettingsRow {
+                        label: row.name;
+                        detail: row.state;
+                        HorizontalLayout {
+                            spacing: 8px;
+                            if row.connected: Button {
+                                text: "Import watchlist";
+                                enabled: !root.tracking-busy;
+                                clicked => { root.tracking-import(row.service); }
+                            }
+                            if row.connected: Button {
+                                text: "Disconnect";
+                                enabled: !root.tracking-busy;
+                                clicked => { root.tracking-disconnect(row.service); }
+                            }
+                            if !row.connected: Button {
+                                text: "Connect";
+                                primary: true;
+                                enabled: row.can-connect && !root.tracking-busy;
+                                clicked => { root.tracking-connect(row.service); }
+                            }
+                        }
+                    }
+                    if root.tracking-busy: HorizontalLayout {
+                        spacing: 12px;
+                        alignment: start;
+                        if root.tracking-code != "": Text {
+                            text: "Code: " + root.tracking-code;
+                            color: Theme.accent;
+                            font-size: 16px;
+                            font-weight: 700;
+                            vertical-alignment: center;
+                        }
+                        if root.tracking-link != "": Button {
+                            text: "Open the page again";
+                            clicked => { root.open-link(root.tracking-link); }
+                        }
+                        Button {
+                            text: "Cancel";
+                            clicked => { root.tracking-cancel(); }
+                        }
+                    }
+                    if root.tracking-status != "": Text {
+                        text: root.tracking-status;
+                        color: Theme.text-dim;
+                        wrap: word-wrap;
+                    }
+
+                    Rectangle { height: 8px; }
+                    SectionTitle { text: "Keys"; }
+                    Text {
+                        text: "Your own keys for outside services. A TMDB key adds details and pictures to films and series. Trakt and Simkl keys let you connect those accounts under Tracking.";
+                        color: Theme.text-dim;
+                        wrap: word-wrap;
+                    }
+                    GridLayout {
+                        spacing: 8px;
+                        Row {
+                            Text {
+                                text: "TMDB API key";
+                                color: Theme.text;
+                                vertical-alignment: center;
+                            }
+                            LineEdit {
+                                text <=> root.keys-tmdb;
+                                input-type: password;
+                                accessible-label: "TMDB API key";
+                            }
+                        }
+                        Row {
+                            Text {
+                                text: "Trakt client ID";
+                                color: Theme.text;
+                                vertical-alignment: center;
+                            }
+                            LineEdit {
+                                text <=> root.keys-trakt-id;
+                                accessible-label: "Trakt client ID";
+                            }
+                        }
+                        Row {
+                            Text {
+                                text: "Trakt client secret";
+                                color: Theme.text;
+                                vertical-alignment: center;
+                            }
+                            LineEdit {
+                                text <=> root.keys-trakt-secret;
+                                input-type: password;
+                                accessible-label: "Trakt client secret";
+                            }
+                        }
+                        Row {
+                            Text {
+                                text: "Simkl client ID";
+                                color: Theme.text;
+                                vertical-alignment: center;
+                            }
+                            LineEdit {
+                                text <=> root.keys-simkl-id;
+                                accessible-label: "Simkl client ID";
+                            }
+                        }
+                    }
+                    HorizontalLayout {
+                        spacing: 12px;
+                        alignment: start;
+                        Button {
+                            text: "Save keys";
+                            primary: true;
+                            clicked => { root.save-keys(); }
+                        }
+                        Text {
+                            text: root.keys-status;
+                            color: Theme.text-dim;
+                            vertical-alignment: center;
+                        }
+                    }
+
+                    Rectangle { height: 8px; }
+                    SectionTitle { text: "About"; }
+                    SettingsRow {
+                        label: "Data folder";
+                        detail: root.data-path;
+                    }
+                    SettingsRow {
+                        label: "Version";
+                        detail: root.version;
+                    }
+                    Text {
+                        text: "Haven © 2026 TinusTK. All rights reserved.\nMade with Slint. Video playback by mpv (libmpv, LGPL).\nThis product uses the TMDB API but is not endorsed or certified by TMDB.";
+                        color: Theme.text-dim;
+                        font-size: 12px;
+                        wrap: word-wrap;
+                    }
                 }
-                SettingsRow {
-                    label: "Data folder";
-                    detail: root.data-path;
+            }
+        }
+    }
+
+    // What is playing on a Chromecast, along the bottom of every page.
+    if root.casting && !root.player-open: Rectangle {
+        x: 220px;
+        y: parent.height - self.height;
+        width: parent.width - 220px;
+        height: 64px;
+        background: Theme.surface;
+        Rectangle {
+            y: 0;
+            height: 1px;
+            background: Theme.border;
+        }
+        TouchArea { }
+        HorizontalLayout {
+            padding-left: 24px;
+            padding-right: 24px;
+            spacing: 10px;
+            VerticalLayout {
+                horizontal-stretch: 1;
+                alignment: center;
+                spacing: 2px;
+                Text {
+                    text: root.cast-title;
+                    color: Theme.text;
+                    font-weight: 600;
+                    overflow: elide;
                 }
-                SettingsRow {
-                    label: "Version";
-                    detail: root.version;
+                Text {
+                    text: root.cast-status != "" ? root.cast-status : "On " + root.cast-device-name + (root.cast-time != "" ? "  ·  " + root.cast-time : "");
+                    color: Theme.text-dim;
+                    font-size: 12px;
+                    overflow: elide;
+                }
+            }
+            VerticalLayout {
+                alignment: center;
+                HorizontalLayout {
+                    spacing: 8px;
+                    Button {
+                        text: "−10 s";
+                        accessible-label: "Back 10 seconds";
+                        clicked => { root.cast-command("back"); }
+                    }
+                    Button {
+                        text: root.cast-paused ? "Play" : "Pause";
+                        clicked => { root.cast-command("pause"); }
+                    }
+                    Button {
+                        text: "+30 s";
+                        accessible-label: "Forward 30 seconds";
+                        clicked => { root.cast-command("forward"); }
+                    }
+                    Button {
+                        text: "Stop";
+                        clicked => { root.cast-command("stop"); }
+                    }
                 }
             }
         }

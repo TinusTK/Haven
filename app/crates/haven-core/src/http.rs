@@ -59,6 +59,36 @@ pub async fn get_bytes(
     Ok(body)
 }
 
+/// Sends a request with optional JSON body and reads the answer, giving
+/// up once it passes `limit` bytes. Returns the status code with the body
+/// whatever the status is, so callers can read an error's details.
+pub async fn send(
+    client: &reqwest::Client,
+    url: &str,
+    headers: &[(&str, String)],
+    body: Option<String>,
+    limit: usize,
+) -> Result<(u16, Vec<u8>), HttpError> {
+    let url = web_url(url)?;
+    let mut request = match body {
+        Some(body) => client.post(url).header("Content-Type", "application/json").body(body),
+        None => client.get(url),
+    };
+    for (name, value) in headers {
+        request = request.header(*name, value);
+    }
+    let mut response = request.send().await?;
+    let status = response.status().as_u16();
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response.chunk().await? {
+        if bytes.len() + chunk.len() > limit {
+            return Err(HttpError::TooLarge { limit });
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    Ok((status, bytes))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

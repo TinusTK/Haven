@@ -1,0 +1,11 @@
+[package]
+name = "haven-metadata"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+haven-core.workspace = true
+reqwest.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true

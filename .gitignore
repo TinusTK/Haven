@@ -10,3 +10,8 @@ CLAUDE.md
 
 # Rust build output
 /app/target/
+
+# libmpv for the Windows build is supplied, not kept in git
+/app/packaging/windows/libmpv/*.dll
+/app/packaging/windows/libmpv/*.lib
+/app/packaging/windows/libmpv/*.def

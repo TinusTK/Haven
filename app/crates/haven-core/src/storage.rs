@@ -46,6 +46,15 @@ const MIGRATIONS: &[&str] = &[
         playlist TEXT NOT NULL,
         position INTEGER NOT NULL
     ) STRICT;",
+    "CREATE TABLE servers (
+        id      INTEGER PRIMARY KEY AUTOINCREMENT,
+        kind    TEXT NOT NULL,
+        name    TEXT NOT NULL,
+        address TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        token   TEXT NOT NULL,
+        UNIQUE (kind, address, user_id)
+    ) STRICT;",
 ];
 
 /// An installed add-on as kept in the database: where it lives and the
@@ -79,6 +88,33 @@ pub struct Progress {
     pub finished: bool,
     /// When this was saved, in milliseconds since 1970.
     pub updated_at: i64,
+}
+
+/// A media server the user signed in to, as kept in the database.
+#[derive(Clone, PartialEq, Eq)]
+pub struct StoredServer {
+    /// Its number here; 0 before it is saved.
+    pub id: i64,
+    /// "jellyfin", "emby" or "plex".
+    pub kind: String,
+    pub name: String,
+    pub address: String,
+    pub user_id: String,
+    /// What the server gave in exchange for signing in. The password is
+    /// never kept.
+    pub token: String,
+}
+
+/// Never print the token.
+impl std::fmt::Debug for StoredServer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StoredServer")
+            .field("id", &self.id)
+            .field("kind", &self.kind)
+            .field("name", &self.name)
+            .field("address", &self.address)
+            .finish_non_exhaustive()
+    }
 }
 
 /// A source of television channels and radio stations: a playlist's
@@ -272,6 +308,43 @@ impl Store {
         ))?;
         let rows = query.query_map([limit], progress_from)?;
         Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// The media servers, in the order they were added.
+    pub fn servers(&self) -> Result<Vec<StoredServer>> {
+        let mut query = self
+            .conn
+            .prepare("SELECT id, kind, name, address, user_id, token FROM servers ORDER BY id")?;
+        let rows = query.query_map([], |row| {
+            Ok(StoredServer {
+                id: row.get(0)?,
+                kind: row.get(1)?,
+                name: row.get(2)?,
+                address: row.get(3)?,
+                user_id: row.get(4)?,
+                token: row.get(5)?,
+            })
+        })?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// Adds a server, or refreshes the name and token of one already
+    /// there (same kind, address and user). Returns its number.
+    pub fn save_server(&self, server: &StoredServer) -> Result<i64> {
+        Ok(self.conn.query_row(
+            "INSERT INTO servers (kind, name, address, user_id, token)
+             VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(kind, address, user_id) DO UPDATE SET
+                name = excluded.name, token = excluded.token
+             RETURNING id",
+            (&server.kind, &server.name, &server.address, &server.user_id, &server.token),
+            |row| row.get(0),
+        )?)
+    }
+
+    pub fn remove_server(&self, id: i64) -> Result<()> {
+        self.conn.execute("DELETE FROM servers WHERE id = ?1", [id])?;
+        Ok(())
     }
 
     /// Television and radio sources, in the order they were added.
@@ -470,6 +543,29 @@ mod tests {
         let list: Vec<String> =
             store.continue_watching(10).unwrap().into_iter().map(|p| p.video_id).collect();
         assert_eq!(list, ["a:1:2"]);
+    }
+
+    #[test]
+    fn servers_get_numbers_and_signing_in_again_keeps_the_number() {
+        let store = Store::in_memory().unwrap();
+        let server = |address: &str, token: &str| StoredServer {
+            id: 0,
+            kind: "jellyfin".into(),
+            name: "Home".into(),
+            address: address.into(),
+            user_id: "u".into(),
+            token: token.into(),
+        };
+        let first = store.save_server(&server("http://a", "one")).unwrap();
+        let second = store.save_server(&server("http://b", "two")).unwrap();
+        assert_ne!(first, second);
+        assert_eq!(store.save_server(&server("http://a", "three")).unwrap(), first);
+        let servers = store.servers().unwrap();
+        assert_eq!(servers.len(), 2);
+        assert_eq!(servers[0].token, "three");
+        assert!(!format!("{:?}", servers[0]).contains("three"));
+        store.remove_server(first).unwrap();
+        assert_eq!(store.servers().unwrap()[0].id, second);
     }
 
     #[test]

@@ -5,8 +5,12 @@
 use std::{
     cell::{Cell, RefCell},
     rc::Rc,
-    sync::Arc,
+    sync::{Arc, atomic::AtomicU64},
 };
+
+mod cast;
+mod servers;
+mod tracking;
 
 use haven_addons::{
     Catalog, Client, Manifest, MetaDetail, MetaPreview, Stream, StreamKind, Video, manifest_url,
@@ -59,6 +63,8 @@ struct Installed {
 enum Board {
     Home,
     Search,
+    /// The Media Servers page.
+    Servers,
 }
 
 /// One board's shelves and what is needed to fill them in later.
@@ -76,8 +82,28 @@ struct ShelfSet {
 struct ShelfPlan {
     title: String,
     source: String,
-    url: String,
-    catalog: Catalog,
+    from: ShelfFrom,
+}
+
+/// Where a shelf's titles come from.
+enum ShelfFrom {
+    /// A catalogue of an add-on (its manifest address).
+    Addon { url: String, catalog: Catalog },
+    /// A library on a media server: its newest titles, or all by name.
+    Server { server: haven_servers::Server, library: String, latest: bool },
+    /// A media server's answer to the search words.
+    ServerSearch { server: haven_servers::Server },
+}
+
+/// What the player reports when it closes.
+#[cfg_attr(not(feature = "player"), allow(dead_code))]
+pub struct Played {
+    pub kind: String,
+    pub title_id: String,
+    pub video_id: String,
+    pub position: f64,
+    pub duration: f64,
+    pub finished: bool,
 }
 
 /// The title whose page is open.
@@ -146,6 +172,28 @@ pub struct Library {
     continue_generation: Cell<u64>,
     watchlist: Rc<VecModel<Poster>>,
     watchlist_generation: Cell<u64>,
+
+    servers: RefCell<Vec<haven_servers::Server>>,
+    server_client: haven_servers::Client,
+    server_shelves: ShelfSet,
+    server_generation: Cell<u64>,
+    /// Goes up when a Plex sign-in starts or is cancelled.
+    plex_attempt: Arc<AtomicU64>,
+
+    /// Keys from the secrets file, under the ones typed into Settings.
+    secrets_file: haven_core::secrets::Secrets,
+    /// The keys in use right now.
+    keys: RefCell<haven_core::secrets::Secrets>,
+    /// Trakt and Simkl sign-ins.
+    accounts: RefCell<Vec<haven_tracking::Account>>,
+    /// Goes up when a tracking sign-in starts or is cancelled.
+    tracking_attempt: Arc<AtomicU64>,
+
+    /// The Chromecasts found by the last search.
+    cast_devices: RefCell<Vec<haven_cast::Device>>,
+    cast_session: RefCell<Option<haven_cast::Session>>,
+    /// Goes up with each new casting session.
+    cast_generation: Cell<u64>,
 }
 
 impl Library {
@@ -154,8 +202,10 @@ impl Library {
         ui: &AppWindow,
         store: Rc<Store>,
         tasks: Handle,
+        secrets_file: haven_core::secrets::Secrets,
     ) -> Result<Rc<Self>, http::HttpError> {
         let http = http::client()?;
+        let server_client = haven_servers::Client::new(http.clone(), device_id(&store));
         let library = Rc::new(Self {
             ui: ui.as_weak(),
             store,
@@ -180,6 +230,18 @@ impl Library {
             continue_generation: Cell::new(0),
             watchlist: Rc::default(),
             watchlist_generation: Cell::new(0),
+            servers: RefCell::default(),
+            server_client,
+            server_shelves: ShelfSet::default(),
+            server_generation: Cell::new(0),
+            plex_attempt: Arc::default(),
+            secrets_file,
+            keys: RefCell::default(),
+            accounts: RefCell::default(),
+            tracking_attempt: Arc::default(),
+            cast_devices: RefCell::default(),
+            cast_session: RefCell::default(),
+            cast_generation: Cell::new(0),
         });
         CURRENT.with(|current| *current.borrow_mut() = Some(library.clone()));
 
@@ -224,6 +286,9 @@ impl Library {
         library.reload_home();
         library.reload_continue();
         library.reload_watchlist();
+        library.start_servers(ui);
+        library.start_tracking(ui);
+        library.start_casting(ui);
         Ok(library)
     }
 
@@ -236,7 +301,13 @@ impl Library {
 
     /// Call when the player has closed: what was watched may have changed.
     #[cfg_attr(not(feature = "player"), allow(dead_code))]
-    pub fn player_closed(&self) {
+    pub fn player_closed(&self, played: Option<Played>) {
+        if let Some(played) = played {
+            self.report_played(&played);
+            if played.finished {
+                self.track_watched(&played.kind, &played.title_id, &played.video_id);
+            }
+        }
         self.reload_continue();
         self.show_resume_note();
     }
@@ -245,6 +316,7 @@ impl Library {
         match board {
             Board::Home => &self.home,
             Board::Search => &self.search,
+            Board::Servers => &self.server_shelves,
         }
     }
 
@@ -362,8 +434,7 @@ impl Library {
                     ShelfPlan {
                         title: catalog.title(),
                         source: addon.manifest.name.clone(),
-                        url: addon.url.clone(),
-                        catalog: catalog.clone(),
+                        from: ShelfFrom::Addon { url: addon.url.clone(), catalog: catalog.clone() },
                     }
                 })
             })
@@ -393,14 +464,19 @@ impl Library {
                     ShelfPlan {
                         title: catalog.results_title(),
                         source: addon.manifest.name.clone(),
-                        url: addon.url.clone(),
-                        catalog: catalog.clone(),
+                        from: ShelfFrom::Addon { url: addon.url.clone(), catalog: catalog.clone() },
                     }
                 })
             })
             .collect();
-        let note = if self.installed.borrow().is_empty() {
-            "Install an add-on first: search looks through your add-ons."
+        let mut plans = plans;
+        plans.extend(self.servers.borrow().iter().map(|server| ShelfPlan {
+            title: format!("Results on {}", server.name),
+            source: server.kind.label().to_owned(),
+            from: ShelfFrom::ServerSearch { server: server.clone() },
+        }));
+        let note = if self.installed.borrow().is_empty() && plans.is_empty() {
+            "Install an add-on or add a media server first: search looks through those."
         } else if plans.is_empty() {
             "None of your add-ons can be searched."
         } else {
@@ -431,12 +507,25 @@ impl Library {
             });
             posters.push(items);
 
-            let (addons, search) = (self.addons.clone(), search.clone());
+            let (addons, servers, search) =
+                (self.addons.clone(), self.server_client.clone(), search.clone());
             self.tasks.spawn(async move {
-                let metas = addons
-                    .catalog(&plan.url, &plan.catalog, search.as_deref())
-                    .await
-                    .map_err(|err| err.to_string());
+                let metas = match &plan.from {
+                    ShelfFrom::Addon { url, catalog } => addons
+                        .catalog(url, catalog, search.as_deref())
+                        .await
+                        .map_err(|err| err.to_string()),
+                    ShelfFrom::Server { server, library, latest: true } => {
+                        servers.latest(server, library).await.map_err(|err| err.to_string())
+                    }
+                    ShelfFrom::Server { server, library, latest: false } => {
+                        servers.all(server, library).await.map_err(|err| err.to_string())
+                    }
+                    ShelfFrom::ServerSearch { server } => servers
+                        .search(server, search.as_deref().unwrap_or_default())
+                        .await
+                        .map_err(|err| err.to_string()),
+                };
                 on_ui(move |library| library.shelf_loaded(board, generation, shelf, metas));
             });
         }
@@ -464,7 +553,10 @@ impl Library {
         match metas {
             Err(err) => row.error = format!("Could not load this: {err}.").into(),
             Ok(metas) => {
-                let metas: Vec<MetaPreview> = metas.into_iter().take(SHELF_LENGTH).collect();
+                // A media server's library is shown whole (as far as it was
+                // fetched); an add-on's catalogue page is cut to a shelf.
+                let length = if board == Board::Servers { usize::MAX } else { SHELF_LENGTH };
+                let metas: Vec<MetaPreview> = metas.into_iter().take(length).collect();
                 items.set_vec(
                     metas
                         .iter()
@@ -663,6 +755,11 @@ impl Library {
             Ok(()) => {
                 self.update_detail(|detail| detail.saved = !detail.saved);
                 self.reload_watchlist();
+                if let Some((kind, id)) =
+                    self.open.borrow().as_ref().map(|open| (open.kind.clone(), open.id.clone()))
+                {
+                    self.track_watchlist(&kind, &id, !detail.saved);
+                }
             }
             Err(err) => eprintln!("haven: could not change the watchlist: {err}"),
         }
@@ -724,6 +821,17 @@ impl Library {
             .collect();
         *self.open.borrow_mut() =
             Some(OpenTitle { kind: kind.clone(), id: id.clone(), meta: None, wanted });
+        if let Some((server, item)) = self.server_item(&id) {
+            let client = self.server_client.clone();
+            self.tasks.spawn(async move {
+                let found = client
+                    .meta(&server, &item)
+                    .await
+                    .map_err(|err| format!("Could not load the details: {err}."));
+                on_ui(move |library| library.detail_loaded(generation, found));
+            });
+            return;
+        }
         if sources.is_empty() {
             return self.detail_loaded(
                 generation,
@@ -799,6 +907,8 @@ impl Library {
                 });
             }
         }
+
+        self.enrich(generation, &meta);
 
         let seasons = meta.seasons();
         let has_videos = !meta.videos.is_empty();
@@ -953,6 +1063,9 @@ impl Library {
             poster,
             remember: true,
         };
+        if let Some(device) = self.cast_target() {
+            return self.cast_to(device, request);
+        }
         if let Some(play) = self.player.borrow().as_ref() {
             play(request);
         }
@@ -967,6 +1080,17 @@ impl Library {
         *self.listed.borrow_mut() =
             Some(Listed { video_id: video_id.to_owned(), detail: String::new() });
         self.show_resume_note();
+
+        if let Some((server, item)) = self.server_item(video_id) {
+            self.streams_pending.set(1);
+            self.set_streams_state(Some(heading), true, "");
+            let client = self.server_client.clone();
+            self.tasks.spawn(async move {
+                let streams = client.streams(&server, &item).await.map_err(|err| err.to_string());
+                on_ui(move |library| library.streams_loaded(generation, &server.name, streams));
+            });
+            return;
+        }
 
         let sources: Vec<(String, String)> = self
             .installed
@@ -1000,7 +1124,9 @@ impl Library {
         }
         match streams {
             Ok(streams) => {
-                let can_play = self.player.borrow().is_some();
+                // Playable here with the player, or on a Chromecast.
+                let can_play =
+                    self.player.borrow().is_some() || !self.cast_devices.borrow().is_empty();
                 for stream in &streams {
                     if let Some(mut row) = stream_row(source, stream) {
                         // Only plain web addresses reach the player.
@@ -1087,4 +1213,22 @@ async fn download_image(http: &reqwest::Client, url: &str, size: (u32, u32)) -> 
     })
     .await
     .ok()?
+}
+
+/// The id this copy of Haven gives media servers, made once and kept.
+fn device_id(store: &Store) -> String {
+    const KEY: &str = "device_id";
+    if let Ok(Some(id)) = store.get::<String>(KEY) {
+        if !id.is_empty() {
+            return id;
+        }
+    }
+    // Two fresh hasher seeds: random enough to tell copies of Haven apart.
+    use std::hash::{BuildHasher, Hasher};
+    let part = || std::collections::hash_map::RandomState::new().build_hasher().finish();
+    let id = format!("haven-{:016x}{:016x}", part(), part());
+    if let Err(err) = store.put(KEY, &id) {
+        eprintln!("haven: could not save the device id: {err}");
+    }
+    id
 }

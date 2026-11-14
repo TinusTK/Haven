@@ -22,6 +22,66 @@ pub struct Settings {
     pub last_page: u32,
 }
 
+const KEYS: &str = "keys";
+
+/// The keys the user typed into Settings for the outside services Haven
+/// can use. Empty text means "not given".
+#[derive(Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Keys {
+    pub tmdb: String,
+    pub trakt_id: String,
+    pub trakt_secret: String,
+    pub simkl_id: String,
+}
+
+/// Never print the values.
+impl std::fmt::Debug for Keys {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Keys { .. }")
+    }
+}
+
+impl Keys {
+    pub fn load(store: &Store) -> Result<Self> {
+        Ok(store.get(KEYS)?.unwrap_or_default())
+    }
+
+    pub fn save(&self, store: &Store) -> Result<()> {
+        store.put(KEYS, self)
+    }
+
+    /// The keys to use: what was typed into Settings first, then the
+    /// secrets file, then keys built into this copy of Haven.
+    pub fn resolved(&self, file: &crate::secrets::Secrets) -> crate::secrets::Secrets {
+        let pick = |typed: &str, filed: &Option<String>, built_in: Option<&str>| {
+            Some(typed.trim())
+                .filter(|typed| !typed.is_empty())
+                .map(str::to_owned)
+                .or_else(|| filed.clone())
+                .or_else(|| built_in.filter(|key| !key.is_empty()).map(str::to_owned))
+        };
+        crate::secrets::Secrets {
+            tmdb_api_key: pick(&self.tmdb, &file.tmdb_api_key, option_env!("HAVEN_TMDB_API_KEY")),
+            trakt_client_id: pick(
+                &self.trakt_id,
+                &file.trakt_client_id,
+                option_env!("HAVEN_TRAKT_CLIENT_ID"),
+            ),
+            trakt_client_secret: pick(
+                &self.trakt_secret,
+                &file.trakt_client_secret,
+                option_env!("HAVEN_TRAKT_CLIENT_SECRET"),
+            ),
+            simkl_client_id: pick(
+                &self.simkl_id,
+                &file.simkl_client_id,
+                option_env!("HAVEN_SIMKL_CLIENT_ID"),
+            ),
+        }
+    }
+}
+
 impl Settings {
     pub fn load(store: &Store) -> Result<Self> {
         Ok(store.get(KEY)?.unwrap_or_default())
@@ -51,6 +111,19 @@ mod tests {
         };
         settings.save(&store).unwrap();
         assert_eq!(Settings::load(&store).unwrap(), settings);
+    }
+
+    #[test]
+    fn typed_keys_win_over_the_secrets_file() {
+        let store = Store::in_memory().unwrap();
+        assert_eq!(Keys::load(&store).unwrap(), Keys::default());
+        let keys = Keys { tmdb: " typed ".into(), ..Keys::default() };
+        keys.save(&store).unwrap();
+        let file = crate::secrets::Secrets::parse("TMDB_API_KEY=filed\nSIMKL_CLIENT_ID=simkl");
+        let resolved = Keys::load(&store).unwrap().resolved(&file);
+        assert_eq!(resolved.tmdb_api_key.as_deref(), Some("typed"));
+        assert_eq!(resolved.simkl_client_id.as_deref(), Some("simkl"));
+        assert!(!format!("{keys:?}").contains("typed"));
     }
 
     #[test]

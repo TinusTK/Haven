@@ -4,6 +4,10 @@ version.workspace = true
 edition.workspace = true
 publish.workspace = true
 
+description = "Haven: films, series, live TV and your own media servers in one place"
+license-file = "../../../LICENSE"
+authors = ["TinusTK"]
+
 [[bin]]
 name = "haven"
 path = "src/main.rs"
@@ -16,9 +20,13 @@ player = ["haven-player/mpv"]
 
 [dependencies]
 haven-addons.workspace = true
+haven-cast.workspace = true
 haven-core.workspace = true
 haven-livetv.workspace = true
+haven-metadata.workspace = true
 haven-player.workspace = true
+haven-servers.workspace = true
+haven-tracking.workspace = true
 image.workspace = true
 png.workspace = true
 reqwest.workspace = true
@@ -30,3 +38,28 @@ slint-build.workspace = true
 
 [target.'cfg(windows)'.build-dependencies]
 winresource = "0.1"
+
+# `cargo deb -p haven-app --features player` makes target/debian/haven_*.deb.
+# libmpv comes from the distribution (not shipped inside the package).
+[package.metadata.deb]
+name = "haven"
+maintainer = "TinusTK"
+copyright = "2026, TinusTK. All rights reserved."
+extended-description = """\
+A media hub: add-on catalogues, your own Jellyfin, Emby and Plex servers, \
+live TV and radio from M3U playlists, a watchlist, Trakt and Simkl tracking \
+and Chromecast casting."""
+section = "video"
+priority = "optional"
+depends = "$auto"
+assets = [
+    ["target/release/haven", "usr/bin/haven", "755"],
+    ["../../packaging/linux/haven.desktop", "usr/share/applications/haven.desktop", "644"],
+    ["../../assets/icon/haven-48.png", "usr/share/icons/hicolor/48x48/apps/haven.png", "644"],
+    ["../../assets/icon/haven-64.png", "usr/share/icons/hicolor/64x64/apps/haven.png", "644"],
+    ["../../assets/icon/haven-128.png", "usr/share/icons/hicolor/128x128/apps/haven.png", "644"],
+    ["../../assets/icon/haven-256.png", "usr/share/icons/hicolor/256x256/apps/haven.png", "644"],
+    ["../../assets/icon/haven-512.png", "usr/share/icons/hicolor/512x512/apps/haven.png", "644"],
+    ["../../../LICENSE", "usr/share/doc/haven/LICENSE", "644"],
+    ["../../../THIRD-PARTY.md", "usr/share/doc/haven/THIRD-PARTY.md", "644"],
+]

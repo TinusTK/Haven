@@ -16,7 +16,10 @@ use haven_player::{
 };
 use slint::{ComponentHandle, Image, ModelRc, Timer, TimerMode, VecModel};
 
-use crate::{AppWindow, TrackRow, library::PlayRequest};
+use crate::{
+    AppWindow, TrackRow,
+    library::{PlayRequest, Played},
+};
 
 /// How often the place is saved while playing.
 const SAVE_EVERY: Duration = Duration::from_secs(5);
@@ -55,7 +58,7 @@ pub struct Player {
     tracks_shown: RefCell<String>,
     /// Why the player cannot work on this machine, once known.
     unusable: RefCell<Option<String>>,
-    closed: RefCell<Option<Box<dyn Fn()>>>,
+    closed: RefCell<Option<Box<dyn Fn(Option<Played>)>>>,
     ticker: Timer,
 }
 
@@ -148,8 +151,9 @@ impl Player {
         Ok(player)
     }
 
-    /// `closed` runs each time the player page closes.
-    pub fn on_closed(&self, closed: impl Fn() + 'static) {
+    /// `closed` runs each time the player page closes, with how far the
+    /// film or episode got (nothing for a channel or a failed stream).
+    pub fn on_closed(&self, closed: impl Fn(Option<Played>) + 'static) {
         *self.closed.borrow_mut() = Some(Box::new(closed));
     }
 
@@ -375,7 +379,21 @@ impl Player {
             return;
         }
         self.save();
-        *self.playing.borrow_mut() = None;
+        let played = self.playing.borrow_mut().take().and_then(|playing| {
+            let finished = match resume::judge(playing.position, playing.duration)? {
+                Watched::Finished => true,
+                Watched::Partway => false,
+                Watched::Started => return None,
+            };
+            (playing.request.remember && !playing.failed).then(|| Played {
+                kind: playing.request.kind,
+                title_id: playing.request.title_id,
+                video_id: playing.request.video_id,
+                position: playing.position,
+                duration: playing.duration,
+                finished,
+            })
+        });
         self.video.borrow_mut().stop();
         if let Some(ui) = self.ui.upgrade() {
             if ui.window().is_fullscreen() {
@@ -386,7 +404,7 @@ impl Player {
             ui.set_player_frame(Image::default());
         }
         if let Some(closed) = self.closed.borrow().as_ref() {
-            closed();
+            closed(played);
         }
     }
 

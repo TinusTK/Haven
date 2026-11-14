@@ -65,7 +65,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         .thread_name("haven-net")
         .enable_all()
         .build()?;
-    let library = library::Library::start(&ui, store.clone(), tasks.handle().clone())?;
+    // Optional keys file beside the database; Settings has fields too.
+    let secrets = haven_core::secrets::Secrets::from_file(&paths.data_dir().join("secrets.env"))?;
+    let library = library::Library::start(&ui, store.clone(), tasks.handle().clone(), secrets)?;
 
     let live = livetv::LiveTv::start(&ui, store.clone(), tasks.handle().clone())?;
 
@@ -78,9 +80,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         let playing = player.clone();
         live.set_player(move |request| playing.play(request));
         let library = std::rc::Rc::downgrade(&library);
-        player.on_closed(move || {
+        player.on_closed(move |played| {
             if let Some(library) = library.upgrade() {
-                library.player_closed();
+                library.player_closed(played);
             }
         });
     }

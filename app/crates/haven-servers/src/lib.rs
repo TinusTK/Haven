@@ -1,0 +1,352 @@
+//! Media servers: the user's own Jellyfin, Emby and Plex servers, shown
+//! with the same shapes add-ons use (posters, details, streams) so the
+//! rest of Haven does not care where a title comes from.
+//!
+//! A title on a server has an id of the form `srv:<server>:<item>`, where
+//! `<server>` is the server's number in Haven's database.
+
+mod emby;
+mod plex;
+
+use haven_addons::{MetaDetail, MetaPreview, Stream};
+
+pub use plex::PlexPin;
+
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    #[error("\"{0}\" is not a server address")]
+    InvalidAddress(String),
+    #[error("could not reach the server: {0}")]
+    Request(#[from] reqwest::Error),
+    #[error("the user name or password was not accepted")]
+    SignInRefused,
+    #[error("the server answered with error {0}")]
+    Status(u16),
+    #[error("the server's answer could not be read")]
+    BadAnswer,
+    #[error("the server's answer was too large")]
+    TooLarge,
+    #[error("none of this Plex server's addresses could be reached")]
+    Unreachable,
+}
+
+pub type Result<T> = std::result::Result<T, Error>;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Kind {
+    Jellyfin,
+    Emby,
+    Plex,
+}
+
+impl Kind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Kind::Jellyfin => "jellyfin",
+            Kind::Emby => "emby",
+            Kind::Plex => "plex",
+        }
+    }
+
+    pub fn parse(text: &str) -> Option<Self> {
+        match text {
+            "jellyfin" => Some(Kind::Jellyfin),
+            "emby" => Some(Kind::Emby),
+            "plex" => Some(Kind::Plex),
+            _ => None,
+        }
+    }
+
+    /// The name people know it by.
+    pub fn label(self) -> &'static str {
+        match self {
+            Kind::Jellyfin => "Jellyfin",
+            Kind::Emby => "Emby",
+            Kind::Plex => "Plex",
+        }
+    }
+}
+
+/// A server the user signed in to.
+#[derive(Clone, PartialEq, Eq)]
+pub struct Server {
+    /// Its number in Haven's database; 0 until it is saved.
+    pub id: i64,
+    pub kind: Kind,
+    pub name: String,
+    /// Where it answers, without a trailing slash.
+    pub address: String,
+    /// The signed-in user's id on the server (unused for Plex).
+    pub user_id: String,
+    /// What the server gave in exchange for signing in.
+    pub token: String,
+}
+
+/// Never print the token.
+impl std::fmt::Debug for Server {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Server")
+            .field("id", &self.id)
+            .field("kind", &self.kind)
+            .field("name", &self.name)
+            .field("address", &self.address)
+            .finish_non_exhaustive()
+    }
+}
+
+/// One of a server's libraries that holds films or series.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Library {
+    pub id: String,
+    pub name: String,
+}
+
+/// The id Haven uses for an item on a server.
+pub fn title_id(server: i64, item: &str) -> String {
+    format!("srv:{server}:{item}")
+}
+
+/// Splits a `srv:<server>:<item>` id; `None` for any other id.
+pub fn split_id(id: &str) -> Option<(i64, &str)> {
+    let (server, item) = id.strip_prefix("srv:")?.split_once(':')?;
+    Some((server.parse().ok()?, item)).filter(|(_, item)| !item.is_empty())
+}
+
+/// Tidies an address the user typed: adds `http://` when no scheme is
+/// given and drops trailing slashes. Only http and https are accepted.
+pub fn server_address(typed: &str) -> Result<String> {
+    let typed = typed.trim();
+    let with_scheme =
+        if typed.contains("://") { typed.to_owned() } else { format!("http://{typed}") };
+    let url = haven_core::http::web_url(&with_scheme)
+        .map_err(|_| Error::InvalidAddress(typed.to_owned()))?;
+    if url.host_str().is_none_or(str::is_empty) {
+        return Err(Error::InvalidAddress(typed.to_owned()));
+    }
+    Ok(url.as_str().trim_end_matches('/').to_owned())
+}
+
+const ANSWER_BYTES: usize = 16 * 1024 * 1024;
+
+/// Talks to media servers.
+#[derive(Clone)]
+pub struct Client {
+    http: reqwest::Client,
+    /// Identifies this copy of Haven to servers; made once and kept.
+    device: String,
+}
+
+impl Client {
+    pub fn new(http: reqwest::Client, device: String) -> Self {
+        Self { http, device }
+    }
+
+    /// Sends a request and reads a JSON answer of limited size. `body` makes
+    /// it a POST. An empty answer reads as `null`.
+    async fn call(
+        &self,
+        url: &str,
+        headers: &[(&str, String)],
+        body: Option<serde_json::Value>,
+    ) -> Result<serde_json::Value> {
+        let url = haven_core::http::web_url(url).map_err(|_| Error::InvalidAddress(url.to_owned()))?;
+        let mut request = match &body {
+            Some(body) => self
+                .http
+                .post(url)
+                .header("Content-Type", "application/json")
+                .body(body.to_string()),
+            None => self.http.get(url),
+        };
+        request = request.header("Accept", "application/json");
+        for (name, value) in headers {
+            request = request.header(*name, value);
+        }
+        let mut response = request.send().await?;
+        match response.status().as_u16() {
+            200..=299 => {}
+            401 | 403 => return Err(Error::SignInRefused),
+            other => return Err(Error::Status(other)),
+        }
+        let mut bytes = Vec::new();
+        while let Some(chunk) = response.chunk().await? {
+            if bytes.len() + chunk.len() > ANSWER_BYTES {
+                return Err(Error::TooLarge);
+            }
+            bytes.extend_from_slice(&chunk);
+        }
+        if bytes.iter().all(u8::is_ascii_whitespace) {
+            return Ok(serde_json::Value::Null);
+        }
+        serde_json::from_slice(&bytes).map_err(|_| Error::BadAnswer)
+    }
+
+    /// Signs in to a Jellyfin or Emby server with a user name and password.
+    /// The password is used once and not kept.
+    pub async fn sign_in(
+        &self,
+        kind: Kind,
+        address: &str,
+        user: &str,
+        password: &str,
+    ) -> Result<Server> {
+        emby::sign_in(self, kind, &server_address(address)?, user, password).await
+    }
+
+    /// The server's libraries of films and series.
+    pub async fn libraries(&self, server: &Server) -> Result<Vec<Library>> {
+        match server.kind {
+            Kind::Plex => plex::libraries(self, server).await,
+            _ => emby::libraries(self, server).await,
+        }
+    }
+
+    /// What was added to a library most recently.
+    pub async fn latest(&self, server: &Server, library: &str) -> Result<Vec<MetaPreview>> {
+        match server.kind {
+            Kind::Plex => plex::titles(self, server, library, true).await,
+            _ => emby::latest(self, server, library).await,
+        }
+    }
+
+    /// A library's titles by name (the first few hundred).
+    pub async fn all(&self, server: &Server, library: &str) -> Result<Vec<MetaPreview>> {
+        match server.kind {
+            Kind::Plex => plex::titles(self, server, library, false).await,
+            _ => emby::all(self, server, library).await,
+        }
+    }
+
+    /// Titles on the server whose name matches `words`.
+    pub async fn search(&self, server: &Server, words: &str) -> Result<Vec<MetaPreview>> {
+        match server.kind {
+            Kind::Plex => plex::search(self, server, words).await,
+            _ => emby::search(self, server, words).await,
+        }
+    }
+
+    /// Everything the server knows about one film or series (`item` is
+    /// the part of the id after the server's number).
+    pub async fn meta(&self, server: &Server, item: &str) -> Result<MetaDetail> {
+        match server.kind {
+            Kind::Plex => plex::meta(self, server, item).await,
+            _ => emby::meta(self, server, item).await,
+        }
+    }
+
+    /// The ways to play one film or episode from the server.
+    pub async fn streams(&self, server: &Server, item: &str) -> Result<Vec<Stream>> {
+        match server.kind {
+            Kind::Plex => plex::streams(self, server, item).await,
+            _ => Ok(emby::streams(server, item)),
+        }
+    }
+
+    /// Tells the server how far a film or episode was watched, in seconds.
+    pub async fn report(
+        &self,
+        server: &Server,
+        item: &str,
+        position: f64,
+        duration: f64,
+        finished: bool,
+    ) -> Result<()> {
+        match server.kind {
+            Kind::Plex => plex::report(self, server, item, position, duration, finished).await,
+            _ => emby::report(self, server, item, position, finished).await,
+        }
+    }
+
+    /// Starts signing in to Plex: gives a code and the page to enter it on.
+    pub async fn plex_pin(&self) -> Result<PlexPin> {
+        plex::pin(self).await
+    }
+
+    /// Whether the user has approved the code yet: the account's token
+    /// once they have.
+    pub async fn plex_token(&self, pin: &PlexPin) -> Result<Option<String>> {
+        plex::token(self, pin).await
+    }
+
+    /// The Plex servers the account can use, each with an address that
+    /// answered from here.
+    pub async fn plex_servers(&self, account_token: &str) -> Result<Vec<Server>> {
+        plex::servers(self, account_token).await
+    }
+}
+
+/// Reads text from a JSON field, trimmed; `None` if missing or blank.
+fn text(value: &serde_json::Value, key: &str) -> Option<String> {
+    match value.get(key)? {
+        serde_json::Value::String(text) if !text.trim().is_empty() => Some(text.trim().to_owned()),
+        serde_json::Value::Number(number) => Some(number.to_string()),
+        _ => None,
+    }
+}
+
+fn number(value: &serde_json::Value, key: &str) -> Option<f64> {
+    match value.get(key)? {
+        serde_json::Value::Number(number) => number.as_f64(),
+        serde_json::Value::String(text) => text.trim().parse().ok(),
+        _ => None,
+    }
+}
+
+fn list<'a>(value: &'a serde_json::Value, key: &str) -> &'a [serde_json::Value] {
+    value.get(key).and_then(|list| list.as_array()).map_or(&[], Vec::as_slice)
+}
+
+/// Percent-encodes text for use inside a query string.
+fn query(text: &str) -> String {
+    let mut out = String::new();
+    for byte in text.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(byte as char)
+            }
+            other => out.push_str(&format!("%{other:02X}")),
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ids_round_trip_and_other_ids_are_left_alone() {
+        assert_eq!(title_id(3, "abc"), "srv:3:abc");
+        assert_eq!(split_id("srv:3:abc"), Some((3, "abc")));
+        assert_eq!(split_id("srv:12:a:b"), Some((12, "a:b")));
+        assert_eq!(split_id("tt0903747"), None);
+        assert_eq!(split_id("srv:x:abc"), None);
+        assert_eq!(split_id("srv:3:"), None);
+    }
+
+    #[test]
+    fn addresses_are_tidied() {
+        assert_eq!(server_address(" 192.168.1.5:8096/ ").unwrap(), "http://192.168.1.5:8096");
+        assert_eq!(server_address("https://media.example.org/jf/").unwrap(), "https://media.example.org/jf");
+        assert!(matches!(server_address("ftp://x"), Err(Error::InvalidAddress(_))));
+        assert!(matches!(server_address(""), Err(Error::InvalidAddress(_))));
+    }
+
+    #[test]
+    fn query_text_is_escaped() {
+        assert_eq!(query("the matrix & more"), "the%20matrix%20%26%20more");
+    }
+
+    #[test]
+    fn a_server_never_prints_its_token() {
+        let server = Server {
+            id: 1,
+            kind: Kind::Plex,
+            name: "Home".into(),
+            address: "http://x".into(),
+            user_id: String::new(),
+            token: "topsecret".into(),
+        };
+        assert!(!format!("{server:?}").contains("topsecret"));
+    }
+}

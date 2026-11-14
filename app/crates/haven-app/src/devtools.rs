@@ -17,7 +17,9 @@
 //!   `continue <card>` (open a Continue Watching card), `watchlist`
 //!   (add or remove the open title), `page <index>`, `addtv <address>`,
 //!   `channel <n>`, `station <n>`, `tvfilter <words>`, `tvgroup <name>`,
-//!   `tvstate`,
+//!   `tvstate`, `signin <jellyfin|emby> <address> <user> [password]`,
+//!   `open <type> <id>`, `servers`, `connect <0|1>` (Trakt, Simkl),
+//!   `tracking`, `findcast`, `cast` (print the casting state),
 //!   `snap <file.png>`, `state` (print the player's state).
 //! - `HAVEN_PUMP=<seconds>`: draw the window that often even when it is
 //!   hidden behind others (macOS does not draw a covered window, and the
@@ -107,6 +109,58 @@ fn act(ui: &AppWindow, action: &str) {
             ui.get_radio_channels().row_count(),
             ui.get_radio_total(),
             ui.get_tv_groups().iter().map(|g| g.to_string()).collect::<Vec<_>>().join("|"),
+        ),
+        "signin" => {
+            // signin <jellyfin|emby> <address> <user> [password]
+            let mut parts = rest.split_whitespace();
+            let kind = if parts.next() == Some("emby") { 1 } else { 0 };
+            let address = parts.next().unwrap_or_default();
+            let user = parts.next().unwrap_or_default();
+            let password = parts.next().unwrap_or_default();
+            ui.invoke_server_sign_in(kind, address.into(), user.into(), password.into());
+        }
+        "open" => {
+            if let Some((kind, id)) = rest.trim().split_once(' ') {
+                ui.invoke_open_title(Poster { id: id.into(), kind: kind.into(), ..Poster::default() });
+            }
+        }
+        "servers" => {
+            let shelves = ui.get_server_shelves();
+            eprintln!(
+                "haven-servers: status=\"{}\" servers={} shelves=[{}]",
+                ui.get_server_status(),
+                ui.get_servers().row_count(),
+                shelves
+                    .iter()
+                    .map(|shelf| format!(
+                        "{}:{}{}",
+                        shelf.title,
+                        shelf.items.row_count(),
+                        shelf.items.row_data(0).map(|p| format!(" first={} {}", p.kind, p.id)).unwrap_or_default()
+                    ))
+                    .collect::<Vec<_>>()
+                    .join(" | "),
+            );
+        }
+        "connect" => ui.invoke_tracking_connect(number as i32),
+        "tracking" => eprintln!(
+            "haven-tracking: status=\"{}\" keys=\"{}\" rows=[{}]",
+            ui.get_tracking_status(),
+            ui.get_keys_status(),
+            ui.get_tracking()
+                .iter()
+                .map(|row| format!("{} connected={} can={}", row.name, row.connected, row.can_connect))
+                .collect::<Vec<_>>()
+                .join(" | "),
+        ),
+        "findcast" => ui.invoke_find_cast_devices(),
+        "cast" => eprintln!(
+            "haven-cast: finding={} devices=[{}] note=\"{}\" casting={} status=\"{}\"",
+            ui.get_cast_finding(),
+            ui.get_cast_devices().iter().map(|d| d.to_string()).collect::<Vec<_>>().join(" | "),
+            ui.get_cast_note(),
+            ui.get_casting(),
+            ui.get_cast_status(),
         ),
         "snap" => snap(ui, rest.trim()),
         "state" => {

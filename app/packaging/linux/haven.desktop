@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Haven
+GenericName=Media Hub
+Comment=Films, series, live TV and your own media servers in one place
+Exec=haven
+Icon=haven
+Terminal=false
+Categories=AudioVideo;Video;Player;TV;
+StartupWMClass=haven
