@@ -327,28 +327,102 @@ fn file_address(server: &Server, item: &str, version: Option<&str>) -> String {
 pub async fn streams(client: &Client, server: &Server, item: &str) -> Result<Vec<Stream>> {
     // The playback information is what the server's own apps list their
     // sources from; some servers only work them out when asked this way.
+    // The request is shaped like those apps': a profile that says this
+    // player takes any file as it is.
     let url = format!(
-        "{}/Items/{}/PlaybackInfo?UserId={}",
+        "{}/Items/{}/PlaybackInfo?UserId={}&StartTimeTicks=0&IsPlayback=false&AutoOpenLiveStream=false&MaxStreamingBitrate=1000000000",
         server.address,
         query(item),
         query(&server.user_id)
     );
-    let asked = client
-        .call(
-            &url,
-            &headers(client, server.kind, Some(&server.token)),
-            Some(json!({ "UserId": server.user_id })),
-        )
-        .await;
-    if let Ok(info) = &asked {
-        if !list(info, "MediaSources").is_empty() {
-            return Ok(read_streams(server, item, info));
+    let body = json!({
+        "UserId": server.user_id,
+        "StartTimeTicks": 0,
+        "IsPlayback": false,
+        "AutoOpenLiveStream": false,
+        "MaxStreamingBitrate": 1_000_000_000,
+        "EnableDirectPlay": true,
+        "EnableDirectStream": true,
+        "EnableTranscoding": false,
+        "DeviceProfile": {
+            "Name": "Haven",
+            "MaxStreamingBitrate": 1_000_000_000,
+            "MaxStaticBitrate": 1_000_000_000,
+            "DirectPlayProfiles": [{ "Type": "Video" }, { "Type": "Audio" }],
+            "TranscodingProfiles": [],
+            "ContainerProfiles": [],
+            "CodecProfiles": [],
+            "SubtitleProfiles": []
+        }
+    });
+    let asked =
+        client.call(&url, &headers(client, server.kind, Some(&server.token)), Some(body)).await;
+    // The item itself may list its versions too, and some servers list
+    // more there than in the playback information: both are used.
+    let detail = get(
+        client,
+        server,
+        &format!("/Users/{}/Items/{}?Fields=MediaSources,MediaStreams", server.user_id, query(item)),
+    )
+    .await;
+    let shape = |answer: &std::result::Result<Value, crate::Error>| match answer {
+        Ok(answer) => describe_sources(answer),
+        Err(err) => format!("failed ({err})"),
+    };
+    haven_core::diag::note(&format!(
+        "{} sources: playback information {}; the item {}",
+        server.name,
+        shape(&asked),
+        shape(&detail)
+    ));
+    let mut sources: Vec<Value> = Vec::new();
+    for answer in [&asked, &detail].into_iter().flatten() {
+        for source in list(answer, "MediaSources") {
+            let known = |seen: &Value| {
+                (text(seen, "Id").is_some() && text(seen, "Id") == text(source, "Id"))
+                    || (text(seen, "Path").is_some() && text(seen, "Path") == text(source, "Path"))
+            };
+            if !sources.iter().any(known) {
+                sources.push(source.clone());
+            }
         }
     }
-    // Older servers, or one that refused: the item itself lists its files.
-    let detail =
-        get(client, server, &format!("/Users/{}/Items/{}", server.user_id, query(item))).await?;
-    Ok(read_streams(server, item, &detail))
+    if sources.is_empty() {
+        // Nothing listed anywhere: only fail if the server gave no answer at all.
+        if let (Err(_), Err(err)) = (asked, detail) {
+            return Err(err);
+        }
+    }
+    Ok(read_streams(server, item, &json!({ "MediaSources": sources })))
+}
+
+/// What an answer's `MediaSources` look like, for the log: how many,
+/// and for each which fields it has. No ids, names or addresses.
+pub(crate) fn describe_sources(answer: &Value) -> String {
+    let sources = list(answer, "MediaSources");
+    let each: Vec<String> = sources
+        .iter()
+        .take(5)
+        .map(|source| {
+            let has = |key: &str| if text(source, key).is_some() { "yes" } else { "no" };
+            let web_path = text(source, "Path")
+                .is_some_and(|path| path.starts_with("http://") || path.starts_with("https://"));
+            format!(
+                "[protocol {} id {} name {} path {} url {} streams {}]",
+                text(source, "Protocol").unwrap_or_else(|| "none".to_owned()),
+                has("Id"),
+                has("Name"),
+                if web_path { "web" } else { has("Path") },
+                has("DirectStreamUrl"),
+                list(source, "MediaStreams").len(),
+            )
+        })
+        .collect();
+    let keys: Vec<&str> = answer
+        .as_object()
+        .map(|fields| fields.keys().map(String::as_str).filter(|key| key.contains("Source") || key.contains("Error")).collect())
+        .unwrap_or_default();
+    format!("lists {} {} (fields: {})", sources.len(), each.join(" "), keys.join(", "))
 }
 
 /// One stream per entry of `MediaSources` in a playback-information or
@@ -378,10 +452,21 @@ pub(crate) fn read_streams(server: &Server, item: &str, answer: &Value) -> Vec<S
                 text(version, "Protocol").is_some_and(|protocol| protocol.eq_ignore_ascii_case("http"))
                     && (path.starts_with("http://") || path.starts_with("https://"))
             });
-            let url = match (remote, &id) {
-                (Some(path), _) => path,
-                (None, Some(id)) => file_address(server, item, Some(id)),
-                (None, None) => return None,
+            // Or the server names the address to play it from itself.
+            let given = text(version, "DirectStreamUrl").map(|url| {
+                if url.starts_with("http://") || url.starts_with("https://") {
+                    url
+                } else {
+                    let join = if url.contains('?') { '&' } else { '?' };
+                    let slash = if url.starts_with('/') { "" } else { "/" };
+                    format!("{}{slash}{url}{join}api_key={}", server.address, query(&server.token))
+                }
+            });
+            let url = match (remote, given, &id) {
+                (Some(path), _, _) => path,
+                (None, Some(url), _) => url,
+                (None, None, Some(id)) => file_address(server, item, Some(id)),
+                (None, None, None) => return None,
             };
             let mut facts: Vec<String> = Vec::new();
             // The server's name for the source tells several apart, and
@@ -578,6 +663,23 @@ mod tests {
             streams[2].url.as_deref(),
             Some("http://media.example/Videos/m1/stream?static=true&MediaSourceId=c&api_key=tok%20en")
         );
+    }
+
+    #[test]
+    fn a_source_can_name_its_own_address_and_the_log_names_no_secrets() {
+        let info = json!({"MediaSources": [
+            {"Id": "a", "Name": "Secret name", "Protocol": "File", "Path": "/media/secret.mkv",
+             "DirectStreamUrl": "/Videos/m1/stream.mkv?MediaSourceId=a"}
+        ], "ErrorCode": null});
+        let streams = read_streams(&server(), "m1", &info);
+        assert_eq!(
+            streams[0].url.as_deref(),
+            Some("http://media.example/Videos/m1/stream.mkv?MediaSourceId=a&api_key=tok%20en")
+        );
+        let shape = describe_sources(&info);
+        assert!(shape.starts_with("lists 1 [protocol File id yes name yes path yes url yes streams 0]"), "{shape}");
+        assert!(!shape.contains("secret") && !shape.contains("Secret"));
+        assert!(describe_sources(&json!({})).starts_with("lists 0"));
     }
 
     #[test]

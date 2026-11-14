@@ -163,7 +163,27 @@ fn act(ui: &AppWindow, action: &str) {
             );
         }
         "checkservers" => ui.invoke_check_servers(),
+        // click <x> <y> / rclick <x> <y>: a mouse click at that place, in
+        // logical pixels from the window's top left.
+        "click" | "rclick" => {
+            let mut parts = rest.split_whitespace().filter_map(|part| part.parse::<f32>().ok());
+            if let (Some(x), Some(y)) = (parts.next(), parts.next()) {
+                use slint::platform::{PointerEventButton, WindowEvent};
+                let position = slint::LogicalPosition::new(x, y);
+                let button =
+                    if verb == "click" { PointerEventButton::Left } else { PointerEventButton::Right };
+                let window = ui.window();
+                window.dispatch_event(WindowEvent::PointerMoved { position });
+                window.dispatch_event(WindowEvent::PointerPressed { position, button });
+                window.dispatch_event(WindowEvent::PointerReleased { position, button });
+            }
+        }
         "clearcache" => ui.invoke_clear_cache(),
+        "uncontinue" => {
+            if let Some(card) = ui.get_continue_shelf().items.row_data(number as usize) {
+                ui.invoke_remove_continue(card);
+            }
+        }
         "cache" => eprintln!("haven-cache: {}", ui.get_cache_status()),
         "xtream" => {
             let mut parts = rest.split_whitespace();

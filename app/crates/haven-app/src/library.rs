@@ -321,6 +321,7 @@ impl Library {
         connect!(on_play_stream, |row| |l: &Rc<Self>| l.play_stream(row));
         connect!(on_toggle_watchlist, | | |l: &Rc<Self>| l.toggle_watchlist());
         connect!(on_clear_cache, | | |l: &Rc<Self>| l.clear_cache());
+        connect!(on_remove_continue, |poster| |l: &Rc<Self>| l.remove_continue(&poster));
         library.show_cache_size();
 
         library.load_installed();
@@ -819,6 +820,16 @@ impl Library {
                 }
             });
         }
+    }
+
+    /// Takes a title off Continue Watching: forgets how far it (and, for
+    /// a series, each of its episodes) was watched.
+    fn remove_continue(&self, poster: &Poster) {
+        if let Err(err) = self.store.remove_progress(poster.kind.as_str(), poster.id.as_str()) {
+            return haven_core::diag::note(&format!("could not clear what was watched: {err}"));
+        }
+        self.reload_continue();
+        self.show_resume_note();
     }
 
     // ---- Watchlist --------------------------------------------------------

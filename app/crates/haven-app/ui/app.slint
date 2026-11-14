@@ -200,7 +200,10 @@ component PageTitle inherits Text {
 
 component PosterCard inherits Rectangle {
     in property <Poster> poster;
+    // What a right-click offers to do with the card; empty for nothing.
+    in property <string> remove-label;
     callback clicked();
+    callback remove();
 
     width: 150px;
     height: 270px;
@@ -220,6 +223,14 @@ component PosterCard inherits Rectangle {
     touch := TouchArea {
         mouse-cursor: pointer;
         clicked => { root.clicked(); }
+    }
+    if root.remove-label != "": ContextMenuArea {
+        Menu {
+            MenuItem {
+                title: root.remove-label;
+                activated => { root.remove(); }
+            }
+        }
     }
     Rectangle {
         y: 0;
@@ -281,7 +292,10 @@ component PosterCard inherits Rectangle {
 
 component ShelfRow inherits VerticalLayout {
     in property <Shelf> shelf;
+    // What a right-click offers to do with a card; empty for nothing.
+    in property <string> remove-label;
     callback open(Poster);
+    callback remove(Poster);
     private property <length> step: 162px;
 
     spacing: 10px;
@@ -326,7 +340,9 @@ component ShelfRow inherits VerticalLayout {
             for poster[index] in root.shelf.items: PosterCard {
                 x: index * root.step;
                 poster: poster;
+                remove-label: root.remove-label;
                 clicked => { root.open(poster); }
+                remove => { root.remove(poster); }
             }
         }
     }
@@ -1315,6 +1331,8 @@ export component AppWindow inherits Window {
     callback episode-selected(string);
     // Puts the open title on the watchlist, or takes it off.
     callback toggle-watchlist();
+    // Takes a title off Continue Watching (forgets how far it was watched).
+    callback remove-continue(Poster);
     // Kind (0 Jellyfin, 1 Emby), address, user name, password.
     callback server-sign-in(int, string, string, string);
     callback plex-sign-in();
@@ -1762,7 +1780,9 @@ export component AppWindow inherits Window {
                 }
                 if root.continue-shelf.items.length > 0: ShelfRow {
                     shelf: root.continue-shelf;
+                    remove-label: "Remove from Continue Watching";
                     open(poster) => { root.open-title(poster); }
+                    remove(poster) => { root.remove-continue(poster); }
                 }
             }
             if !root.detail-open && root.page == root.home-page && root.home-has-sources: home := ScrollView {
@@ -1778,7 +1798,9 @@ export component AppWindow inherits Window {
                     PageTitle { text: "Home"; }
                     if root.continue-shelf.items.length > 0: ShelfRow {
                         shelf: root.continue-shelf;
+                        remove-label: "Remove from Continue Watching";
                         open(poster) => { root.open-title(poster); }
+                        remove(poster) => { root.remove-continue(poster); }
                     }
                     if root.shelves.length == 0 && root.server-shelves.length == 0 && root.catalog-shelves.length == 0: Text {
                         text: root.servers.length > 0 ? "Waiting for your media servers…" : "Your add-ons have no catalogues to show here.";
