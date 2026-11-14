@@ -8,9 +8,22 @@ publish.workspace = true
 name = "haven"
 path = "src/main.rs"
 
+# The player needs libmpv on the machine, so it is opt-in for now:
+# `cargo run -p haven-app --features player`. Without it Haven builds
+# everywhere and lists streams without playing them.
+[features]
+player = ["haven-player/mpv"]
+
 [dependencies]
+haven-addons.workspace = true
 haven-core.workspace = true
+haven-livetv.workspace = true
+haven-player.workspace = true
+image.workspace = true
+png.workspace = true
+reqwest.workspace = true
 slint.workspace = true
+tokio.workspace = true
 
 [build-dependencies]
 slint-build.workspace = true

@@ -1,4 +1,94 @@
-import { Switch, Palette } from "std-widgets.slint";
+import { Button, LineEdit, ListView, Palette, ScrollView, Switch } from "std-widgets.slint";
+
+// One title in a shelf. `has-image` is false until its poster has loaded.
+export struct Poster {
+    id: string,
+    // Content type: "movie", "series"…
+    kind: string,
+    title: string,
+    year: string,
+    image: image,
+    has-image: bool,
+    // Continue Watching only: the film or episode to carry on with, and
+    // how much of it has been watched (0 to 1).
+    video: string,
+    progress: float,
+}
+
+// One catalogue from an add-on, shown as a row of posters on Home.
+export struct Shelf {
+    title: string,
+    source: string,
+    loading: bool,
+    error: string,
+    items: [Poster],
+}
+
+// The open title's page. Text fields are empty until its details load.
+export struct Detail {
+    title: string,
+    // Year, runtime, rating and genres on one line.
+    facts: string,
+    description: string,
+    cast: string,
+    director: string,
+    poster: image,
+    has-poster: bool,
+    background: image,
+    has-background: bool,
+    loading: bool,
+    error: string,
+    // The title is on the watchlist.
+    saved: bool,
+}
+
+export struct EpisodeRow {
+    id: string,
+    number: string,
+    title: string,
+    date: string,
+    selected: bool,
+}
+
+export struct StreamRow {
+    source: string,
+    name: string,
+    detail: string,
+    // How it is delivered: "Direct", "Web page", "YouTube", "Torrent".
+    kind: string,
+    // Haven's own player can open it.
+    playable: bool,
+}
+
+// One audio or subtitle track of what is playing.
+export struct TrackRow {
+    id: int,
+    label: string,
+    selected: bool,
+}
+
+// One television channel or radio station in a list.
+export struct ChannelRow {
+    // Its place among all channels, which is what playing it takes.
+    index: int,
+    name: string,
+    group: string,
+}
+
+// A playlist the user added on the Live TV page.
+export struct SourceRow {
+    url: string,
+    name: string,
+    channels: int,
+}
+
+export struct AddonRow {
+    url: string,
+    name: string,
+    description: string,
+    version: string,
+    catalogs: int,
+}
 
 export global Theme {
     in-out property <bool> dark: true;
@@ -77,6 +167,892 @@ component EmptyPage inherits VerticalLayout {
     }
 }
 
+component PageTitle inherits Text {
+    color: Theme.text;
+    font-size: 26px;
+    font-weight: 700;
+}
+
+component PosterCard inherits Rectangle {
+    in property <Poster> poster;
+    callback clicked();
+
+    width: 150px;
+    height: 270px;
+    accessible-role: button;
+    accessible-label: poster.year == "" ? poster.title : poster.title + ", " + poster.year;
+    accessible-action-default => { root.clicked(); }
+
+    focus := FocusScope {
+        key-pressed(event) => {
+            if (event.text == Key.Return || event.text == " ") {
+                root.clicked();
+                return accept;
+            }
+            return reject;
+        }
+    }
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+    Rectangle {
+        y: 0;
+        height: 225px;
+        border-radius: 8px;
+        clip: true;
+        background: Theme.surface;
+        border-width: touch.has-hover || focus.has-focus ? 2px : 1px;
+        border-color: touch.has-hover || focus.has-focus ? Theme.accent : Theme.border;
+
+        if root.poster.has-image: Image {
+            width: 100%;
+            height: 100%;
+            source: root.poster.image;
+            image-fit: cover;
+        }
+        if !root.poster.has-image: Text {
+            x: 10px;
+            width: parent.width - 20px;
+            height: 100%;
+            text: root.poster.title;
+            color: Theme.text-dim;
+            font-size: 13px;
+            wrap: word-wrap;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+        if root.poster.progress > 0: Rectangle {
+            x: 8px;
+            y: parent.height - 12px;
+            width: parent.width - 16px;
+            height: 4px;
+            border-radius: 2px;
+            background: #000000a0;
+            Rectangle {
+                x: 0;
+                width: parent.width * root.poster.progress;
+                border-radius: 2px;
+                background: Theme.accent;
+            }
+        }
+    }
+    Text {
+        y: 232px;
+        width: 100%;
+        text: root.poster.title;
+        color: Theme.text;
+        font-size: 13px;
+        overflow: elide;
+    }
+    Text {
+        y: 251px;
+        width: 100%;
+        text: root.poster.year;
+        color: Theme.text-dim;
+        font-size: 12px;
+    }
+}
+
+component ShelfRow inherits VerticalLayout {
+    in property <Shelf> shelf;
+    callback open(Poster);
+    private property <length> step: 162px;
+
+    spacing: 10px;
+
+    HorizontalLayout {
+        spacing: 10px;
+        alignment: start;
+        Text {
+            text: root.shelf.title;
+            color: Theme.text;
+            font-size: 18px;
+            font-weight: 600;
+        }
+        Text {
+            text: root.shelf.source;
+            color: Theme.text-dim;
+            font-size: 12px;
+            vertical-alignment: center;
+        }
+    }
+    if root.shelf.loading: Text {
+        height: 40px;
+        text: "Loading…";
+        color: Theme.text-dim;
+    }
+    if !root.shelf.loading && root.shelf.error != "": Text {
+        text: root.shelf.error;
+        color: Theme.text-dim;
+        wrap: word-wrap;
+    }
+    if !root.shelf.loading && root.shelf.error == "" && root.shelf.items.length == 0: Text {
+        text: "Nothing here.";
+        color: Theme.text-dim;
+    }
+    if root.shelf.items.length > 0: Rectangle {
+        height: 270px;
+        Flickable {
+            width: parent.width;
+            height: parent.height;
+            content-width: root.shelf.items.length * root.step;
+            content-height: self.height;
+            for poster[index] in root.shelf.items: PosterCard {
+                x: index * root.step;
+                poster: poster;
+                clicked => { root.open(poster); }
+            }
+        }
+    }
+}
+
+component SectionTitle inherits Text {
+    color: Theme.text;
+    font-size: 18px;
+    font-weight: 600;
+}
+
+component Chip inherits Rectangle {
+    in property <string> label;
+    in property <bool> selected;
+    callback clicked();
+
+    height: 30px;
+    border-radius: 15px;
+    background: selected ? Theme.accent : touch.has-hover ? Theme.hover : Theme.surface;
+    border-width: 1px;
+    border-color: selected ? Theme.accent : Theme.border;
+    accessible-role: button;
+    accessible-label: label;
+    accessible-action-default => { root.clicked(); }
+
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+    min-width: chip-label.preferred-width + 28px;
+    chip-label := Text {
+        text: root.label;
+        color: root.selected ? (Theme.dark ? #171a22 : #ffffff) : Theme.text;
+        font-size: 13px;
+        font-weight: root.selected ? 600 : 400;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+}
+
+component EpisodeItem inherits Rectangle {
+    in property <EpisodeRow> episode;
+    callback clicked();
+
+    height: 44px;
+    border-radius: 8px;
+    background: episode.selected ? Theme.selected : touch.has-hover ? Theme.hover : Theme.surface;
+    border-width: 1px;
+    border-color: Theme.border;
+    accessible-role: button;
+    accessible-label: episode.number + " " + episode.title;
+    accessible-action-default => { root.clicked(); }
+
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+    HorizontalLayout {
+        padding-left: 14px;
+        padding-right: 14px;
+        spacing: 12px;
+        Text {
+            width: 44px;
+            text: root.episode.number;
+            color: Theme.accent;
+            font-weight: 600;
+            vertical-alignment: center;
+        }
+        Text {
+            horizontal-stretch: 1;
+            text: root.episode.title;
+            color: Theme.text;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        Text {
+            text: root.episode.date;
+            color: Theme.text-dim;
+            font-size: 12px;
+            vertical-alignment: center;
+        }
+    }
+}
+
+component StreamItem inherits Rectangle {
+    in property <StreamRow> stream;
+    callback play();
+
+    height: 58px;
+    border-radius: 8px;
+    background: stream.playable && (touch.has-hover || focus.has-focus) ? Theme.hover : Theme.surface;
+    border-width: 1px;
+    border-color: stream.playable && (touch.has-hover || focus.has-focus) ? Theme.accent : Theme.border;
+    accessible-role: button;
+    accessible-label: (stream.playable ? "Play " : "") + stream.name + ", " + stream.kind + ", from " + stream.source;
+    accessible-action-default => {
+        if (stream.playable) {
+            root.play();
+        }
+    }
+
+    focus := FocusScope {
+        enabled: root.stream.playable;
+        key-pressed(event) => {
+            if (event.text == Key.Return || event.text == " ") {
+                root.play();
+                return accept;
+            }
+            return reject;
+        }
+    }
+    touch := TouchArea {
+        enabled: root.stream.playable;
+        mouse-cursor: pointer;
+        clicked => { root.play(); }
+    }
+
+    HorizontalLayout {
+        padding-left: 14px;
+        padding-right: 14px;
+        spacing: 14px;
+        VerticalLayout {
+            horizontal-stretch: 1;
+            alignment: center;
+            spacing: 2px;
+            Text {
+                text: root.stream.name + "  ·  " + root.stream.source;
+                color: Theme.text;
+                font-weight: 600;
+                overflow: elide;
+            }
+            Text {
+                text: root.stream.detail;
+                color: Theme.text-dim;
+                font-size: 12px;
+                overflow: elide;
+            }
+        }
+        Text {
+            text: root.stream.playable ? "▶  Play" : root.stream.kind;
+            color: root.stream.playable ? Theme.accent : Theme.text-dim;
+            font-size: root.stream.playable ? 13px : 12px;
+            font-weight: root.stream.playable ? 600 : 400;
+            vertical-alignment: center;
+        }
+    }
+}
+
+// ---- The player ---------------------------------------------------------
+// Drawn over the video, so its colours do not follow the theme.
+
+component PlayerButton inherits Rectangle {
+    in property <string> label;
+    in property <string> name: label;
+    in property <bool> active;
+    out property <bool> hovered: touch.has-hover;
+    callback clicked();
+
+    height: 36px;
+    width: max(44px, caption.preferred-width + 24px);
+    border-radius: 8px;
+    background: touch.pressed ? #ffffff40 : touch.has-hover || focus.has-focus ? #ffffff26 : transparent;
+    accessible-role: button;
+    accessible-label: name;
+    accessible-action-default => { root.clicked(); }
+
+    focus := FocusScope {
+        key-pressed(event) => {
+            if (event.text == Key.Return) {
+                root.clicked();
+                return accept;
+            }
+            return reject;
+        }
+    }
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+    caption := Text {
+        text: root.label;
+        color: root.active ? #f2c66d : white;
+        font-size: 14px;
+        font-weight: 600;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+}
+
+component SeekBar inherits Rectangle {
+    in property <float> duration;
+    in property <float> position;
+    out property <bool> hovered: touch.has-hover || touch.pressed;
+    callback seek(float);
+    private property <float> dragged;
+    private property <float> shown: touch.pressed ? dragged : position;
+    private property <float> share: duration > 0 ? clamp(shown / duration, 0, 1) : 0;
+
+    height: 22px;
+    accessible-role: slider;
+    accessible-label: "Position";
+    accessible-value: root.position;
+    accessible-value-minimum: 0;
+    accessible-value-maximum: root.duration;
+
+    Rectangle {
+        y: (parent.height - self.height) / 2;
+        height: root.hovered ? 6px : 4px;
+        border-radius: self.height / 2;
+        background: #ffffff40;
+        Rectangle {
+            x: 0;
+            width: parent.width * root.share;
+            border-radius: parent.border-radius;
+            background: #f2c66d;
+        }
+    }
+    Rectangle {
+        visible: root.hovered && root.duration > 0;
+        x: root.width * root.share - 7px;
+        y: (parent.height - 14px) / 2;
+        width: 14px;
+        height: 14px;
+        border-radius: 7px;
+        background: white;
+    }
+    touch := TouchArea {
+        enabled: root.duration > 0;
+        mouse-cursor: pointer;
+        pointer-event(event) => {
+            if (event.button == PointerEventButton.left && event.kind == PointerEventKind.down) {
+                root.dragged = clamp(self.mouse-x / self.width, 0, 1) * root.duration;
+            }
+            if (event.button == PointerEventButton.left && event.kind == PointerEventKind.up) {
+                root.seek(root.dragged);
+            }
+        }
+        moved => {
+            if (self.pressed) {
+                root.dragged = clamp(self.mouse-x / self.width, 0, 1) * root.duration;
+            }
+        }
+    }
+}
+
+component TrackItem inherits Rectangle {
+    in property <string> label;
+    in property <bool> selected;
+    callback clicked();
+
+    height: 34px;
+    border-radius: 6px;
+    background: touch.has-hover ? #ffffff26 : transparent;
+    accessible-role: button;
+    accessible-label: label;
+    accessible-action-default => { root.clicked(); }
+
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+    Text {
+        x: 12px;
+        width: 16px;
+        text: root.selected ? "✓" : "";
+        color: #f2c66d;
+        vertical-alignment: center;
+    }
+    Text {
+        x: 34px;
+        width: parent.width - 46px;
+        text: root.label;
+        color: root.selected ? #f2c66d : white;
+        font-size: 13px;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+}
+
+component PlayerView inherits Rectangle {
+    in property <image> frame;
+    in property <string> title;
+    in property <string> subtitle;
+    in property <bool> paused;
+    // Opening the stream, or waiting for more of it.
+    in property <bool> busy;
+    in property <string> error;
+    in property <float> duration;
+    in property <float> position;
+    in property <string> time-text;
+    in property <[TrackRow]> audio-tracks;
+    in property <[TrackRow]> subtitle-tracks;
+    in property <bool> fullscreen;
+    callback close();
+    callback toggle-pause();
+    callback seek(float);
+    callback skip(float);
+    callback choose-audio(int);
+    // 0 turns subtitles off.
+    callback choose-subtitle(int);
+    callback toggle-fullscreen();
+    // The bars came up or went away (subtitles move out of their way).
+    callback controls-shown(bool);
+
+    // Which list is open: 0 none, 1 audio, 2 subtitles.
+    in-out property <int> menu: 0;
+    private property <bool> controls: true;
+    private property <bool> on-controls: top-touch.has-hover || bottom-touch.has-hover || back.hovered || bar.hovered || rewind.hovered || play.hovered || forward.hovered || audio.hovered || subs.hovered || full.hovered;
+    private property <bool> pinned: root.paused || root.busy || root.menu != 0 || root.error != "" || root.on-controls;
+    // Set by the app: a subtitle track is showing.
+    in property <bool> any-subtitle;
+
+    private property <bool> bars: root.controls || root.pinned;
+    changed bars => { root.controls-shown(root.bars); }
+
+    background: black;
+    init => {
+        keys.focus();
+        root.controls-shown(true);
+    }
+
+    Image {
+        width: 100%;
+        height: 100%;
+        source: root.frame;
+        image-fit: fill;
+    }
+
+    hide := Timer {
+        interval: 3s;
+        running: root.controls && !root.pinned;
+        triggered => { root.controls = false; }
+    }
+
+    keys := FocusScope {
+        key-pressed(event) => {
+            if (event.text == " ") {
+                root.toggle-pause();
+                return accept;
+            }
+            if (event.text == Key.LeftArrow) {
+                root.skip(-10);
+                return accept;
+            }
+            if (event.text == Key.RightArrow) {
+                root.skip(30);
+                return accept;
+            }
+            if (event.text == "f" || event.text == "F") {
+                root.toggle-fullscreen();
+                return accept;
+            }
+            if (event.text == Key.Escape) {
+                if (root.menu != 0) {
+                    root.menu = 0;
+                } else if (root.fullscreen) {
+                    root.toggle-fullscreen();
+                } else {
+                    root.close();
+                }
+                return accept;
+            }
+            return reject;
+        }
+    }
+
+    // The picture itself: move to show the controls, click to pause.
+    TouchArea {
+        mouse-cursor: root.controls ? MouseCursor.default : MouseCursor.none;
+        pointer-event(event) => {
+            if (event.kind == PointerEventKind.move) {
+                root.controls = true;
+                hide.restart();
+            }
+        }
+        clicked => {
+            keys.focus();
+            if (root.menu != 0) {
+                root.menu = 0;
+            } else if (root.error == "") {
+                root.toggle-pause();
+            }
+        }
+        double-clicked => { root.toggle-fullscreen(); }
+    }
+
+    if root.busy && root.error == "": Text {
+        text: "Loading…";
+        color: white;
+        font-size: 16px;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    if root.error != "": Rectangle {
+        width: min(parent.width - 64px, 560px);
+        height: message.preferred-height + 48px;
+        border-radius: 12px;
+        background: #151821f0;
+        message := Text {
+            x: 24px;
+            width: parent.width - 48px;
+            text: root.error;
+            color: white;
+            font-size: 15px;
+            wrap: word-wrap;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+
+    // Top: back and what is playing.
+    Rectangle {
+        visible: root.bars;
+        y: 0;
+        height: 84px;
+        background: @linear-gradient(180deg, #000000c0 0%, #00000000 100%);
+        top-touch := TouchArea { }
+        HorizontalLayout {
+            padding: 16px;
+            spacing: 14px;
+            alignment: start;
+            VerticalLayout {
+                height: 40px;
+                alignment: center;
+                back := PlayerButton {
+                    label: "‹ Back";
+                    name: "Back";
+                    clicked => { root.close(); }
+                }
+            }
+            VerticalLayout {
+                height: 40px;
+                alignment: center;
+                spacing: 2px;
+                Text {
+                    text: root.title;
+                    color: white;
+                    font-size: 17px;
+                    font-weight: 600;
+                    overflow: elide;
+                }
+                if root.subtitle != "": Text {
+                    text: root.subtitle;
+                    color: #ffffffb0;
+                    font-size: 13px;
+                    overflow: elide;
+                }
+            }
+        }
+    }
+
+    // Bottom: position and the buttons.
+    Rectangle {
+        visible: root.bars && root.error == "";
+        y: parent.height - self.height;
+        height: 104px;
+        background: @linear-gradient(180deg, #00000000 0%, #000000d0 100%);
+        bottom-touch := TouchArea { }
+        VerticalLayout {
+            padding-left: 20px;
+            padding-right: 20px;
+            padding-bottom: 12px;
+            spacing: 4px;
+            alignment: end;
+
+            bar := SeekBar {
+                duration: root.duration;
+                position: root.position;
+                seek(seconds) => { root.seek(seconds); }
+            }
+            HorizontalLayout {
+                spacing: 6px;
+                rewind := PlayerButton {
+                    label: "−10 s";
+                    name: "Back 10 seconds";
+                    clicked => { root.skip(-10); }
+                }
+                play := PlayerButton {
+                    width: 76px;
+                    label: root.paused ? "Play" : "Pause";
+                    clicked => { root.toggle-pause(); }
+                }
+                forward := PlayerButton {
+                    label: "+30 s";
+                    name: "Forward 30 seconds";
+                    clicked => { root.skip(30); }
+                }
+                Text {
+                    text: root.time-text;
+                    color: white;
+                    font-size: 13px;
+                    vertical-alignment: center;
+                }
+                Rectangle { horizontal-stretch: 1; }
+                audio := PlayerButton {
+                    visible: root.audio-tracks.length > 1;
+                    label: "Audio";
+                    active: root.menu == 1;
+                    clicked => { root.menu = root.menu == 1 ? 0 : 1; }
+                }
+                subs := PlayerButton {
+                    visible: root.subtitle-tracks.length > 0;
+                    label: "Subtitles";
+                    active: root.menu == 2;
+                    clicked => { root.menu = root.menu == 2 ? 0 : 2; }
+                }
+                full := PlayerButton {
+                    label: root.fullscreen ? "Exit full screen" : "Full screen";
+                    clicked => { root.toggle-fullscreen(); }
+                }
+            }
+        }
+    }
+
+    // The audio or subtitle list, above the buttons that open it.
+    if root.menu != 0: Rectangle {
+        private property <int> rows: root.menu == 1 ? root.audio-tracks.length : root.subtitle-tracks.length + 1;
+        x: parent.width - self.width - 20px;
+        y: parent.height - 104px - self.height + 30px;
+        width: 320px;
+        height: min(self.rows * 34px + 52px, parent.height - 200px);
+        border-radius: 10px;
+        background: #151821f4;
+        border-width: 1px;
+        border-color: #ffffff26;
+        clip: true;
+        TouchArea { }
+        Text {
+            x: 14px;
+            y: 10px;
+            text: root.menu == 1 ? "Audio" : "Subtitles";
+            color: #ffffffb0;
+            font-size: 12px;
+            font-weight: 600;
+        }
+        Flickable {
+            x: 6px;
+            y: 36px;
+            width: parent.width - 12px;
+            height: parent.height - 44px;
+            content-height: parent.rows * 34px;
+            VerticalLayout {
+                alignment: start;
+                if root.menu == 2: TrackItem {
+                    label: "Off";
+                    selected: !root.any-subtitle;
+                    clicked => {
+                        root.choose-subtitle(0);
+                        root.menu = 0;
+                    }
+                }
+                for track in root.menu == 1 ? root.audio-tracks : root.subtitle-tracks: TrackItem {
+                    label: track.label;
+                    selected: track.selected;
+                    clicked => {
+                        if (root.menu == 1) {
+                            root.choose-audio(track.id);
+                        } else {
+                            root.choose-subtitle(track.id);
+                        }
+                        root.menu = 0;
+                    }
+                }
+            }
+        }
+    }
+}
+
+component AddonCard inherits Rectangle {
+    in property <AddonRow> addon;
+    callback remove();
+
+    height: 84px;
+    border-radius: 10px;
+    background: Theme.surface;
+    border-width: 1px;
+    border-color: Theme.border;
+
+    HorizontalLayout {
+        padding-left: 16px;
+        padding-right: 16px;
+        spacing: 16px;
+        VerticalLayout {
+            alignment: center;
+            spacing: 3px;
+            horizontal-stretch: 1;
+            Text {
+                text: root.addon.version == "" ? root.addon.name : root.addon.name + "  " + root.addon.version;
+                color: Theme.text;
+                font-size: 14px;
+                font-weight: 600;
+                overflow: elide;
+            }
+            Text {
+                text: root.addon.description;
+                color: Theme.text-dim;
+                font-size: 12px;
+                overflow: elide;
+            }
+            Text {
+                text: (root.addon.catalogs == 1 ? "1 catalogue" : root.addon.catalogs + " catalogues") + "  ·  " + root.addon.url;
+                color: Theme.text-dim;
+                font-size: 12px;
+                overflow: elide;
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            Button {
+                text: "Remove";
+                accessible-label: "Remove " + root.addon.name;
+                clicked => { root.remove(); }
+            }
+        }
+    }
+}
+
+component ChannelItem inherits Rectangle {
+    in property <ChannelRow> channel;
+    in property <bool> can-play;
+    callback clicked();
+
+    height: 46px;
+    accessible-role: button;
+    accessible-label: channel.name;
+    accessible-action-default => { root.clicked(); }
+
+    Rectangle {
+        y: 2px;
+        height: parent.height - 4px;
+        border-radius: 8px;
+        background: touch.has-hover ? Theme.hover : Theme.surface;
+        border-width: 1px;
+        border-color: touch.has-hover && root.can-play ? Theme.accent : Theme.border;
+    }
+    touch := TouchArea {
+        mouse-cursor: root.can-play ? pointer : default;
+        clicked => { root.clicked(); }
+    }
+    HorizontalLayout {
+        padding-left: 14px;
+        padding-right: 14px;
+        spacing: 14px;
+        Text {
+            horizontal-stretch: 1;
+            text: root.channel.name;
+            color: Theme.text;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        Text {
+            text: root.channel.group;
+            color: Theme.text-dim;
+            font-size: 12px;
+            vertical-alignment: center;
+        }
+        if root.can-play: Text {
+            text: "▶";
+            color: Theme.accent;
+            font-size: 12px;
+            vertical-alignment: center;
+        }
+    }
+}
+
+// Live TV and Radio share this: a filter, group chips and the channels.
+component ChannelsPage inherits VerticalLayout {
+    in property <string> title;
+    in property <string> hint;
+    in property <[ChannelRow]> channels;
+    in property <[string]> groups;
+    // Channels before filtering.
+    in property <int> total;
+    in-out property <string> group;
+    in-out property <string> words;
+    in property <bool> can-play;
+    callback filter(string, string);
+    callback play(int);
+
+    padding-left: 32px;
+    padding-right: 32px;
+    padding-top: 32px;
+    spacing: 12px;
+
+    PageTitle { text: root.title; }
+    @children
+    if root.total == 0: Text {
+        text: root.hint;
+        color: Theme.text-dim;
+        wrap: word-wrap;
+    }
+    if root.total > 0 && !root.can-play: Text {
+        text: "This build of Haven has no player yet, so channels are listed but cannot be played.";
+        color: Theme.text-dim;
+        wrap: word-wrap;
+    }
+    if root.total > 0: HorizontalLayout {
+        spacing: 12px;
+        LineEdit {
+            text <=> root.words;
+            placeholder-text: "Filter by name";
+            accessible-label: "Filter by name";
+            edited(text) => { root.filter(text, root.group); }
+        }
+        Text {
+            text: root.channels.length == root.total ? root.total + " in all" : root.channels.length + " of " + root.total;
+            color: Theme.text-dim;
+            font-size: 12px;
+            vertical-alignment: center;
+        }
+    }
+    if root.groups.length > 0: Rectangle {
+        height: 30px;
+        Flickable {
+            width: parent.width;
+            height: parent.height;
+            content-width: chips.preferred-width;
+            content-height: self.height;
+            chips := HorizontalLayout {
+                spacing: 8px;
+                alignment: start;
+                Chip {
+                    label: "All";
+                    selected: root.group == "";
+                    clicked => {
+                        root.group = "";
+                        root.filter(root.words, "");
+                    }
+                }
+                for name in root.groups: Chip {
+                    label: name;
+                    selected: root.group == name;
+                    clicked => {
+                        root.group = name;
+                        root.filter(root.words, name);
+                    }
+                }
+            }
+        }
+    }
+    if root.total > 0: ListView {
+        vertical-stretch: 1;
+        for channel in root.channels: ChannelItem {
+            channel: channel;
+            can-play: root.can-play;
+            clicked => { root.play(channel.index); }
+        }
+    }
+    if root.total == 0: Rectangle { vertical-stretch: 1; }
+}
+
 component SettingsRow inherits Rectangle {
     in property <string> label;
     in property <string> detail;
@@ -121,8 +1097,8 @@ export component AppWindow inherits Window {
     in property <string> data-path;
     in property <[string]> pages: ["Home", "Search", "Media Servers", "Live TV", "Radio", "Watchlist", "Add-ons", "Settings"];
     private property <[string]> hints: [
-        "Shelves from your add-ons and media servers will show here.",
-        "Search across add-ons and media servers.",
+        "",
+        "",
         "Connect Jellyfin, Emby or Plex to browse and play your own libraries.",
         "Add an M3U or Xtream source to watch channels with a guide.",
         "Radio stations will show here.",
@@ -131,8 +1107,100 @@ export component AppWindow inherits Window {
         ""
     ];
 
+    in property <[Shelf]> shelves;
+    in property <[AddonRow]> addons;
+    in property <bool> addon-busy;
+    in property <string> addon-status;
+    in property <bool> addon-status-is-error;
+    in-out property <string> addon-address;
+    in property <[Shelf]> search-shelves;
+    in property <string> search-note;
+    in-out property <string> search-query;
+    in property <bool> detail-open;
+    in property <Detail> detail;
+    in property <[int]> seasons;
+    in property <int> season;
+    in property <[EpisodeRow]> episodes;
+    in property <string> streams-title: "Streams";
+    in property <bool> streams-loading;
+    in property <string> streams-note;
+    in property <[StreamRow]> streams;
+    // Where the open film or episode would resume, in words; often empty.
+    in property <string> resume-note;
+    // Titles saved to watch later, newest first.
+    in property <[Poster]> watchlist;
+    // Titles to carry on with, shown first on Home when there are any.
+    in property <Shelf> continue-shelf;
+
+    in property <[SourceRow]> tv-sources;
+    in-out property <string> tv-address;
+    in property <bool> tv-busy;
+    in property <string> tv-status;
+    in property <bool> tv-status-is-error;
+    in property <[ChannelRow]> tv-channels;
+    in property <[string]> tv-groups;
+    in property <int> tv-total;
+    in-out property <string> tv-group;
+    in-out property <string> tv-words;
+    in property <[ChannelRow]> radio-channels;
+    in property <[string]> radio-groups;
+    in property <int> radio-total;
+    in-out property <string> radio-group;
+    in-out property <string> radio-words;
+    // False in a build without the player.
+    in property <bool> can-play-channels;
+
+    in property <bool> player-open;
+    in property <image> player-frame;
+    in property <string> player-title;
+    in property <string> player-subtitle;
+    in property <bool> player-paused;
+    in property <bool> player-busy;
+    in property <string> player-error;
+    in property <float> player-duration;
+    in property <float> player-position;
+    in property <string> player-time;
+    in property <[TrackRow]> player-audio;
+    in property <[TrackRow]> player-subtitles;
+    in property <bool> player-any-subtitle;
+    in property <bool> player-fullscreen;
+    // Which of the player's lists is open: 0 none, 1 audio, 2 subtitles.
+    in-out property <int> player-menu;
+    private property <int> home-page: 0;
+    private property <int> search-page: 1;
+    private property <int> tv-page: 3;
+    private property <int> radio-page: 4;
+    private property <int> watchlist-page: 5;
+    private property <int> addons-page: 6;
+    private property <int> settings-page: root.pages.length - 1;
+
     callback page-selected(int);
     callback dark-toggled(bool);
+    callback install-addon(string);
+    callback remove-addon(string);
+    callback search(string);
+    callback open-title(Poster);
+    callback close-detail();
+    callback season-selected(int);
+    callback episode-selected(string);
+    // Puts the open title on the watchlist, or takes it off.
+    callback toggle-watchlist();
+    callback add-tv-source(string);
+    callback remove-tv-source(string);
+    // Radio or television, the words to look for, the group ("" for all).
+    callback filter-channels(bool, string, string);
+    // Radio or television, and the channel's index.
+    callback play-channel(bool, int);
+    // The row of the stream list to play.
+    callback play-stream(int);
+    callback player-close();
+    callback player-toggle-pause();
+    callback player-seek(float);
+    callback player-skip(float);
+    callback player-choose-audio(int);
+    callback player-choose-subtitle(int);
+    callback player-toggle-fullscreen();
+    callback player-controls-shown(bool);
 
     title: "Haven";
     icon: @image-url("../../../assets/icon/haven-256.png");
@@ -152,6 +1220,8 @@ export component AppWindow inherits Window {
 
     HorizontalLayout {
         Rectangle {
+            // Hidden, not removed, under the player: pages keep their place.
+            visible: !root.player-open;
             width: 220px;
             background: Theme.surface;
 
@@ -160,19 +1230,34 @@ export component AppWindow inherits Window {
                 spacing: 4px;
                 alignment: start;
 
-                Text {
-                    text: "Haven";
-                    color: Theme.text;
-                    font-size: 20px;
-                    font-weight: 700;
-                    height: 44px;
-                    vertical-alignment: center;
-                    x: 16px;
+                HorizontalLayout {
+                    height: 68px;
+                    padding-left: 4px;
+                    spacing: 6px;
+                    alignment: start;
+                    // The brand: the full-size halo painting, scaled down.
+                    Image {
+                        width: 64px;
+                        height: 64px;
+                        y: 2px;
+                        source: @image-url("../../../assets/icon/haven.png");
+                        image-fit: contain;
+                        image-rendering: smooth;
+                        accessible-role: none;
+                    }
+                    Text {
+                        text: "Haven";
+                        color: Theme.text;
+                        font-size: 22px;
+                        font-weight: 700;
+                        vertical-alignment: center;
+                    }
                 }
                 for label[index] in root.pages: NavItem {
                     label: label;
                     selected: root.page == index;
                     clicked => {
+                        root.close-detail();
                         root.page = index;
                         root.page-selected(index);
                     }
@@ -186,23 +1271,407 @@ export component AppWindow inherits Window {
         }
 
         Rectangle {
+            visible: !root.player-open;
             horizontal-stretch: 1;
 
-            if root.page != root.pages.length - 1: EmptyPage {
+            if root.detail-open: detail-view := ScrollView {
+                content-width: self.visible-width;
+                content-height: detail-content.preferred-height;
+
+                detail-content := VerticalLayout {
+                    width: detail-view.visible-width;
+                    alignment: start;
+
+                    Rectangle {
+                        height: 220px;
+                        clip: true;
+                        background: Theme.surface;
+
+                        if root.detail.has-background: Image {
+                            width: 100%;
+                            height: 100%;
+                            source: root.detail.background;
+                            image-fit: cover;
+                        }
+                        Rectangle {
+                            background: @linear-gradient(180deg, transparent 35%, Theme.background 100%);
+                        }
+                        Button {
+                            x: 24px;
+                            y: 20px;
+                            text: "‹ Back";
+                            accessible-label: "Back";
+                            clicked => { root.close-detail(); }
+                        }
+                    }
+                    VerticalLayout {
+                        padding-left: 32px;
+                        padding-right: 32px;
+                        padding-bottom: 32px;
+                        spacing: 24px;
+
+                        HorizontalLayout {
+                            spacing: 24px;
+                            alignment: start;
+
+                            Rectangle {
+                                width: 180px;
+                                height: 270px;
+                                border-radius: 8px;
+                                clip: true;
+                                background: Theme.surface;
+                                border-width: 1px;
+                                border-color: Theme.border;
+                                if root.detail.has-poster: Image {
+                                    width: 100%;
+                                    height: 100%;
+                                    source: root.detail.poster;
+                                    image-fit: cover;
+                                }
+                            }
+                            VerticalLayout {
+                                width: detail-view.visible-width - 64px - 180px - 24px;
+                                alignment: start;
+                                spacing: 10px;
+
+                                Text {
+                                    text: root.detail.title;
+                                    color: Theme.text;
+                                    font-size: 28px;
+                                    font-weight: 700;
+                                    wrap: word-wrap;
+                                }
+                                if root.detail.facts != "": Text {
+                                    text: root.detail.facts;
+                                    color: Theme.text-dim;
+                                    wrap: word-wrap;
+                                }
+                                HorizontalLayout {
+                                    alignment: start;
+                                    Chip {
+                                        width: root.detail.saved ? 150px : 170px;
+                                        label: root.detail.saved ? "✓  On Watchlist" : "＋  Add to Watchlist";
+                                        selected: root.detail.saved;
+                                        clicked => { root.toggle-watchlist(); }
+                                    }
+                                }
+                                if root.detail.loading: Text {
+                                    text: "Loading details…";
+                                    color: Theme.text-dim;
+                                }
+                                if root.detail.error != "": Text {
+                                    text: root.detail.error;
+                                    color: Theme.text-dim;
+                                    wrap: word-wrap;
+                                }
+                                if root.detail.description != "": Text {
+                                    text: root.detail.description;
+                                    color: Theme.text;
+                                    wrap: word-wrap;
+                                }
+                                if root.detail.cast != "": Text {
+                                    text: "Cast: " + root.detail.cast;
+                                    color: Theme.text-dim;
+                                    font-size: 13px;
+                                    wrap: word-wrap;
+                                }
+                                if root.detail.director != "": Text {
+                                    text: "Director: " + root.detail.director;
+                                    color: Theme.text-dim;
+                                    font-size: 13px;
+                                    wrap: word-wrap;
+                                }
+                            }
+                        }
+
+                        if root.episodes.length > 0 || root.seasons.length > 0: VerticalLayout {
+                            spacing: 10px;
+
+                            SectionTitle { text: "Episodes"; }
+                            if root.seasons.length > 0: Rectangle {
+                                height: 30px;
+                                Flickable {
+                                    width: parent.width;
+                                    height: parent.height;
+                                    content-width: root.seasons.length * 108px;
+                                    content-height: self.height;
+                                    for number[index] in root.seasons: Chip {
+                                        x: index * 108px;
+                                        width: 100px;
+                                        label: number == 0 ? "Specials" : "Season " + number;
+                                        selected: number == root.season;
+                                        clicked => { root.season-selected(number); }
+                                    }
+                                }
+                            }
+                            for episode in root.episodes: EpisodeItem {
+                                episode: episode;
+                                clicked => { root.episode-selected(episode.id); }
+                            }
+                        }
+
+                        VerticalLayout {
+                            spacing: 10px;
+
+                            SectionTitle { text: root.streams-title; }
+                            if root.streams-loading: Text {
+                                text: "Looking for streams…";
+                                color: Theme.text-dim;
+                            }
+                            if root.streams-note != "": Text {
+                                text: root.streams-note;
+                                color: Theme.text-dim;
+                                wrap: word-wrap;
+                            }
+                            if root.resume-note != "": Text {
+                                text: root.resume-note;
+                                color: Theme.accent;
+                                wrap: word-wrap;
+                            }
+                            for stream[index] in root.streams: StreamItem {
+                                stream: stream;
+                                play => { root.play-stream(index); }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if !root.detail-open && root.page == root.search-page: search-view := ScrollView {
+                content-width: self.visible-width;
+                content-height: search-content.preferred-height;
+
+                search-content := VerticalLayout {
+                    width: search-view.visible-width;
+                    padding: 32px;
+                    spacing: 20px;
+                    alignment: start;
+
+                    PageTitle { text: "Search"; }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        LineEdit {
+                            text <=> root.search-query;
+                            placeholder-text: "Films and series";
+                            accessible-label: "Search";
+                            accepted(text) => { root.search(text); }
+                        }
+                        Button {
+                            text: "Search";
+                            primary: true;
+                            enabled: root.search-query != "";
+                            clicked => { root.search(root.search-query); }
+                        }
+                    }
+                    if root.search-note != "": Text {
+                        text: root.search-note;
+                        color: Theme.text-dim;
+                        wrap: word-wrap;
+                    }
+                    for shelf in root.search-shelves: ShelfRow {
+                        shelf: shelf;
+                        open(poster) => { root.open-title(poster); }
+                    }
+                }
+            }
+
+            if !root.detail-open && root.page == root.watchlist-page && root.watchlist.length == 0: EmptyPage {
+                title: "Watchlist";
+                hint: "Nothing saved yet. Open a film or series and choose Add to Watchlist.";
+            }
+            if !root.detail-open && root.page == root.watchlist-page && root.watchlist.length > 0: watchlist-view := ScrollView {
+                private property <length> step: 162px;
+                private property <length> line: 286px;
+                private property <int> columns: max(1, floor((self.visible-width - 64px + 12px) / self.step));
+                content-width: self.visible-width;
+                content-height: 32px + 62px + ceil(root.watchlist.length / self.columns) * self.line + 32px;
+
+                PageTitle {
+                    x: 32px;
+                    y: 32px;
+                    text: "Watchlist";
+                }
+                for poster[index] in root.watchlist: PosterCard {
+                    x: 32px + mod(index, watchlist-view.columns) * watchlist-view.step;
+                    y: 32px + 62px + floor(index / watchlist-view.columns) * watchlist-view.line;
+                    poster: poster;
+                    clicked => { root.open-title(poster); }
+                }
+            }
+
+            if !root.detail-open && root.page == root.tv-page: ChannelsPage {
+                title: "Live TV";
+                hint: "Add the address of an M3U playlist to see its channels here.";
+                channels: root.tv-channels;
+                groups: root.tv-groups;
+                total: root.tv-total;
+                group <=> root.tv-group;
+                words <=> root.tv-words;
+                can-play: root.can-play-channels;
+                filter(words, group) => { root.filter-channels(false, words, group); }
+                play(index) => { root.play-channel(false, index); }
+
+                HorizontalLayout {
+                    spacing: 8px;
+                    LineEdit {
+                        text <=> root.tv-address;
+                        placeholder-text: "https://…/playlist.m3u";
+                        enabled: !root.tv-busy;
+                        accessible-label: "Playlist address";
+                        accepted(text) => { root.add-tv-source(text); }
+                    }
+                    Button {
+                        text: root.tv-busy ? "Adding…" : "Add source";
+                        primary: true;
+                        enabled: !root.tv-busy && root.tv-address != "";
+                        clicked => { root.add-tv-source(root.tv-address); }
+                    }
+                }
+                if root.tv-status != "": Text {
+                    text: root.tv-status;
+                    color: root.tv-status-is-error ? (Theme.dark ? #ff8b8b : #b3261e) : Theme.text-dim;
+                    wrap: word-wrap;
+                }
+                for source in root.tv-sources: HorizontalLayout {
+                    spacing: 12px;
+                    Text {
+                        horizontal-stretch: 1;
+                        text: source.name + "  ·  " + (source.channels == 1 ? "1 entry" : source.channels + " entries") + "  ·  " + source.url;
+                        color: Theme.text-dim;
+                        font-size: 12px;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+                    Button {
+                        text: "Remove";
+                        accessible-label: "Remove " + source.name;
+                        clicked => { root.remove-tv-source(source.url); }
+                    }
+                }
+            }
+            if !root.detail-open && root.page == root.radio-page: ChannelsPage {
+                title: "Radio";
+                hint: "Stations marked as radio in your Live TV playlists show here.";
+                channels: root.radio-channels;
+                groups: root.radio-groups;
+                total: root.radio-total;
+                group <=> root.radio-group;
+                words <=> root.radio-words;
+                can-play: root.can-play-channels;
+                filter(words, group) => { root.filter-channels(true, words, group); }
+                play(index) => { root.play-channel(true, index); }
+            }
+
+            if !root.detail-open && root.page != root.home-page && root.page != root.search-page && root.page != root.tv-page && root.page != root.radio-page && root.page != root.watchlist-page && root.page != root.addons-page && root.page != root.settings-page: EmptyPage {
                 title: root.pages[root.page];
                 hint: root.hints[root.page];
             }
-            if root.page == root.pages.length - 1: VerticalLayout {
+
+            if !root.detail-open && root.page == root.home-page && root.addons.length == 0: VerticalLayout {
                 padding: 32px;
                 spacing: 12px;
                 alignment: start;
 
+                PageTitle { text: "Home"; }
                 Text {
-                    text: "Settings";
-                    color: Theme.text;
-                    font-size: 26px;
-                    font-weight: 700;
+                    text: "Install an add-on to fill Home with shelves of films and series.";
+                    color: Theme.text-dim;
+                    wrap: word-wrap;
                 }
+                HorizontalLayout {
+                    alignment: start;
+                    Button {
+                        text: "Open Add-ons";
+                        primary: true;
+                        clicked => {
+                            root.page = root.addons-page;
+                            root.page-selected(root.addons-page);
+                        }
+                    }
+                }
+            }
+            if !root.detail-open && root.page == root.home-page && root.addons.length > 0: home := ScrollView {
+                content-width: self.visible-width;
+                content-height: home-content.preferred-height;
+
+                home-content := VerticalLayout {
+                    width: home.visible-width;
+                    padding: 32px;
+                    spacing: 28px;
+                    alignment: start;
+
+                    PageTitle { text: "Home"; }
+                    if root.continue-shelf.items.length > 0: ShelfRow {
+                        shelf: root.continue-shelf;
+                        open(poster) => { root.open-title(poster); }
+                    }
+                    if root.shelves.length == 0: Text {
+                        text: "Your add-ons have no catalogues to show here.";
+                        color: Theme.text-dim;
+                        wrap: word-wrap;
+                    }
+                    for shelf in root.shelves: ShelfRow {
+                        shelf: shelf;
+                        open(poster) => { root.open-title(poster); }
+                    }
+                }
+            }
+
+            if !root.detail-open && root.page == root.addons-page: addons-view := ScrollView {
+                content-width: self.visible-width;
+                content-height: addons-content.preferred-height;
+
+                addons-content := VerticalLayout {
+                    width: addons-view.visible-width;
+                    padding: 32px;
+                    spacing: 12px;
+                    alignment: start;
+
+                    PageTitle { text: "Add-ons"; }
+                    Text {
+                        text: "Paste an add-on's address to install it. Its catalogues show up as shelves on Home.";
+                        color: Theme.text-dim;
+                        wrap: word-wrap;
+                    }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        LineEdit {
+                            text <=> root.addon-address;
+                            placeholder-text: "https://…/manifest.json";
+                            enabled: !root.addon-busy;
+                            accessible-label: "Add-on address";
+                            accepted(text) => { root.install-addon(text); }
+                        }
+                        Button {
+                            text: root.addon-busy ? "Installing…" : "Install";
+                            primary: true;
+                            enabled: !root.addon-busy && root.addon-address != "";
+                            clicked => { root.install-addon(root.addon-address); }
+                        }
+                    }
+                    if root.addon-status != "": Text {
+                        text: root.addon-status;
+                        color: root.addon-status-is-error ? (Theme.dark ? #ff8b8b : #b3261e) : Theme.text-dim;
+                        wrap: word-wrap;
+                    }
+                    Rectangle { height: 4px; }
+                    if root.addons.length == 0: Text {
+                        text: "No add-ons installed yet.";
+                        color: Theme.text-dim;
+                    }
+                    for addon in root.addons: AddonCard {
+                        addon: addon;
+                        remove => { root.remove-addon(addon.url); }
+                    }
+                }
+            }
+
+            if !root.detail-open && root.page == root.settings-page: VerticalLayout {
+                padding: 32px;
+                spacing: 12px;
+                alignment: start;
+
+                PageTitle { text: "Settings"; }
                 Rectangle { height: 8px; }
                 SettingsRow {
                     label: "Dark theme";
@@ -226,5 +1695,30 @@ export component AppWindow inherits Window {
                 }
             }
         }
+    }
+
+    if root.player-open: PlayerView {
+        frame: root.player-frame;
+        title: root.player-title;
+        subtitle: root.player-subtitle;
+        paused: root.player-paused;
+        busy: root.player-busy;
+        error: root.player-error;
+        duration: root.player-duration;
+        position: root.player-position;
+        time-text: root.player-time;
+        audio-tracks: root.player-audio;
+        subtitle-tracks: root.player-subtitles;
+        any-subtitle: root.player-any-subtitle;
+        fullscreen: root.player-fullscreen;
+        menu <=> root.player-menu;
+        close => { root.player-close(); }
+        toggle-pause => { root.player-toggle-pause(); }
+        seek(seconds) => { root.player-seek(seconds); }
+        skip(seconds) => { root.player-skip(seconds); }
+        choose-audio(id) => { root.player-choose-audio(id); }
+        choose-subtitle(id) => { root.player-choose-subtitle(id); }
+        toggle-fullscreen => { root.player-toggle-fullscreen(); }
+        controls-shown(shown) => { root.player-controls-shown(shown); }
     }
 }

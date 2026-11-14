@@ -1,7 +1,8 @@
 //! Shared foundations for Haven: where files live, the local database,
-//! user settings and API secrets. No UI code belongs here.
+//! user settings, API secrets and the shared HTTP client. No UI code belongs here.
 
 pub mod error;
+pub mod http;
 pub mod paths;
 pub mod secrets;
 pub mod settings;

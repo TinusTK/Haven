@@ -1,0 +1,25 @@
+{
+  "meta": {
+    "id": "tt0000004",
+    "type": "series",
+    "name": "Long Runner",
+    "poster": "https://images.example/poster/tt0000004.jpg",
+    "background": "https://images.example/background/tt0000004.jpg",
+    "description": "A made-up series.",
+    "releaseInfo": "2019-2025",
+    "runtime": "49 min",
+    "imdbRating": 8.4,
+    "genre": ["Old spelling"],
+    "genres": ["Drama", "Crime"],
+    "cast": ["Ada Example", "Ben Sample"],
+    "director": null,
+    "videos": [
+      { "id": "tt0000004:2:1", "title": "Return", "season": 2, "episode": 1, "released": "2020-03-01T05:00:00.000Z" },
+      { "id": "tt0000004:1:2", "name": "Second", "season": 1, "number": 2, "released": "2019-01-27T05:00:00.000Z" },
+      { "id": "tt0000004:1:1", "name": "Pilot", "title": "Pilot", "season": 1, "number": 1, "episode": 1 },
+      { "id": "tt0000004:0:1", "title": "Behind the scenes", "season": "0", "episode": "1" },
+      { "title": "No id, must be skipped", "season": 1, "episode": 3 },
+      "not an object"
+    ]
+  }
+}

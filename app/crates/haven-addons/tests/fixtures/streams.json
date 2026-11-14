@@ -1,0 +1,12 @@
+{
+  "streams": [
+    { "name": "Sample 1080p", "description": "Direct file, 1.2 GB", "url": "https://media.example/film.mp4" },
+    { "name": "Sample", "title": "Older add-ons put the text here", "url": "https://media.example/film.m3u8", "behaviorHints": { "notWebReady": true } },
+    { "name": "Watch on the web", "externalUrl": "https://shop.example/film" },
+    { "name": "Trailer", "ytId": "abcdefghijk" },
+    { "name": "Swarm", "infoHash": "0123456789abcdef0123456789abcdef01234567", "fileIdx": 0 },
+    { "name": "Names no source, must be skipped" },
+    { "name": "Blank address, must be skipped", "url": "  " },
+    42
+  ]
+}

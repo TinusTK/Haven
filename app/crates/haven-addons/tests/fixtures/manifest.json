@@ -1,0 +1,41 @@
+{
+  "id": "org.example.sample",
+  "version": "1.2.0",
+  "name": "Sample Catalogue",
+  "description": "A made-up add-on in the shape real ones use.",
+  "logo": "https://addon.example/logo.png",
+  "resources": ["catalog", "meta", { "name": "stream", "types": ["movie"], "idPrefixes": ["tt"] }],
+  "types": ["movie", "series"],
+  "idPrefixes": ["tt"],
+  "catalogs": [
+    {
+      "type": "movie",
+      "id": "top",
+      "name": "Popular",
+      "extra": [{ "name": "genre", "options": ["Action", "Drama"] }, { "name": "search" }, { "name": "skip" }],
+      "extraSupported": ["search", "genre", "skip"]
+    },
+    {
+      "type": "series",
+      "id": "top",
+      "name": "Popular",
+      "extra": [{ "name": "genre" }, { "name": "skip" }]
+    },
+    {
+      "type": "movie",
+      "id": "year",
+      "name": "New",
+      "extra": [{ "name": "genre", "isRequired": true, "options": ["2026", "2025"] }, { "name": "skip" }],
+      "extraSupported": ["genre", "skip"],
+      "extraRequired": ["genre"]
+    },
+    {
+      "type": "series",
+      "id": "last-videos",
+      "name": "Last videos",
+      "extra": [{ "name": "lastVideosIds", "isRequired": true, "optionsLimit": 500 }]
+    },
+    { "type": "channel", "id": "picks" }
+  ],
+  "behaviorHints": { "newEpisodeNotifications": true }
+}

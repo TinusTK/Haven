@@ -11,12 +11,30 @@ use haven_core::{
 };
 use slint::{ComponentHandle, Model};
 
+#[cfg(debug_assertions)]
+mod devtools;
+mod library;
+mod livetv;
+#[cfg(feature = "player")]
+mod player;
+
 slint::include_modules!();
 
 fn main() -> Result<(), Box<dyn Error>> {
+    #[cfg(debug_assertions)]
+    let paths = match std::env::var_os("HAVEN_DATA_DIR") {
+        Some(folder) => AppPaths::at(folder)?,
+        None => AppPaths::discover()?,
+    };
+    #[cfg(not(debug_assertions))]
     let paths = AppPaths::discover()?;
     let store = Rc::new(Store::open(&paths.database())?);
     let settings = Rc::new(RefCell::new(Settings::load(&store)?));
+
+    // Must run before the first window exists: the player draws video with
+    // OpenGL, so the window has to be drawn with OpenGL too.
+    #[cfg(feature = "player")]
+    slint::BackendSelector::new().require_opengl().select()?;
 
     let ui = AppWindow::new()?;
     ui.set_version(env!("CARGO_PKG_VERSION").into());
@@ -40,7 +58,54 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
     });
 
+    // Network work (add-ons, posters) runs on these threads, never on the
+    // UI thread.
+    let tasks = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(4)
+        .thread_name("haven-net")
+        .enable_all()
+        .build()?;
+    let library = library::Library::start(&ui, store.clone(), tasks.handle().clone())?;
+
+    let live = livetv::LiveTv::start(&ui, store.clone(), tasks.handle().clone())?;
+
+    #[cfg(feature = "player")]
+    let player = player::Player::start(&ui, store.clone())?;
+    #[cfg(feature = "player")]
+    {
+        let playing = player.clone();
+        library.set_player(move |request| playing.play(request));
+        let playing = player.clone();
+        live.set_player(move |request| playing.play(request));
+        let library = std::rc::Rc::downgrade(&library);
+        player.on_closed(move || {
+            if let Some(library) = library.upgrade() {
+                library.player_closed();
+            }
+        });
+    }
+
+    #[cfg(debug_assertions)]
+    let _devtools = devtools::start(&ui);
+
     ui.run()?;
+    // Don't wait for downloads that are still running.
+    tasks.shutdown_background();
+
+    #[cfg(feature = "player")]
+    {
+        player.leaving();
+        // Dropping the window tears down its renderer, which frees the
+        // video's OpenGL objects while that is still possible. Only then
+        // can mpv be ended.
+        #[cfg(debug_assertions)]
+        drop(_devtools);
+        drop((library, live));
+        drop(ui);
+        player.finish();
+    }
+    #[cfg(not(feature = "player"))]
+    drop((library, live));
     Ok(())
 }
 
