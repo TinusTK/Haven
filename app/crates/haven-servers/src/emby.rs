@@ -579,6 +579,11 @@ pub(crate) fn read_streams(server: &Server, item: &str, answer: &Value) -> Vec<S
                     facts.join(" · ")
                 }),
                 url: Some(url),
+                // A server that gathers streams names where each came from.
+                provider: version
+                    .get("Remux")
+                    .and_then(|extra| extra.get("ProviderInfo"))
+                    .and_then(|info| text(info, "source")),
                 ..Stream::default()
             })
         })
@@ -767,7 +772,8 @@ mod tests {
     fn gathered_streams_play_from_their_own_address() {
         let info = json!({"MediaSources": [
             {"Id": "a", "Name": "Provider One 1080p WEB", "Protocol": "Http", "IsRemote": true,
-             "Path": "https://streams.example/one.mkv", "Container": "mkv"},
+             "Path": "https://streams.example/one.mkv", "Container": "mkv",
+             "Remux": {"ProviderInfo": {"source": "Provider One"}}},
             {"Name": "Provider Two 4K", "Protocol": "Http", "Path": "https://streams.example/two.mp4",
              "MediaStreams": [{"Type": "Video", "Codec": "hevc", "Width": 3840, "Height": 2160}]},
             {"Id": "c", "Name": "A file", "Protocol": "File", "Path": "/media/file.mkv"},
@@ -780,6 +786,8 @@ mod tests {
         assert_eq!(streams[0].description.as_deref(), Some("MKV"));
         assert_eq!(streams[1].name.as_deref(), Some("4K"));
         assert_eq!(streams[1].url.as_deref(), Some("https://streams.example/two.mp4"));
+        assert_eq!(streams[0].provider.as_deref(), Some("Provider One"));
+        assert_eq!(streams[1].provider, None);
         assert_eq!(
             streams[2].url.as_deref(),
             Some("http://media.example/Videos/m1/stream?static=true&MediaSourceId=c&api_key=tok%20en")

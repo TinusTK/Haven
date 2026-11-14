@@ -30,6 +30,7 @@ impl Library {
         self.streams.set_vec(Vec::new());
         self.stream_sources.borrow_mut().clear();
         self.server_rows.set(0);
+        self.show_stream_groups();
         *self.listed.borrow_mut() = None;
         self.show_resume_note();
     }
@@ -75,6 +76,7 @@ impl Library {
         self.streams.set_vec(Vec::new());
         self.stream_sources.borrow_mut().clear();
         self.server_rows.set(0);
+        self.show_stream_groups();
         *self.listed.borrow_mut() =
             Some(Listed { video_id: video_id.to_owned(), detail: String::new() });
         self.show_resume_note();
@@ -186,6 +188,9 @@ impl Library {
                     self.player.borrow().is_some() || !self.cast_devices.borrow().is_empty();
                 for stream in &streams {
                     let Some(mut row) = stream_row(source, stream) else { continue };
+                    // Its provider: the add-on a server got it from, if the
+                    // server says; else the server or add-on that answered.
+                    row.group = stream.provider.as_deref().unwrap_or(source).into();
                     // Only plain web addresses reach the player.
                     let address = stream
                         .url
@@ -229,6 +234,7 @@ impl Library {
                 self.play_stream(at as i32);
             }
         }
+        self.show_stream_groups();
         let pending = self.streams_pending.get().saturating_sub(1);
         self.streams_pending.set(pending);
         if pending == 0 {
@@ -239,6 +245,25 @@ impl Library {
                 ""
             };
             self.set_streams_state(None, false, note);
+        }
+    }
+
+    /// Lists the providers of the places to watch, in the order they
+    /// first appear, each with how many it gave.
+    fn show_stream_groups(&self) {
+        let mut groups: Vec<crate::StreamGroup> = Vec::new();
+        for row in self.streams.iter() {
+            match groups.iter_mut().find(|group| group.name == row.group) {
+                Some(group) => group.count += 1,
+                None => groups.push(crate::StreamGroup { name: row.group.clone(), count: 1 }),
+            }
+        }
+        if let Some(ui) = self.ui.upgrade() {
+            // A chosen provider that is gone falls back to all.
+            if !groups.iter().any(|group| group.name == ui.get_stream_group()) {
+                ui.set_stream_group("".into());
+            }
+            ui.set_stream_groups(slint::ModelRc::new(slint::VecModel::from(groups)));
         }
     }
 
@@ -371,5 +396,6 @@ fn stream_row(source: &str, stream: &Stream) -> Option<StreamRow> {
         detail: one_line(stream.details().unwrap_or_default()).into(),
         kind: kind.into(),
         playable: false,
+        group: source.into(),
     })
 }

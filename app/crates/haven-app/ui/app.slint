@@ -58,6 +58,15 @@ export struct StreamRow {
     kind: string,
     // Haven's own player can open it.
     playable: bool,
+    // Who provided it: an add-on's name, or for a media server the
+    // add-on it got the stream from (else the server itself).
+    group: string,
+}
+
+// A provider of places to watch, with how many it gave.
+export struct StreamGroup {
+    name: string,
+    count: int,
 }
 
 // One audio or subtitle track of what is playing.
@@ -1758,6 +1767,10 @@ export component AppWindow inherits Window {
     in property <bool> streams-loading;
     in property <string> streams-note;
     in property <[StreamRow]> streams;
+    // The providers of those, to narrow the list to one; and the chosen
+    // one ("" for all).
+    in property <[StreamGroup]> stream-groups;
+    in-out property <string> stream-group;
     // Where the open film or episode would resume, in words; often empty.
     in property <string> resume-note;
     // Titles saved to watch later, newest first.
@@ -2189,57 +2202,6 @@ export component AppWindow inherits Window {
                             }
                         }
 
-                        if root.offers-note != "" || root.offers.length > 0: VerticalLayout {
-                            spacing: 8px;
-
-                            SectionTitle { text: "Where to watch"; }
-                            if root.offers-note != "": Text {
-                                text: root.offers-note;
-                                color: Theme.text-dim;
-                                wrap: word-wrap;
-                            }
-                            for offer in root.offers: Rectangle {
-                                height: 40px;
-                                border-radius: 8px;
-                                background: Theme.surface;
-                                border-width: 1px;
-                                border-color: Theme.border;
-                                HorizontalLayout {
-                                    padding-left: 14px;
-                                    padding-right: 14px;
-                                    spacing: 12px;
-                                    Text {
-                                        horizontal-stretch: 1;
-                                        text: offer.name;
-                                        color: Theme.text;
-                                        font-weight: 600;
-                                        vertical-alignment: center;
-                                        overflow: elide;
-                                    }
-                                    Text {
-                                        text: offer.ways;
-                                        color: Theme.text-dim;
-                                        font-size: 12px;
-                                        vertical-alignment: center;
-                                    }
-                                }
-                            }
-                            if root.offers.length > 0: HorizontalLayout {
-                                spacing: 12px;
-                                alignment: start;
-                                if root.offers-link != "": Button {
-                                    text: "Open these in your web browser";
-                                    clicked => { root.open-link(root.offers-link); }
-                                }
-                                Text {
-                                    text: "Availability from JustWatch, by way of TMDB.";
-                                    color: Theme.text-dim;
-                                    font-size: 12px;
-                                    vertical-alignment: center;
-                                }
-                            }
-                        }
-
                         VerticalLayout {
                             spacing: 10px;
 
@@ -2292,9 +2254,94 @@ export component AppWindow inherits Window {
                                 font-size: 12px;
                                 wrap: word-wrap;
                             }
-                            for stream[index] in root.streams: StreamItem {
-                                stream: stream;
-                                play => { root.play-stream(index); }
+                            // Narrow the list to one provider when there are several.
+                            if root.stream-groups.length > 1: Rectangle {
+                                height: 30px;
+                                Flickable {
+                                    width: parent.width;
+                                    height: parent.height;
+                                    content-width: group-chips.preferred-width;
+                                    content-height: self.height;
+                                    group-chips := HorizontalLayout {
+                                        spacing: 8px;
+                                        alignment: start;
+                                        Chip {
+                                            label: "All  " + root.streams.length;
+                                            selected: root.stream-group == "";
+                                            clicked => { root.stream-group = ""; }
+                                        }
+                                        for group in root.stream-groups: Chip {
+                                            label: group.name + "  " + group.count;
+                                            selected: root.stream-group == group.name;
+                                            clicked => { root.stream-group = group.name; }
+                                        }
+                                    }
+                                }
+                            }
+                            // Rows of other providers take up no room.
+                            VerticalLayout {
+                                for stream[index] in root.streams: Rectangle {
+                                    private property <bool> shown: root.stream-group == "" || stream.group == root.stream-group;
+                                    height: self.shown ? 68px : 0px;
+                                    visible: self.shown;
+                                    StreamItem {
+                                        y: 0;
+                                        height: 58px;
+                                        stream: stream;
+                                        play => { root.play-stream(index); }
+                                    }
+                                }
+                            }
+                        }
+
+                        if root.offers-note != "" || root.offers.length > 0: VerticalLayout {
+                            spacing: 8px;
+
+                            SectionTitle { text: "Where to watch"; }
+                            if root.offers-note != "": Text {
+                                text: root.offers-note;
+                                color: Theme.text-dim;
+                                wrap: word-wrap;
+                            }
+                            for offer in root.offers: Rectangle {
+                                height: 40px;
+                                border-radius: 8px;
+                                background: Theme.surface;
+                                border-width: 1px;
+                                border-color: Theme.border;
+                                HorizontalLayout {
+                                    padding-left: 14px;
+                                    padding-right: 14px;
+                                    spacing: 12px;
+                                    Text {
+                                        horizontal-stretch: 1;
+                                        text: offer.name;
+                                        color: Theme.text;
+                                        font-weight: 600;
+                                        vertical-alignment: center;
+                                        overflow: elide;
+                                    }
+                                    Text {
+                                        text: offer.ways;
+                                        color: Theme.text-dim;
+                                        font-size: 12px;
+                                        vertical-alignment: center;
+                                    }
+                                }
+                            }
+                            if root.offers.length > 0: HorizontalLayout {
+                                spacing: 12px;
+                                alignment: start;
+                                if root.offers-link != "": Button {
+                                    text: "Open these in your web browser";
+                                    clicked => { root.open-link(root.offers-link); }
+                                }
+                                Text {
+                                    text: "Availability from JustWatch, by way of TMDB.";
+                                    color: Theme.text-dim;
+                                    font-size: 12px;
+                                    vertical-alignment: center;
+                                }
                             }
                         }
                     }

@@ -1889,7 +1889,7 @@ dependencies = [
 
 [[package]]
 name = "haven-addons"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "haven-core",
  "reqwest",
@@ -1900,7 +1900,7 @@ dependencies = [
 
 [[package]]
 name = "haven-app"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "chrono",
  "haven-addons",
@@ -1923,7 +1923,7 @@ dependencies = [
 
 [[package]]
 name = "haven-cast"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "mdns-sd",
  "rust_cast",
@@ -1932,7 +1932,7 @@ dependencies = [
 
 [[package]]
 name = "haven-core"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "directories",
  "reqwest",
@@ -1946,7 +1946,7 @@ dependencies = [
 
 [[package]]
 name = "haven-livetv"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "serde_json",
  "thiserror 2.0.21",
@@ -1954,7 +1954,7 @@ dependencies = [
 
 [[package]]
 name = "haven-metadata"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "haven-addons",
  "haven-core",
@@ -1965,7 +1965,7 @@ dependencies = [
 
 [[package]]
 name = "haven-player"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "glow",
  "libmpv2",
@@ -1977,7 +1977,7 @@ dependencies = [
 
 [[package]]
 name = "haven-servers"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "haven-addons",
  "haven-core",
@@ -1990,7 +1990,7 @@ dependencies = [
 
 [[package]]
 name = "haven-tracking"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "haven-core",
  "reqwest",

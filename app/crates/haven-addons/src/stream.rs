@@ -22,6 +22,11 @@ pub struct Stream {
     pub yt_id: Option<String>,
     #[serde(default, rename = "infoHash")]
     pub info_hash: Option<String>,
+    /// Who provided the stream, when whoever hands it on says so (a
+    /// media server that gathers streams names the add-on each came
+    /// from). Never read from an add-on's own answer.
+    #[serde(skip)]
+    pub provider: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

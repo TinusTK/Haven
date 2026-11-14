@@ -272,6 +272,7 @@ fn act(ui: &AppWindow, action: &str) {
                 window.dispatch_event(WindowEvent::PointerReleased { position, button });
             }
         }
+        "streamgroup" => ui.set_stream_group(rest.trim().into()),
         "volume" => ui.invoke_player_set_volume(number),
         "mute" => ui.invoke_player_toggle_mute(),
         "passthrough" => ui.invoke_player_set_passthrough(number > 0.0),
@@ -382,7 +383,7 @@ fn act(ui: &AppWindow, action: &str) {
             let detail = ui.get_detail();
             eprintln!(
                 "haven-sources: title=\"{}\" facts=\"{}\" poster={} background={} error=\"{}\" \
-                 heading=\"{}\" loading={} note=\"{}\" episodes={} rows=[{}]",
+                 heading=\"{}\" loading={} note=\"{}\" episodes={} groups=[{}] rows=[{}]",
                 detail.title,
                 detail.facts,
                 detail.has_poster,
@@ -392,6 +393,11 @@ fn act(ui: &AppWindow, action: &str) {
                 ui.get_streams_loading(),
                 ui.get_streams_note(),
                 ui.get_episodes().row_count(),
+                ui.get_stream_groups()
+                    .iter()
+                    .map(|group| format!("{}:{}", group.name, group.count))
+                    .collect::<Vec<_>>()
+                    .join("|"),
                 ui.get_streams()
                     .iter()
                     .map(|row| format!(
