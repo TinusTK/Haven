@@ -52,12 +52,25 @@ pub fn resource_url(
     id: &str,
     extra: Option<(&str, &str)>,
 ) -> Result<String> {
+    resource_url_with(manifest_url, resource, kind, id, extra.as_slice())
+}
+
+/// As [`resource_url`], with any number of extra options
+/// (`…/<id>/<name>=<value>&<name>=<value>.json`).
+pub fn resource_url_with(
+    manifest_url: &str,
+    resource: &str,
+    kind: &str,
+    id: &str,
+    extras: &[(&str, &str)],
+) -> Result<String> {
     let invalid = || Error::InvalidAddress(manifest_url.to_owned());
     let mut url = web_url(manifest_url).map_err(|_| invalid())?;
     let folder = url.path().strip_suffix("manifest.json").ok_or_else(invalid)?;
     let mut path = format!("{folder}{}/{}/{}", encoded(resource), encoded(kind), encoded(id));
-    if let Some((name, value)) = extra {
-        path.push_str(&format!("/{}={}", encoded(name), encoded(value)));
+    for (at, (name, value)) in extras.iter().enumerate() {
+        path.push(if at == 0 { '/' } else { '&' });
+        path.push_str(&format!("{}={}", encoded(name), encoded(value)));
     }
     path.push_str(".json");
     url.set_path(&path);

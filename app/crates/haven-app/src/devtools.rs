@@ -20,7 +20,13 @@
 //!   `tvstate`, `signin <jellyfin|emby> <address> <user> [password]`,
 //!   `open <type> <id>`, `servers`, `connect <0|1>` (Trakt, Simkl),
 //!   `tracking`, `findcast`, `cast` (print the casting state),
-//!   `snap <file.png>`, `state` (print the player's state).
+//!   `checkservers`, `xtream <server> <user> <password>`,
+//!   `explore <source> <kind> <genre>` (genre -1 for all), `more`,
+//!   `explorestate`, `shelves` (print Home's shelves), `sources` (print
+//!   the places to watch), `snap <file.png>`, `state` (print the
+//!   player's state).
+//! - `HAVEN_TMDB_API=<address>` with `HAVEN_TMDB_IMAGES=<address>`: ask a
+//!   stand-in for TMDB (read in `library.rs`).
 //! - `HAVEN_PUMP=<seconds>`: draw the window that often even when it is
 //!   hidden behind others (macOS does not draw a covered window, and the
 //!   player only starts once the window draws).
@@ -101,9 +107,14 @@ fn act(ui: &AppWindow, action: &str) {
             ui.invoke_filter_channels(false, ui.get_tv_words(), rest.trim().into());
         }
         "tvstate" => eprintln!(
-            "haven-tv: status=\"{}\" sources={} tv={}/{} radio={}/{} groups={}",
+            "haven-tv: status=\"{}\" xtream=\"{}\" sources=[{}] tv={}/{} radio={}/{} groups={}",
             ui.get_tv_status(),
-            ui.get_tv_sources().row_count(),
+            ui.get_xtream_status(),
+            ui.get_tv_sources()
+                .iter()
+                .map(|source| format!("{}: {} ({})", source.name, source.detail, source.channels))
+                .collect::<Vec<_>>()
+                .join(" | "),
             ui.get_tv_channels().row_count(),
             ui.get_tv_total(),
             ui.get_radio_channels().row_count(),
@@ -127,9 +138,18 @@ fn act(ui: &AppWindow, action: &str) {
         "servers" => {
             let shelves = ui.get_server_shelves();
             eprintln!(
-                "haven-servers: status=\"{}\" servers={} shelves=[{}]",
+                "haven-servers: status=\"{}\" servers=[{}] shelves=[{}]",
                 ui.get_server_status(),
-                ui.get_servers().row_count(),
+                ui.get_servers()
+                    .iter()
+                    .map(|server| format!(
+                        "{} {} {}",
+                        server.name,
+                        server.kind,
+                        ["checking", "online", "offline"][server.state.clamp(0, 2) as usize]
+                    ))
+                    .collect::<Vec<_>>()
+                    .join(" | "),
                 shelves
                     .iter()
                     .map(|shelf| format!(
@@ -142,6 +162,110 @@ fn act(ui: &AppWindow, action: &str) {
                     .join(" | "),
             );
         }
+        "checkservers" => ui.invoke_check_servers(),
+        "xtream" => {
+            let mut parts = rest.split_whitespace();
+            let server = parts.next().unwrap_or_default();
+            let user = parts.next().unwrap_or_default();
+            let password = parts.next().unwrap_or_default();
+            ui.invoke_add_xtream(server.into(), user.into(), password.into());
+        }
+        "explore" => {
+            let mut parts = rest.split_whitespace().map(|part| part.parse::<i32>().unwrap_or(0));
+            let source = parts.next().unwrap_or(0);
+            let kind = parts.next().unwrap_or(0);
+            let genre = parts.next().unwrap_or(-1);
+            ui.invoke_explore_pick(source, kind, genre);
+        }
+        "more" => ui.invoke_explore_load_more(),
+        "explorestate" => {
+            let names = |rows: slint::ModelRc<slint::SharedString>| {
+                rows.iter().map(|name| name.to_string()).collect::<Vec<_>>().join("|")
+            };
+            let items = ui.get_explore_items();
+            eprintln!(
+                "haven-explore: sources=[{}] source={} kinds=[{}] kind={} genres=[{}] genre={} \
+                 items={} pictures={} loading={} more={} note=\"{}\" first=[{}]",
+                names(ui.get_explore_sources()),
+                ui.get_explore_source(),
+                names(ui.get_explore_kinds()),
+                ui.get_explore_kind(),
+                names(ui.get_explore_genres()),
+                ui.get_explore_genre(),
+                items.row_count(),
+                items.iter().filter(|poster| poster.has_image).count(),
+                ui.get_explore_loading(),
+                ui.get_explore_more(),
+                ui.get_explore_note(),
+                items
+                    .iter()
+                    .take(3)
+                    .map(|poster| format!("{} {} {}", poster.kind, poster.id, poster.title))
+                    .collect::<Vec<_>>()
+                    .join(" | "),
+            );
+        }
+        "shelves" => {
+            let list = |name: &str, shelves: slint::ModelRc<crate::Shelf>| {
+                eprintln!(
+                    "haven-home: {name}=[{}]",
+                    shelves
+                        .iter()
+                        .map(|shelf| format!(
+                            "{} ({}):{}/{}{}",
+                            shelf.title,
+                            shelf.source,
+                            shelf.items.row_count(),
+                            shelf.items.iter().filter(|poster| poster.has_image).count(),
+                            if shelf.error.is_empty() { String::new() } else { format!(" ERROR {}", shelf.error) },
+                        ))
+                        .collect::<Vec<_>>()
+                        .join(" | "),
+                );
+            };
+            list("servers", ui.get_server_shelves());
+            list("addons", ui.get_shelves());
+            list("tmdb", ui.get_catalog_shelves());
+            list("search", ui.get_search_shelves());
+        }
+        "sources" => {
+            let detail = ui.get_detail();
+            eprintln!(
+                "haven-sources: title=\"{}\" facts=\"{}\" poster={} background={} error=\"{}\" \
+                 heading=\"{}\" loading={} note=\"{}\" episodes={} rows=[{}]",
+                detail.title,
+                detail.facts,
+                detail.has_poster,
+                detail.has_background,
+                detail.error,
+                ui.get_streams_title(),
+                ui.get_streams_loading(),
+                ui.get_streams_note(),
+                ui.get_episodes().row_count(),
+                ui.get_streams()
+                    .iter()
+                    .map(|row| format!(
+                        "{}{} · {} · {} · {}",
+                        if row.playable { "▶ " } else { "" },
+                        row.name,
+                        row.source,
+                        row.detail,
+                        row.kind
+                    ))
+                    .collect::<Vec<_>>()
+                    .join(" | "),
+            );
+        }
+        "episode" => ui.invoke_episode_selected(rest.trim().into()),
+        "episodes" => eprintln!(
+            "haven-episodes: season={} [{}]",
+            ui.get_season(),
+            ui.get_episodes()
+                .iter()
+                .map(|row| format!("{} {} {}", row.id, row.number, row.title))
+                .collect::<Vec<_>>()
+                .join(" | "),
+        ),
         "connect" => ui.invoke_tracking_connect(number as i32),
         "tracking" => eprintln!(
             "haven-tracking: status=\"{}\" keys=\"{}\" rows=[{}]",

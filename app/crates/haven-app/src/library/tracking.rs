@@ -123,6 +123,9 @@ impl Library {
             Ok(()) => {
                 *self.keys.borrow_mut() = keys.resolved(&self.secrets_file);
                 ui.set_keys_status("Keys saved.".into());
+                // A TMDB key turns the built-in catalogue on or off.
+                self.reload_catalog();
+                self.rebuild_explore();
             }
             Err(err) => ui.set_keys_status(format!("Could not save the keys: {err}").into()),
         }

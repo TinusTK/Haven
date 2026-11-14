@@ -4,11 +4,13 @@
 use haven_addons::{MetaDetail, MetaPreview, Stream, Video};
 use serde_json::{Value, json};
 
-use crate::{Client, Error, Kind, Library, Result, Server, list, number, query, text, title_id};
+use crate::{
+    Candidate, Client, Error, Kind, Library, Result, Server, Wanted, best_match, list, number,
+    quality, query, size, text, title_id,
+};
 
 /// One tick is 100 nanoseconds.
 const TICKS_PER_SECOND: f64 = 10_000_000.0;
-const LIST_LENGTH: u32 = 300;
 
 fn headers(client: &Client, kind: Kind, token: Option<&str>) -> Vec<(&'static str, String)> {
     let mut value = format!(
@@ -86,10 +88,16 @@ pub async fn latest(client: &Client, server: &Server, library: &str) -> Result<V
     Ok(read_previews(server, items.as_array().map_or(&[], Vec::as_slice)))
 }
 
-pub async fn all(client: &Client, server: &Server, library: &str) -> Result<Vec<MetaPreview>> {
+pub async fn page(
+    client: &Client,
+    server: &Server,
+    library: &str,
+    start: u32,
+    length: u32,
+) -> Result<Vec<MetaPreview>> {
     let path = format!(
         "/Users/{}/Items?ParentId={}&Recursive=true&IncludeItemTypes=Movie,Series\
-         &SortBy=SortName&SortOrder=Ascending&Limit={LIST_LENGTH}",
+         &SortBy=SortName&SortOrder=Ascending&StartIndex={start}&Limit={length}",
         server.user_id,
         query(library)
     );
@@ -105,6 +113,74 @@ pub async fn search(client: &Client, server: &Server, words: &str) -> Result<Vec
     );
     let items = get(client, server, &path).await?;
     Ok(read_previews(server, list(&items, "Items")))
+}
+
+pub async fn online(client: &Client, server: &Server) -> bool {
+    let url = format!("{}/System/Info/Public", server.address);
+    client.call(&url, &headers(client, server.kind, None), None).await.is_ok()
+}
+
+/// A title's ids at IMDb and TMDB, as the server recorded them.
+fn provider_ids(item: &Value) -> (Option<String>, Option<String>) {
+    let ids = item.get("ProviderIds");
+    // The keys' case differs between servers and versions.
+    let id = |name: &str| {
+        ids.and_then(Value::as_object)?
+            .iter()
+            .find(|(key, _)| key.eq_ignore_ascii_case(name))
+            .and_then(|(_, value)| value.as_str())
+            .map(str::trim)
+            .filter(|id| !id.is_empty())
+            .map(str::to_owned)
+    };
+    (id("Imdb"), id("Tmdb"))
+}
+
+pub(crate) fn read_candidates(items: &Value) -> Vec<Candidate> {
+    list(items, "Items")
+        .iter()
+        .filter_map(|item| {
+            let (imdb, tmdb) = provider_ids(item);
+            Some(Candidate {
+                id: text(item, "Id")?,
+                name: text(item, "Name")?,
+                year: text(item, "ProductionYear"),
+                imdb,
+                tmdb,
+            })
+        })
+        .collect()
+}
+
+/// The id of the episode with that season and number, from a series'
+/// episode list.
+pub(crate) fn read_episode(episodes: &Value, season: u32, number_in_season: u32) -> Option<String> {
+    list(episodes, "Items")
+        .iter()
+        .find(|episode| {
+            number(episode, "ParentIndexNumber") == Some(f64::from(season))
+                && number(episode, "IndexNumber") == Some(f64::from(number_in_season))
+        })
+        .and_then(|episode| text(episode, "Id"))
+}
+
+pub async fn find(client: &Client, server: &Server, wanted: &Wanted) -> Result<Option<String>> {
+    if wanted.name.trim().is_empty() {
+        return Ok(None);
+    }
+    let path = format!(
+        "/Users/{}/Items?SearchTerm={}&Recursive=true&IncludeItemTypes={}&Fields=ProviderIds&Limit=25",
+        server.user_id,
+        query(wanted.name.trim()),
+        if wanted.series { "Series" } else { "Movie" },
+    );
+    let candidates = read_candidates(&get(client, server, &path).await?);
+    let Some(found) = best_match(wanted, &candidates) else { return Ok(None) };
+    let Some((season, episode)) = wanted.episode else {
+        return Ok((!wanted.series).then(|| found.id.clone()));
+    };
+    let path = format!("/Shows/{}/Episodes?UserId={}", query(&found.id), server.user_id);
+    Ok(read_episode(&get(client, server, &path).await?, season, episode))
 }
 
 fn image(server: &Server, item: &str, which: &str, height: u32) -> String {
@@ -153,6 +229,7 @@ pub async fn meta(client: &Client, server: &Server, item: &str) -> Result<MetaDe
 pub(crate) fn read_detail(server: &Server, detail: &Value, episodes: &Value) -> Option<MetaDetail> {
     let id = text(detail, "Id")?;
     let series = text(detail, "Type").as_deref() == Some("Series");
+    let (imdb_id, tmdb_id) = provider_ids(detail);
     let people = |role: &str| -> Vec<String> {
         list(detail, "People")
             .iter()
@@ -190,21 +267,80 @@ pub(crate) fn read_detail(server: &Server, detail: &Value, episodes: &Value) -> 
         cast: people("Actor"),
         director: people("Director"),
         videos,
+        imdb_id,
+        tmdb_id,
     })
 }
 
-/// The file as it is on the server. The token goes in the address because
-/// the player, not Haven's own HTTP client, opens it.
-pub fn streams(server: &Server, item: &str) -> Vec<Stream> {
+fn file_address(server: &Server, item: &str, version: Option<&str>) -> String {
+    let mut address =
+        format!("{}/Videos/{}/stream?static=true", server.address, query(item));
+    if let Some(version) = version {
+        address.push_str(&format!("&MediaSourceId={}", query(version)));
+    }
+    address.push_str(&format!("&api_key={}", query(&server.token)));
+    address
+}
+
+/// Every version of the film or episode the server holds, each as the
+/// file is stored. The token goes in the address because the player, not
+/// Haven's own HTTP client, opens it.
+pub async fn streams(client: &Client, server: &Server, item: &str) -> Result<Vec<Stream>> {
+    let detail =
+        get(client, server, &format!("/Users/{}/Items/{}", server.user_id, query(item))).await?;
+    Ok(read_streams(server, item, &detail))
+}
+
+pub(crate) fn read_streams(server: &Server, item: &str, detail: &Value) -> Vec<Stream> {
+    let versions = list(detail, "MediaSources");
+    let streams: Vec<Stream> = versions
+        .iter()
+        .filter_map(|version| {
+            let id = text(version, "Id")?;
+            let track = |kind: &str| {
+                list(version, "MediaStreams")
+                    .iter()
+                    .find(|stream| text(stream, "Type").as_deref() == Some(kind))
+            };
+            let video = track("Video");
+            let codec = |stream: Option<&Value>| {
+                stream.and_then(|stream| text(stream, "Codec")).map(|codec| codec.to_uppercase())
+            };
+            let mut facts: Vec<String> = Vec::new();
+            // With several versions, the server's name for each tells them apart.
+            if versions.len() > 1 {
+                facts.extend(text(version, "Name"));
+            }
+            facts.extend(text(version, "Container").map(|container| container.to_uppercase()));
+            facts.extend(codec(video));
+            facts.extend(codec(track("Audio")));
+            facts.extend(number(version, "Size").and_then(size));
+            Some(Stream {
+                name: Some(
+                    quality(
+                        video.and_then(|video| number(video, "Width")),
+                        video.and_then(|video| number(video, "Height")),
+                    )
+                    .unwrap_or_else(|| "Direct".to_owned()),
+                ),
+                description: Some(if facts.is_empty() {
+                    format!("The file as stored on {}", server.name)
+                } else {
+                    facts.join(" · ")
+                }),
+                url: Some(file_address(server, item, Some(&id))),
+                ..Stream::default()
+            })
+        })
+        .collect();
+    if !streams.is_empty() {
+        return streams;
+    }
+    // The server listed no versions: the file itself still plays.
     vec![Stream {
         name: Some("Direct".to_owned()),
         description: Some(format!("The file as stored on {}", server.name)),
-        url: Some(format!(
-            "{}/Videos/{}/stream?static=true&api_key={}",
-            server.address,
-            query(item),
-            query(&server.token)
-        )),
+        url: Some(file_address(server, item, None)),
         ..Stream::default()
     }]
 }
@@ -289,7 +425,8 @@ mod tests {
             "Id": "s1", "Type": "Series", "Name": "A Show", "Overview": "About it.",
             "ProductionYear": 2019, "CommunityRating": 8.25, "Genres": ["Drama", "Crime"],
             "RunTimeTicks": 27000000000u64, "BackdropImageTags": ["x"],
-            "People": [{"Name": "An Actor", "Type": "Actor"}, {"Name": "A Director", "Type": "Director"}]
+            "People": [{"Name": "An Actor", "Type": "Actor"}, {"Name": "A Director", "Type": "Director"}],
+            "ProviderIds": {"Imdb": "tt123", "Tmdb": "456"}
         });
         let episodes = json!({"Items": [
             {"Id": "e1", "Name": "Pilot", "ParentIndexNumber": 1, "IndexNumber": 1, "PremiereDate": "2019-01-01T00:00:00Z"},
@@ -306,16 +443,64 @@ mod tests {
         assert!(meta.background.is_some());
         assert_eq!(meta.videos.len(), 1);
         assert_eq!(meta.videos[0].id, "srv:2:e1");
+        assert_eq!((meta.imdb_id.as_deref(), meta.tmdb_id.as_deref()), (Some("tt123"), Some("456")));
         assert_eq!((meta.videos[0].season, meta.videos[0].episode), (Some(1), Some(1)));
     }
 
     #[test]
     fn the_stream_address_carries_the_escaped_token() {
-        let streams = streams(&server(), "m1");
+        let streams = read_streams(&server(), "m1", &json!({}));
+        assert_eq!(streams.len(), 1);
         assert_eq!(
             streams[0].url.as_deref(),
             Some("http://media.example/Videos/m1/stream?static=true&api_key=tok%20en")
         );
+    }
+
+    #[test]
+    fn every_version_of_a_file_is_a_stream() {
+        let detail = json!({"MediaSources": [
+            {"Id": "v1", "Name": "4K HDR", "Container": "mkv", "Size": 21474836480u64, "MediaStreams": [
+                {"Type": "Video", "Codec": "hevc", "Width": 3840, "Height": 2160},
+                {"Type": "Audio", "Codec": "eac3"}
+            ]},
+            {"Id": "v2", "Name": "HD", "Container": "mp4", "MediaStreams": [
+                {"Type": "Video", "Codec": "h264", "Width": 1920, "Height": 1080}
+            ]},
+            {"Name": "No id"}
+        ]});
+        let streams = read_streams(&server(), "m1", &detail);
+        assert_eq!(streams.len(), 2);
+        assert_eq!(streams[0].name.as_deref(), Some("4K"));
+        assert_eq!(streams[0].description.as_deref(), Some("4K HDR · MKV · HEVC · EAC3 · 20.0 GB"));
+        assert_eq!(
+            streams[0].url.as_deref(),
+            Some("http://media.example/Videos/m1/stream?static=true&MediaSourceId=v1&api_key=tok%20en")
+        );
+        assert_eq!(streams[1].name.as_deref(), Some("1080p"));
+        assert_eq!(streams[1].description.as_deref(), Some("HD · MP4 · H264"));
+    }
+
+    #[test]
+    fn candidates_carry_their_ids_and_episodes_are_found_by_number() {
+        let items = json!({"Items": [
+            {"Id": "m1", "Name": "A Film", "ProductionYear": 2020, "ProviderIds": {"Imdb": "tt7", "Tmdb": "42"}},
+            {"Id": "m2", "Name": "Bare", "ProviderIds": {"imdb": " "}},
+            {"Name": "No id"}
+        ]});
+        let candidates = read_candidates(&items);
+        assert_eq!(candidates.len(), 2);
+        assert_eq!(candidates[0].imdb.as_deref(), Some("tt7"));
+        assert_eq!(candidates[0].tmdb.as_deref(), Some("42"));
+        assert_eq!(candidates[1].imdb, None);
+
+        let episodes = json!({"Items": [
+            {"Id": "e1", "ParentIndexNumber": 1, "IndexNumber": 1},
+            {"Id": "e2", "ParentIndexNumber": 1, "IndexNumber": 2},
+            {"Id": "e3", "ParentIndexNumber": 2, "IndexNumber": 1}
+        ]});
+        assert_eq!(read_episode(&episodes, 2, 1).as_deref(), Some("e3"));
+        assert_eq!(read_episode(&episodes, 3, 1), None);
     }
 
     #[test]

@@ -3,10 +3,13 @@
 //! A source is the address of an M3U playlist (the usual "M3U Plus" kind:
 //! one `#EXTINF` line of details, then the channel's address). Entries
 //! marked `radio="true"` are radio stations; everything else is television.
+//! An Xtream Codes account is the other kind of source: see [`XtreamAccount`].
 
 mod m3u;
+mod xtream;
 
 pub use m3u::{Channel, parse_m3u};
+pub use xtream::{XtreamAccount, XtreamError, XtreamInfo, to_m3u, xtream_channels, xtream_sign_in};
 
 /// The channels' groups, in the order they first appear, without repeats.
 pub fn groups(channels: &[Channel]) -> Vec<String> {

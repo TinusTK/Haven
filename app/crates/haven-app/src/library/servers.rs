@@ -1,5 +1,6 @@
-//! Media servers (Jellyfin, Emby, Plex): signing in, the Media Servers
-//! page, and telling a server how far something was watched. Their titles
+//! Media servers (Jellyfin, Emby, Plex): signing in (in Settings), whether
+//! each is online, their shelves on Home, and telling a server how far
+//! something was watched. Their titles
 //! then flow through the same shelves, title page and stream list as
 //! add-on titles.
 
@@ -19,6 +20,13 @@ use crate::{AppWindow, ServerRow};
 /// How long a Plex code stays worth waiting for.
 const PLEX_WAIT: Duration = Duration::from_secs(5 * 60);
 const PLEX_ASK_EVERY: Duration = Duration::from_secs(2);
+/// How often the servers are asked whether they still answer.
+const CHECK_EVERY: Duration = Duration::from_secs(60);
+/// A server that takes longer than this to say so counts as offline.
+const CHECK_WAIT: Duration = Duration::from_secs(8);
+const UNKNOWN: i32 = 0;
+const ONLINE: i32 = 1;
+const OFFLINE: i32 = 2;
 
 fn stored(server: &Server) -> StoredServer {
     StoredServer {
@@ -55,7 +63,74 @@ impl Library {
             move |id| library.remove_server(id as i64)
         });
         ui.on_open_link(|link| open_in_browser(link.as_str()));
+        ui.on_check_servers({
+            let library = self.clone();
+            move || library.check_servers(true)
+        });
+        let library = Rc::downgrade(self);
+        self.server_timer.start(slint::TimerMode::Repeated, CHECK_EVERY, move || {
+            if let Some(library) = library.upgrade() {
+                library.check_servers(false);
+            }
+        });
         self.load_servers();
+    }
+
+    /// Fills the list of servers in Settings, each with its state.
+    fn show_servers(&self) {
+        let states = self.server_states.borrow();
+        let rows: Vec<ServerRow> = self
+            .servers
+            .borrow()
+            .iter()
+            .map(|server| ServerRow {
+                id: server.id as i32,
+                name: server.name.as_str().into(),
+                kind: server.kind.label().into(),
+                address: server.address.as_str().into(),
+                state: states.get(&server.id).copied().unwrap_or(UNKNOWN),
+            })
+            .collect();
+        if let Some(ui) = self.ui.upgrade() {
+            ui.set_servers(ModelRc::new(VecModel::from(rows)));
+        }
+    }
+
+    /// Notes whether a server answers. One that comes back online gets
+    /// its shelves loaded again.
+    fn set_server_state(&self, id: i64, state: i32) {
+        let before = self.server_states.borrow_mut().insert(id, state);
+        if before == Some(state) {
+            return;
+        }
+        self.show_servers();
+        if before == Some(OFFLINE) && state == ONLINE {
+            self.reload_server_shelves();
+        }
+    }
+
+    /// Asks every server whether it answers. `show` marks them as being
+    /// checked meanwhile (the user asked); the quiet check does not.
+    fn check_servers(&self, show: bool) {
+        let servers = self.servers.borrow().clone();
+        if show {
+            self.server_states.borrow_mut().clear();
+            self.show_servers();
+        }
+        for server in servers {
+            let client = self.server_client.clone();
+            self.tasks.spawn(async move {
+                let online = tokio::time::timeout(CHECK_WAIT, client.online(&server))
+                    .await
+                    .unwrap_or(false);
+                on_ui(move |library| {
+                    // A server removed meanwhile has no state to keep.
+                    if library.servers.borrow().iter().any(|known| known.id == server.id) {
+                        library.set_server_state(server.id, if online { ONLINE } else { OFFLINE });
+                    }
+                });
+            });
+        }
     }
 
     /// Reads the servers from the database into memory and the page.
@@ -79,20 +154,13 @@ impl Library {
                 })
             })
             .collect();
-        let rows: Vec<ServerRow> = servers
-            .iter()
-            .map(|server| ServerRow {
-                id: server.id as i32,
-                name: server.name.as_str().into(),
-                kind: server.kind.label().into(),
-                address: server.address.as_str().into(),
-            })
-            .collect();
+        self.server_states
+            .borrow_mut()
+            .retain(|id, _| servers.iter().any(|server| server.id == *id));
         *self.servers.borrow_mut() = servers;
-        if let Some(ui) = self.ui.upgrade() {
-            ui.set_servers(ModelRc::new(VecModel::from(rows)));
-        }
+        self.show_servers();
         self.reload_server_shelves();
+        self.check_servers(false);
     }
 
     /// The server a `srv:…` id belongs to and the item's id on it.
@@ -122,16 +190,26 @@ impl Library {
         self.server_generation.set(generation);
         let servers = self.servers.borrow().clone();
         if servers.is_empty() {
+            self.server_libraries.borrow_mut().clear();
+            self.rebuild_explore();
             return self.fill(Board::Servers, Vec::new(), None);
         }
         let client = self.server_client.clone();
         self.tasks.spawn(async move {
             let mut plans = Vec::new();
             let mut failures = Vec::new();
+            let mut found = Vec::new();
+            let mut answered = Vec::new();
             for server in servers {
-                match client.libraries(&server).await {
+                let libraries = match tokio::time::timeout(CHECK_WAIT, client.libraries(&server)).await {
+                    Ok(libraries) => libraries.map_err(|err| err.to_string()),
+                    Err(_) => Err("it did not answer".to_owned()),
+                };
+                answered.push((server.id, libraries.is_ok()));
+                match libraries {
                     Ok(libraries) => {
                         for library in libraries {
+                            found.push((server.clone(), library.clone()));
                             for latest in [true, false] {
                                 plans.push(ShelfPlan {
                                     title: if latest {
@@ -156,12 +234,16 @@ impl Library {
                 if generation != library.server_generation.get() {
                     return;
                 }
-                if !failures.is_empty() {
-                    library.server_status(
-                        &format!("Could not load from {}.", failures.join("; ")),
-                        true,
-                    );
+                // The list in Settings shows these servers as offline.
+                for failure in &failures {
+                    eprintln!("haven: could not load from {failure}");
                 }
+                for (id, fine) in answered {
+                    library.server_states.borrow_mut().insert(id, if fine { ONLINE } else { OFFLINE });
+                }
+                library.show_servers();
+                *library.server_libraries.borrow_mut() = found;
+                library.rebuild_explore();
                 library.fill(Board::Servers, plans, None);
             });
         });
@@ -293,7 +375,13 @@ impl Library {
 
     /// Tells the server a film or episode came from how far it was watched.
     pub(super) fn report_played(&self, played: &Played) {
-        let Some((server, item)) = self.server_item(&played.video_id) else { return };
+        // What played may be another server's copy of the open title.
+        let played_item = self.playing_item.borrow_mut().take();
+        let Some((server, item)) =
+            self.server_item(played_item.as_deref().unwrap_or(&played.video_id))
+        else {
+            return;
+        };
         if played.duration <= 0.0 {
             return;
         }

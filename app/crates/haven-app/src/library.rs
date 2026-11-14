@@ -9,22 +9,28 @@ use std::{
 };
 
 mod cast;
+mod explore;
 mod servers;
+mod sources;
 mod tracking;
 
 use haven_addons::{
-    Catalog, Client, Manifest, MetaDetail, MetaPreview, Stream, StreamKind, Video, manifest_url,
-    parse_manifest,
+    Catalog, Client, Manifest, MetaDetail, MetaPreview, Video, manifest_url, parse_manifest,
 };
 use haven_core::{
     http,
     storage::{Saved, Store},
 };
-use haven_player::{clock, resume, source::web_address};
+use haven_metadata::{List, Tmdb};
+use haven_player::{clock, resume};
 use slint::{ComponentHandle, Image, Model, ModelRc, Rgba8Pixel, SharedPixelBuffer, VecModel};
 use tokio::{runtime::Handle, sync::Semaphore};
 
 use crate::{AddonRow, AppWindow, Detail, EpisodeRow, Poster, Shelf, StreamRow};
+
+/// Titles on a media server library's A to Z shelf on Home; Explore
+/// shows the whole library.
+const SERVER_SHELF_LENGTH: usize = 60;
 
 /// Titles shown per shelf (a catalogue's first page can be far longer).
 const SHELF_LENGTH: usize = 30;
@@ -63,8 +69,10 @@ struct Installed {
 enum Board {
     Home,
     Search,
-    /// The Media Servers page.
+    /// The media servers' shelves on Home.
     Servers,
+    /// The built-in TMDB catalogue's shelves on Home.
+    Catalog,
 }
 
 /// One board's shelves and what is needed to fill them in later.
@@ -93,6 +101,10 @@ enum ShelfFrom {
     Server { server: haven_servers::Server, library: String, latest: bool },
     /// A media server's answer to the search words.
     ServerSearch { server: haven_servers::Server },
+    /// One of TMDB's ready-made lists of films or series.
+    Tmdb { list: List, series: bool },
+    /// TMDB's answer to the search words.
+    TmdbSearch { series: bool },
 }
 
 /// What the player reports when it closes.
@@ -163,8 +175,14 @@ pub struct Library {
     stream_generation: Cell<u64>,
     /// Add-ons that have not answered the current stream request yet.
     streams_pending: Cell<usize>,
-    /// The address behind each row of `streams`; `None` if not playable.
-    stream_addresses: RefCell<Vec<Option<String>>>,
+    /// What is behind each row of `streams`.
+    stream_sources: RefCell<Vec<sources::StreamSource>>,
+    /// How many of the first rows of `streams` come from media servers
+    /// (they are kept above the add-ons' rows).
+    server_rows: Cell<usize>,
+    /// The media server item (`srv:…`) that is playing, if what plays
+    /// came from a media server.
+    playing_item: RefCell<Option<String>>,
     listed: RefCell<Option<Listed>>,
     /// Plays a stream; unset in a build without the player.
     player: RefCell<Option<Box<dyn Fn(PlayRequest)>>>,
@@ -177,6 +195,15 @@ pub struct Library {
     server_client: haven_servers::Client,
     server_shelves: ShelfSet,
     server_generation: Cell<u64>,
+    /// Whether each server answers: 0 not known yet, 1 online, 2 offline.
+    server_states: RefCell<std::collections::HashMap<i64, i32>>,
+    /// Every library of every server that answered, for Explore.
+    server_libraries: RefCell<Vec<(haven_servers::Server, haven_servers::Library)>>,
+    /// Asks the servers now and then whether they still answer.
+    server_timer: slint::Timer,
+    /// The TMDB catalogue's shelves on Home.
+    catalog: ShelfSet,
+    explore: explore::Explore,
     /// Goes up when a Plex sign-in starts or is cancelled.
     plex_attempt: Arc<AtomicU64>,
 
@@ -223,7 +250,9 @@ impl Library {
             streams: Rc::default(),
             stream_generation: Cell::new(0),
             streams_pending: Cell::new(0),
-            stream_addresses: RefCell::default(),
+            stream_sources: RefCell::default(),
+            server_rows: Cell::new(0),
+            playing_item: RefCell::default(),
             listed: RefCell::default(),
             player: RefCell::default(),
             continuing: Rc::default(),
@@ -234,6 +263,11 @@ impl Library {
             server_client,
             server_shelves: ShelfSet::default(),
             server_generation: Cell::new(0),
+            server_states: RefCell::default(),
+            server_libraries: RefCell::default(),
+            server_timer: slint::Timer::default(),
+            catalog: ShelfSet::default(),
+            explore: explore::Explore::default(),
             plex_attempt: Arc::default(),
             secrets_file,
             keys: RefCell::default(),
@@ -247,6 +281,7 @@ impl Library {
 
         ui.set_shelves(ModelRc::from(library.home.shelves.clone()));
         ui.set_search_shelves(ModelRc::from(library.search.shelves.clone()));
+        ui.set_catalog_shelves(ModelRc::from(library.catalog.shelves.clone()));
         ui.set_seasons(ModelRc::from(library.seasons.clone()));
         ui.set_episodes(ModelRc::from(library.episodes.clone()));
         ui.set_streams(ModelRc::from(library.streams.clone()));
@@ -286,9 +321,11 @@ impl Library {
         library.reload_home();
         library.reload_continue();
         library.reload_watchlist();
-        library.start_servers(ui);
         library.start_tracking(ui);
+        library.start_explore(ui);
+        library.start_servers(ui);
         library.start_casting(ui);
+        library.reload_catalog();
         Ok(library)
     }
 
@@ -317,6 +354,7 @@ impl Library {
             Board::Home => &self.home,
             Board::Search => &self.search,
             Board::Servers => &self.server_shelves,
+            Board::Catalog => &self.catalog,
         }
     }
 
@@ -405,6 +443,7 @@ impl Library {
         self.load_installed();
         self.reload_home();
         self.clear_search();
+        self.rebuild_explore();
         self.set_status(&format!("Installed {name}."), false);
         if let Some(ui) = self.ui.upgrade() {
             ui.set_addon_address("".into());
@@ -418,6 +457,7 @@ impl Library {
         self.load_installed();
         self.reload_home();
         self.clear_search();
+        self.rebuild_explore();
         self.set_status("Add-on removed.", false);
     }
 
@@ -440,6 +480,47 @@ impl Library {
             })
             .collect();
         self.fill(Board::Home, plans, None);
+    }
+
+    /// The built-in catalogue, if a TMDB key is set.
+    pub(super) fn tmdb(&self) -> Option<Tmdb> {
+        let key = self.keys.borrow().tmdb_api_key.clone()?;
+        let tmdb = Tmdb::new(self.http.clone(), &key);
+        // A stand-in for TMDB, to check Haven without a key.
+        #[cfg(debug_assertions)]
+        if let (Ok(api), Ok(images)) =
+            (std::env::var("HAVEN_TMDB_API"), std::env::var("HAVEN_TMDB_IMAGES"))
+        {
+            return Some(tmdb.at(&api, &images));
+        }
+        Some(tmdb)
+    }
+
+    /// Rebuilds the TMDB shelves on Home; none without a TMDB key.
+    pub(super) fn reload_catalog(&self) {
+        let plans = if self.tmdb().is_some() {
+            [
+                ("Trending films", List::Trending, false),
+                ("Trending series", List::Trending, true),
+                ("In cinemas now", List::Now, false),
+                ("On television now", List::Now, true),
+                ("Popular films", List::Popular, false),
+                ("Popular series", List::Popular, true),
+                ("Coming soon", List::Upcoming, false),
+                ("Top rated films", List::TopRated, false),
+                ("Top rated series", List::TopRated, true),
+            ]
+            .into_iter()
+            .map(|(title, list, series)| ShelfPlan {
+                title: title.to_owned(),
+                source: "TMDB".to_owned(),
+                from: ShelfFrom::Tmdb { list, series },
+            })
+            .collect()
+        } else {
+            Vec::new()
+        };
+        self.fill(Board::Catalog, plans, None);
     }
 
     fn clear_search(&self) {
@@ -475,8 +556,17 @@ impl Library {
             source: server.kind.label().to_owned(),
             from: ShelfFrom::ServerSearch { server: server.clone() },
         }));
+        if self.tmdb().is_some() {
+            for (title, series) in [("Films", false), ("Series", true)] {
+                plans.push(ShelfPlan {
+                    title: title.to_owned(),
+                    source: "TMDB".to_owned(),
+                    from: ShelfFrom::TmdbSearch { series },
+                });
+            }
+        }
         let note = if self.installed.borrow().is_empty() && plans.is_empty() {
-            "Install an add-on or add a media server first: search looks through those."
+            "Add a media server or a TMDB key in Settings, or install an add-on: search looks through those."
         } else if plans.is_empty() {
             "None of your add-ons can be searched."
         } else {
@@ -509,7 +599,9 @@ impl Library {
 
             let (addons, servers, search) =
                 (self.addons.clone(), self.server_client.clone(), search.clone());
+            let tmdb = self.tmdb();
             self.tasks.spawn(async move {
+                let no_key = || "there is no TMDB key".to_owned();
                 let metas = match &plan.from {
                     ShelfFrom::Addon { url, catalog } => addons
                         .catalog(url, catalog, search.as_deref())
@@ -518,9 +610,21 @@ impl Library {
                     ShelfFrom::Server { server, library, latest: true } => {
                         servers.latest(server, library).await.map_err(|err| err.to_string())
                     }
-                    ShelfFrom::Server { server, library, latest: false } => {
-                        servers.all(server, library).await.map_err(|err| err.to_string())
-                    }
+                    ShelfFrom::Server { server, library, latest: false } => servers
+                        .page(server, library, 0, SERVER_SHELF_LENGTH as u32)
+                        .await
+                        .map_err(|err| err.to_string()),
+                    ShelfFrom::Tmdb { list, series } => match &tmdb {
+                        Some(tmdb) => tmdb.list(*list, *series, 1).await.map_err(|err| err.to_string()),
+                        None => Err(no_key()),
+                    },
+                    ShelfFrom::TmdbSearch { series } => match &tmdb {
+                        Some(tmdb) => tmdb
+                            .search(*series, search.as_deref().unwrap_or_default())
+                            .await
+                            .map_err(|err| err.to_string()),
+                        None => Err(no_key()),
+                    },
                     ShelfFrom::ServerSearch { server } => servers
                         .search(server, search.as_deref().unwrap_or_default())
                         .await
@@ -553,9 +657,8 @@ impl Library {
         match metas {
             Err(err) => row.error = format!("Could not load this: {err}.").into(),
             Ok(metas) => {
-                // A media server's library is shown whole (as far as it was
-                // fetched); an add-on's catalogue page is cut to a shelf.
-                let length = if board == Board::Servers { usize::MAX } else { SHELF_LENGTH };
+                // A shelf shows the start of a list; Explore shows it all.
+                let length = if board == Board::Servers { SERVER_SHELF_LENGTH } else { SHELF_LENGTH };
                 let metas: Vec<MetaPreview> = metas.into_iter().take(length).collect();
                 items.set_vec(
                     metas
@@ -797,7 +900,7 @@ impl Library {
         self.seasons.set_vec(Vec::new());
         self.episodes.set_vec(Vec::new());
         self.clear_streams();
-        self.set_streams_state(Some("Streams"), false, "");
+        self.set_streams_state(Some(sources::HEADING), false, "");
         // A Continue Watching card names the episode to go back to; its
         // second line is that episode, not the title's year.
         let wanted = (!poster.video.is_empty()).then(|| poster.video.to_string());
@@ -826,6 +929,22 @@ impl Library {
             self.tasks.spawn(async move {
                 let found = client
                     .meta(&server, &item)
+                    .await
+                    .map_err(|err| format!("Could not load the details: {err}."));
+                on_ui(move |library| library.detail_loaded(generation, found));
+            });
+            return;
+        }
+        if let Some((series, number)) = haven_metadata::split_id(&id) {
+            let Some(tmdb) = self.tmdb() else {
+                return self.detail_loaded(
+                    generation,
+                    Err("Add a TMDB key in Settings to see this title's details.".into()),
+                );
+            };
+            self.tasks.spawn(async move {
+                let found = tmdb
+                    .title(series, number)
                     .await
                     .map_err(|err| format!("Could not load the details: {err}."));
                 on_ui(move |library| library.detail_loaded(generation, found));
@@ -873,7 +992,7 @@ impl Library {
                 });
                 // A film can still have streams without details.
                 if kind != "series" {
-                    self.load_streams(&kind, &id, "Streams");
+                    self.load_streams(&kind, &id, sources::HEADING);
                 }
                 return;
             }
@@ -920,9 +1039,13 @@ impl Library {
             open.meta = Some(meta);
         }
         if !has_videos {
-            self.load_streams(&kind, &id, "Streams");
+            self.load_streams(&kind, &id, sources::HEADING);
         } else {
-            self.set_streams_state(Some("Streams"), false, "Choose an episode to see its streams.");
+            self.set_streams_state(
+                Some(sources::HEADING),
+                false,
+                "Choose an episode to see where you can watch it.",
+            );
             match seasons.first() {
                 Some(&first) => {
                     self.seasons.set_vec(seasons.iter().map(|&s| s as i32).collect::<Vec<_>>());
@@ -969,14 +1092,14 @@ impl Library {
         let Some(kind) = self.open.borrow().as_ref().map(|open| open.kind.clone()) else {
             return;
         };
-        let mut heading = "Streams".to_owned();
+        let mut heading = sources::HEADING.to_owned();
         let mut detail = String::new();
         let season = self.ui.upgrade().map(|ui| ui.get_season()).filter(|_| self.seasons.row_count() > 0);
         for row in 0..self.episodes.row_count() {
             let Some(mut episode) = self.episodes.row_data(row) else { continue };
             let selected = episode.id == video_id;
             if selected {
-                heading = format!("Streams for {} {}", episode.number, episode.title);
+                heading = format!("{} {} {}", sources::HEADING, episode.number, episode.title);
                 let number = match season {
                     Some(season) if !episode.number.is_empty() => format!("S{season} {}", episode.number),
                     _ => episode.number.to_string(),
@@ -996,13 +1119,6 @@ impl Library {
         if let Some(listed) = self.listed.borrow_mut().as_mut() {
             listed.detail = detail;
         }
-    }
-
-    fn clear_streams(&self) {
-        self.streams.set_vec(Vec::new());
-        self.stream_addresses.borrow_mut().clear();
-        *self.listed.borrow_mut() = None;
-        self.show_resume_note();
     }
 
     /// Says where the listed film or episode would resume, if anywhere.
@@ -1030,128 +1146,6 @@ impl Library {
         ui.set_resume_note(note.into());
     }
 
-    /// Plays the stream in that row of the list, if Haven can.
-    fn play_stream(&self, row: i32) {
-        let Some(address) =
-            self.stream_addresses.borrow().get(row.max(0) as usize).cloned().flatten()
-        else {
-            return;
-        };
-        let Some(ui) = self.ui.upgrade() else { return };
-        let open = self.open.borrow().as_ref().map(|open| {
-            (
-                open.kind.clone(),
-                open.id.clone(),
-                open.meta.as_ref().and_then(|meta| meta.poster.clone()),
-            )
-        });
-        let listed = self
-            .listed
-            .borrow()
-            .as_ref()
-            .map(|listed| (listed.video_id.clone(), listed.detail.clone()));
-        let (Some((kind, title_id, poster)), Some((video_id, detail))) = (open, listed) else {
-            return;
-        };
-        let request = PlayRequest {
-            address,
-            title: ui.get_detail().title.to_string(),
-            detail,
-            kind,
-            title_id,
-            video_id,
-            poster,
-            remember: true,
-        };
-        if let Some(device) = self.cast_target() {
-            return self.cast_to(device, request);
-        }
-        if let Some(play) = self.player.borrow().as_ref() {
-            play(request);
-        }
-    }
-
-    /// Asks every add-on that offers streams for this film or episode.
-    fn load_streams(&self, kind: &str, video_id: &str, heading: &str) {
-        let generation = self.stream_generation.get() + 1;
-        self.stream_generation.set(generation);
-        self.streams.set_vec(Vec::new());
-        self.stream_addresses.borrow_mut().clear();
-        *self.listed.borrow_mut() =
-            Some(Listed { video_id: video_id.to_owned(), detail: String::new() });
-        self.show_resume_note();
-
-        if let Some((server, item)) = self.server_item(video_id) {
-            self.streams_pending.set(1);
-            self.set_streams_state(Some(heading), true, "");
-            let client = self.server_client.clone();
-            self.tasks.spawn(async move {
-                let streams = client.streams(&server, &item).await.map_err(|err| err.to_string());
-                on_ui(move |library| library.streams_loaded(generation, &server.name, streams));
-            });
-            return;
-        }
-
-        let sources: Vec<(String, String)> = self
-            .installed
-            .borrow()
-            .iter()
-            .filter(|addon| addon.manifest.provides("stream", kind, video_id))
-            .map(|addon| (addon.url.clone(), addon.manifest.name.clone()))
-            .collect();
-        self.streams_pending.set(sources.len());
-        if sources.is_empty() {
-            return self.set_streams_state(
-                Some(heading),
-                false,
-                "None of your add-ons offers streams for this.",
-            );
-        }
-        self.set_streams_state(Some(heading), true, "");
-        for (url, name) in sources {
-            let (addons, kind, video_id) = (self.addons.clone(), kind.to_owned(), video_id.to_owned());
-            self.tasks.spawn(async move {
-                let streams =
-                    addons.streams(&url, &kind, &video_id).await.map_err(|err| err.to_string());
-                on_ui(move |library| library.streams_loaded(generation, &name, streams));
-            });
-        }
-    }
-
-    fn streams_loaded(&self, generation: u64, source: &str, streams: Result<Vec<Stream>, String>) {
-        if generation != self.stream_generation.get() {
-            return;
-        }
-        match streams {
-            Ok(streams) => {
-                // Playable here with the player, or on a Chromecast.
-                let can_play =
-                    self.player.borrow().is_some() || !self.cast_devices.borrow().is_empty();
-                for stream in &streams {
-                    if let Some(mut row) = stream_row(source, stream) {
-                        // Only plain web addresses reach the player.
-                        let address = stream
-                            .url
-                            .as_deref()
-                            .filter(|_| can_play && stream.kind() == Some(StreamKind::Direct))
-                            .and_then(web_address)
-                            .map(str::to_owned);
-                        row.playable = address.is_some();
-                        self.stream_addresses.borrow_mut().push(address);
-                        self.streams.push(row);
-                    }
-                }
-            }
-            Err(err) => eprintln!("haven: {source} gave no streams: {err}"),
-        }
-        let pending = self.streams_pending.get().saturating_sub(1);
-        self.streams_pending.set(pending);
-        if pending == 0 {
-            let note = if self.streams.row_count() == 0 { "No streams found." } else { "" };
-            self.set_streams_state(None, false, note);
-        }
-    }
-
     fn close_detail(&self) {
         self.detail_generation.set(self.detail_generation.get() + 1);
         self.stream_generation.set(self.stream_generation.get() + 1);
@@ -1177,24 +1171,6 @@ fn episode_row(video: &Video) -> EpisodeRow {
         date: video.released.as_deref().and_then(|date| date.get(..10)).unwrap_or_default().into(),
         selected: false,
     }
-}
-
-fn stream_row(source: &str, stream: &Stream) -> Option<StreamRow> {
-    let kind = match stream.kind()? {
-        StreamKind::Direct => "Direct",
-        StreamKind::External => "Web page",
-        StreamKind::YouTube => "YouTube",
-        StreamKind::Torrent => "Torrent",
-    };
-    // Add-ons often spread these over several lines; a row has one.
-    let one_line = |text: &str| text.split_whitespace().collect::<Vec<_>>().join(" ");
-    Some(StreamRow {
-        source: source.into(),
-        name: one_line(stream.name.as_deref().unwrap_or("Stream")).into(),
-        detail: one_line(stream.details().unwrap_or_default()).into(),
-        kind: kind.into(),
-        playable: false,
-    })
 }
 
 /// Downloads a picture and shrinks it to fit `size`. `None` on any failure.

@@ -4,10 +4,12 @@
 use haven_addons::{MetaDetail, MetaPreview, Stream, Video};
 use serde_json::{Value, json};
 
-use crate::{Client, Error, Kind, Library, Result, Server, list, number, query, text, title_id};
+use crate::{
+    Candidate, Client, Error, Kind, Library, Result, Server, Wanted, best_match, list, number,
+    query, text, title_id,
+};
 
 const PLEX_TV: &str = "https://plex.tv/api/v2";
-const LIST_LENGTH: u32 = 300;
 
 /// A sign-in in progress.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -136,11 +138,12 @@ pub async fn list_page(
     client: &Client,
     server: &Server,
     path: &str,
+    start: u32,
     length: u32,
 ) -> Result<Vec<MetaPreview>> {
     let join = if path.contains('?') { '&' } else { '?' };
     let path =
-        format!("{path}{join}X-Plex-Container-Start=0&X-Plex-Container-Size={length}");
+        format!("{path}{join}X-Plex-Container-Start={start}&X-Plex-Container-Size={length}");
     Ok(read_previews(server, &get(client, server, &path).await?))
 }
 
@@ -150,17 +153,93 @@ pub async fn titles(
     library: &str,
     latest: bool,
 ) -> Result<Vec<MetaPreview>> {
-    let library = query(library);
     if latest {
-        list_page(client, server, &format!("/library/sections/{library}/recentlyAdded"), 30).await
+        let path = format!("/library/sections/{}/recentlyAdded", query(library));
+        list_page(client, server, &path, 0, 30).await
     } else {
-        let path = format!("/library/sections/{library}/all?sort=titleSort");
-        list_page(client, server, &path, LIST_LENGTH).await
+        page(client, server, library, 0, crate::LIST_LENGTH).await
     }
 }
 
+pub async fn page(
+    client: &Client,
+    server: &Server,
+    library: &str,
+    start: u32,
+    length: u32,
+) -> Result<Vec<MetaPreview>> {
+    let path = format!("/library/sections/{}/all?sort=titleSort", query(library));
+    list_page(client, server, &path, start, length).await
+}
+
 pub async fn search(client: &Client, server: &Server, words: &str) -> Result<Vec<MetaPreview>> {
-    list_page(client, server, &format!("/search?query={}", query(words)), 30).await
+    list_page(client, server, &format!("/search?query={}", query(words)), 0, 30).await
+}
+
+pub async fn online(client: &Client, server: &Server) -> bool {
+    let url = format!("{}/identity", server.address);
+    client.call(&url, &headers(client, None), None).await.is_ok()
+}
+
+/// A title's ids at IMDb and TMDB: from its `Guid` list, or from the
+/// single `guid` older libraries carry.
+fn provider_ids(item: &Value) -> (Option<String>, Option<String>) {
+    let mut guids: Vec<String> = list(item, "Guid").iter().filter_map(|guid| text(guid, "id")).collect();
+    guids.extend(text(item, "guid"));
+    let id = |marks: &[&str]| {
+        guids.iter().find_map(|guid| {
+            let rest = marks.iter().find_map(|mark| guid.split_once(mark).map(|(_, rest)| rest))?;
+            let id = rest.split(['?', '/']).next().unwrap_or(rest).trim();
+            (!id.is_empty()).then(|| id.to_owned())
+        })
+    };
+    (id(&["imdb://"]), id(&["tmdb://", "themoviedb://"]))
+}
+
+pub(crate) fn read_candidates(container: &Value) -> Vec<Candidate> {
+    list(container, "Metadata")
+        .iter()
+        .filter_map(|item| {
+            let (imdb, tmdb) = provider_ids(item);
+            Some(Candidate {
+                id: text(item, "ratingKey")?,
+                name: text(item, "title")?,
+                year: text(item, "year"),
+                imdb,
+                tmdb,
+            })
+        })
+        .collect()
+}
+
+pub(crate) fn read_episode(leaves: &Value, season: u32, number_in_season: u32) -> Option<String> {
+    list(leaves, "Metadata")
+        .iter()
+        .find(|episode| {
+            number(episode, "parentIndex") == Some(f64::from(season))
+                && number(episode, "index") == Some(f64::from(number_in_season))
+        })
+        .and_then(|episode| text(episode, "ratingKey"))
+}
+
+pub async fn find(client: &Client, server: &Server, wanted: &Wanted) -> Result<Option<String>> {
+    if wanted.name.trim().is_empty() {
+        return Ok(None);
+    }
+    // Type 1 is films, 2 is shows.
+    let path = format!(
+        "/library/all?type={}&title={}&includeGuids=1&X-Plex-Container-Start=0&X-Plex-Container-Size=25",
+        if wanted.series { 2 } else { 1 },
+        query(wanted.name.trim()),
+    );
+    let candidates = read_candidates(&get(client, server, &path).await?);
+    let Some(found) = best_match(wanted, &candidates) else { return Ok(None) };
+    let Some((season, episode)) = wanted.episode else {
+        return Ok((!wanted.series).then(|| found.id.clone()));
+    };
+    let leaves =
+        get(client, server, &format!("/library/metadata/{}/allLeaves", query(&found.id))).await?;
+    Ok(read_episode(&leaves, season, episode))
 }
 
 /// A picture on the server; the token goes in the address.
@@ -223,6 +302,7 @@ pub async fn meta(client: &Client, server: &Server, item: &str) -> Result<MetaDe
 pub(crate) fn read_detail(server: &Server, detail: &Value, episodes: &Value) -> Option<MetaDetail> {
     let item = list(detail, "Metadata").first()?;
     let id = text(item, "ratingKey")?;
+    let (imdb_id, tmdb_id) = provider_ids(item);
     let tags = |key: &str| -> Vec<String> {
         list(item, key).iter().filter_map(|entry| text(entry, "tag")).collect()
     };
@@ -256,6 +336,8 @@ pub(crate) fn read_detail(server: &Server, detail: &Value, episodes: &Value) -> 
         cast: tags("Role"),
         director: tags("Director"),
         videos,
+        imdb_id,
+        tmdb_id,
     })
 }
 
@@ -279,11 +361,12 @@ pub(crate) fn read_streams(server: &Server, detail: &Value) -> Vec<Stream> {
                     lines => format!("{lines}p"),
                 })
                 .unwrap_or_else(|| "Direct".to_owned());
-            let facts: Vec<String> = [text(media, "container"), text(media, "videoCodec"), text(media, "audioCodec")]
+            let mut facts: Vec<String> = [text(media, "container"), text(media, "videoCodec"), text(media, "audioCodec")]
                 .into_iter()
                 .flatten()
                 .map(|fact| fact.to_uppercase())
                 .collect();
+            facts.extend(number(part, "size").and_then(crate::size));
             Some(Stream {
                 name: Some(quality),
                 description: Some(if facts.is_empty() {
@@ -406,6 +489,28 @@ mod tests {
             streams[0].url.as_deref(),
             Some("https://plex.example:32400/library/parts/7/file.mkv?X-Plex-Token=tk")
         );
+    }
+
+    #[test]
+    fn candidates_read_ids_from_both_kinds_of_guid() {
+        let found = json!({"Metadata": [
+            {"ratingKey": "10", "title": "A Film", "year": 2021,
+             "Guid": [{"id": "imdb://tt0000010"}, {"id": "tmdb://77"}]},
+            {"ratingKey": "11", "title": "Old Agent", "guid": "com.plexapp.agents.imdb://tt0000011?lang=en"},
+            {"ratingKey": "12", "title": "Bare", "guid": "plex://movie/abc"}
+        ]});
+        let candidates = read_candidates(&found);
+        assert_eq!(candidates[0].imdb.as_deref(), Some("tt0000010"));
+        assert_eq!(candidates[0].tmdb.as_deref(), Some("77"));
+        assert_eq!(candidates[1].imdb.as_deref(), Some("tt0000011"));
+        assert_eq!((candidates[2].imdb.as_deref(), candidates[2].tmdb.as_deref()), (None, None));
+
+        let leaves = json!({"Metadata": [
+            {"ratingKey": "22", "parentIndex": 1, "index": 1},
+            {"ratingKey": "23", "parentIndex": 1, "index": 2}
+        ]});
+        assert_eq!(read_episode(&leaves, 1, 2).as_deref(), Some("23"));
+        assert_eq!(read_episode(&leaves, 2, 2), None);
     }
 
     #[test]

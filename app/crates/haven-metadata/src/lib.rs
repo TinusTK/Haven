@@ -1,9 +1,14 @@
-//! Extra details about films and series from TMDB (themoviedb.org), for
-//! titles that carry an IMDb id. Needs the user's own TMDB API key.
+//! TMDB (themoviedb.org): extra details for titles that carry an IMDb id,
+//! and Haven's built-in catalogue of films and series ([`Tmdb`]). Both
+//! need a TMDB API key.
 //!
 //! This product uses the TMDB API but is not endorsed or certified by TMDB.
 
 use serde_json::Value;
+
+mod catalog;
+
+pub use catalog::{Genre, List, Tmdb, split_id, title_id};
 
 const API: &str = "https://api.themoviedb.org/3";
 const IMAGES: &str = "https://image.tmdb.org/t/p";

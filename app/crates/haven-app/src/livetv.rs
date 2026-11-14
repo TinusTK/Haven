@@ -8,7 +8,10 @@ use haven_core::{
     http,
     storage::{Store, TvSource},
 };
-use haven_livetv::{Channel, groups, matches, parse_m3u, source_name};
+use haven_livetv::{
+    Channel, XtreamAccount, groups, matches, parse_m3u, source_name, to_m3u, xtream_channels,
+    xtream_sign_in,
+};
 use haven_player::source::stream_address;
 use slint::{ComponentHandle, ModelRc, VecModel};
 use tokio::runtime::Handle;
@@ -82,6 +85,12 @@ impl LiveTv {
             let live = live.clone();
             move |address| live.add(address.as_str())
         });
+        ui.on_add_xtream({
+            let live = live.clone();
+            move |server, user, password| {
+                live.add_xtream(server.as_str(), user.as_str(), password.as_str())
+            }
+        });
         ui.on_remove_tv_source({
             let live = live.clone();
             move |url| live.remove(url.as_str())
@@ -140,6 +149,12 @@ impl LiveTv {
                 url: source.url.as_str().into(),
                 name: source.name.as_str().into(),
                 channels: channels.len() as i32,
+                // An account's address holds its password: never shown.
+                detail: match XtreamAccount::from_source_url(&source.url) {
+                    Some(account) => format!("Xtream Codes account of {}", account.username),
+                    None => source.url.clone(),
+                }
+                .into(),
             });
             for channel in channels {
                 if channel.radio { radio.push(channel) } else { tv.push(channel) }
@@ -203,31 +218,100 @@ impl LiveTv {
         self.fetch(url, true);
     }
 
+    fn set_xtream_status(&self, text: &str, is_error: bool) {
+        if let Some(ui) = self.ui.upgrade() {
+            ui.set_xtream_status(text.into());
+            ui.set_xtream_status_is_error(is_error);
+        }
+    }
+
+    /// Adds an Xtream Codes account from what the user typed in Settings.
+    fn add_xtream(&self, server: &str, user: &str, password: &str) {
+        let Some(account) = XtreamAccount::new(server, user, password) else {
+            return self.set_xtream_status(
+                "Could not add the account: give the server's web address, your user name and your password.",
+                true,
+            );
+        };
+        if let Some(ui) = self.ui.upgrade() {
+            ui.set_xtream_busy(true);
+        }
+        self.set_xtream_status("Signing in and fetching the channel list…", false);
+        self.fetch_xtream(account, true);
+    }
+
+    /// Signs in to an Xtream Codes account and fetches its live channels,
+    /// which are then kept as playlist text like any other source's.
+    fn fetch_xtream(&self, account: XtreamAccount, adding: bool) {
+        let http = self.http.clone();
+        self.tasks.spawn(async move {
+            let text = |bytes: Vec<u8>| String::from_utf8_lossy(&bytes).into_owned();
+            let fetched = async {
+                let info = http::get_bytes(&http, &account.api(None), PLAYLIST_BYTES)
+                    .await
+                    .map_err(|err| err.to_string())?;
+                let info = xtream_sign_in(&text(info)).map_err(|err| err.to_string())?;
+                // The groups' names are worth having but not worth failing for.
+                let categories =
+                    http::get_bytes(&http, &account.api(Some("get_live_categories")), PLAYLIST_BYTES)
+                        .await
+                        .map(text)
+                        .unwrap_or_default();
+                let streams =
+                    http::get_bytes(&http, &account.api(Some("get_live_streams")), PLAYLIST_BYTES)
+                        .await
+                        .map_err(|err| err.to_string())?;
+                let channels = xtream_channels(&account, &info, &categories, &text(streams))
+                    .map_err(|err| err.to_string())?;
+                Ok::<_, String>(to_m3u(&channels))
+            }
+            .await;
+            let (url, name) = (account.source_url(), account.label());
+            on_ui(move |live| live.fetched(&url, Some(name), adding, fetched));
+        });
+    }
+
     /// Downloads a source's playlist. `adding` is true when the user just
     /// asked for it (failures are then shown); false for the quiet refresh
     /// at start.
     fn fetch(&self, url: String, adding: bool) {
+        if let Some(account) = XtreamAccount::from_source_url(&url) {
+            return self.fetch_xtream(account, adding);
+        }
         let http = self.http.clone();
         self.tasks.spawn(async move {
             let fetched = http::get_bytes(&http, &url, PLAYLIST_BYTES)
                 .await
                 .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
                 .map_err(|err| err.to_string());
-            on_ui(move |live| live.fetched(&url, adding, fetched));
+            on_ui(move |live| live.fetched(&url, None, adding, fetched));
         });
     }
 
-    fn fetched(&self, url: &str, adding: bool, fetched: Result<String, String>) {
+    /// A source's channel list has arrived, or failed to. `account` is
+    /// the name to list it under when it is an Xtream Codes account
+    /// (which reports in Settings; a playlist reports on the Live TV page).
+    fn fetched(
+        &self,
+        url: &str,
+        account: Option<String>,
+        adding: bool,
+        fetched: Result<String, String>,
+    ) {
+        let xtream = account.is_some();
+        let say = |text: &str, is_error: bool| {
+            if xtream { self.set_xtream_status(text, is_error) } else { self.set_status(text, is_error) }
+        };
         if adding {
             if let Some(ui) = self.ui.upgrade() {
-                ui.set_tv_busy(false);
+                if xtream { ui.set_xtream_busy(false) } else { ui.set_tv_busy(false) }
             }
         }
         let playlist = match fetched {
             Ok(playlist) => playlist,
             Err(err) => {
                 if adding {
-                    self.set_status(&format!("Could not add the source: {err}."), true);
+                    say(&format!("Could not add the {}: {err}.", if xtream { "account" } else { "source" }), true);
                 } else {
                     eprintln!("haven: could not refresh {}: {err}", source_name(url));
                 }
@@ -238,7 +322,10 @@ impl LiveTv {
         if channels.is_empty() {
             // Not a playlist (or an empty one): keep what was there before.
             if adding {
-                self.set_status("No channels were found at that address.", true);
+                say(
+                    if xtream { "The account has no live channels." } else { "No channels were found at that address." },
+                    true,
+                );
             }
             return;
         }
@@ -248,11 +335,11 @@ impl LiveTv {
         }
         let saved = self.store.save_tv_source(&TvSource {
             url: url.to_owned(),
-            name: source_name(url),
+            name: account.unwrap_or_else(|| source_name(url)),
             playlist,
         });
         if let Err(err) = saved {
-            return self.set_status(&format!("Could not save the source: {err}"), true);
+            return say(&format!("Could not save the source: {err}"), true);
         }
         self.rebuild();
         if adding {
@@ -264,9 +351,19 @@ impl LiveTv {
             if stations > 0 {
                 found.push(count(stations, "radio station", "radio stations"));
             }
-            self.set_status(&format!("Added {}.", found.join(" and ")), false);
+            if xtream {
+                say(&format!("Added {}. They are on the Live TV tab.", found.join(" and ")), false);
+            } else {
+                say(&format!("Added {}.", found.join(" and ")), false);
+            }
             if let Some(ui) = self.ui.upgrade() {
-                ui.set_tv_address("".into());
+                if xtream {
+                    ui.set_xtream_server("".into());
+                    ui.set_xtream_user("".into());
+                    ui.set_xtream_password("".into());
+                } else {
+                    ui.set_tv_address("".into());
+                }
             }
         }
     }
@@ -277,6 +374,7 @@ impl LiveTv {
         }
         self.rebuild();
         self.set_status("Source removed.", false);
+        self.set_xtream_status("Source removed.", false);
     }
 
     /// Plays a channel; `index` is its place among all of the board's

@@ -2,7 +2,7 @@ use haven_core::http::get_bytes;
 
 use crate::{
     Catalog, Error, MetaDetail, MetaPreview, Result, Stream, catalog_url, parse_catalog,
-    parse_meta, parse_streams, resource_url,
+    parse_meta, parse_streams, resource_url, resource_url_with,
 };
 
 const MANIFEST_LIMIT: usize = 1024 * 1024;
@@ -39,6 +39,27 @@ impl Client {
         search: Option<&str>,
     ) -> Result<Vec<MetaPreview>> {
         let url = catalog_url(manifest_url, catalog, search)?;
+        parse_catalog(&self.text(&url, ANSWER_LIMIT).await?)
+    }
+
+    /// A page of a catalogue: narrowed to `genre` if given, starting
+    /// `skip` titles in.
+    pub async fn catalog_page(
+        &self,
+        manifest_url: &str,
+        catalog: &Catalog,
+        genre: Option<&str>,
+        skip: usize,
+    ) -> Result<Vec<MetaPreview>> {
+        let skip = skip.to_string();
+        let mut extras = Vec::new();
+        if let Some(genre) = genre {
+            extras.push(("genre", genre));
+        }
+        if skip != "0" {
+            extras.push(("skip", skip.as_str()));
+        }
+        let url = resource_url_with(manifest_url, "catalog", &catalog.kind, &catalog.id, &extras)?;
         parse_catalog(&self.text(&url, ANSWER_LIMIT).await?)
     }
 

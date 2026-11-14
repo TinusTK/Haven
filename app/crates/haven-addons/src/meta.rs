@@ -46,6 +46,12 @@ pub struct MetaDetail {
     /// Episodes of a series (or the videos of a channel). Empty for films.
     #[serde(default)]
     pub videos: Vec<Video>,
+    /// The title's IMDb id (`tt…`) when its own id is something else.
+    #[serde(default, deserialize_with = "lenient::text_or_number")]
+    pub imdb_id: Option<String>,
+    /// The title's number at TMDB, if known.
+    #[serde(default, rename = "moviedb_id", deserialize_with = "lenient::text_or_number")]
+    pub tmdb_id: Option<String>,
 }
 
 /// One episode. Its `id` is what streams are asked for.

@@ -101,6 +101,66 @@ pub struct Library {
     pub name: String,
 }
 
+/// A film or episode to look for on a server: the one Haven has open
+/// from somewhere else (another server, an add-on, the TMDB catalogue).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Wanted {
+    pub series: bool,
+    pub name: String,
+    /// The year it came out; for a series the year it began.
+    pub year: Option<String>,
+    pub imdb: Option<String>,
+    pub tmdb: Option<String>,
+    /// For an episode: its season and its number in the season.
+    pub episode: Option<(u32, u32)>,
+}
+
+/// A title on a server that might be the wanted one.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct Candidate {
+    pub id: String,
+    pub name: String,
+    pub year: Option<String>,
+    pub imdb: Option<String>,
+    pub tmdb: Option<String>,
+}
+
+/// Letters and digits only, lower case: "The Film!" and "the film" agree.
+fn plain(name: &str) -> String {
+    name.chars().filter(|c| c.is_alphanumeric()).flat_map(char::to_lowercase).collect()
+}
+
+/// The first four digits: "2008-2013" and "2008" agree.
+fn year_of(text: &Option<String>) -> Option<&str> {
+    text.as_deref().and_then(|text| text.get(..4)).filter(|y| y.bytes().all(|b| b.is_ascii_digit()))
+}
+
+/// Picks the candidate that is the wanted title. Shared ids decide; if
+/// the two sides share no kind of id, the name and the year must agree.
+pub(crate) fn best_match<'a>(wanted: &Wanted, candidates: &'a [Candidate]) -> Option<&'a Candidate> {
+    let same = |a: &Option<String>, b: &Option<String>| match (a, b) {
+        (Some(a), Some(b)) => Some(a.eq_ignore_ascii_case(b)),
+        _ => None,
+    };
+    let by_id = candidates.iter().find(|candidate| {
+        same(&wanted.imdb, &candidate.imdb) == Some(true)
+            || same(&wanted.tmdb, &candidate.tmdb) == Some(true)
+    });
+    by_id.or_else(|| {
+        candidates.iter().find(|candidate| {
+            // An id of the same kind that differs means another title.
+            same(&wanted.imdb, &candidate.imdb).is_none()
+                && same(&wanted.tmdb, &candidate.tmdb).is_none()
+                && !wanted.name.is_empty()
+                && plain(&wanted.name) == plain(&candidate.name)
+                && match (year_of(&wanted.year), year_of(&candidate.year)) {
+                    (Some(a), Some(b)) => a == b,
+                    _ => true,
+                }
+        })
+    })
+}
+
 /// The id Haven uses for an item on a server.
 pub fn title_id(server: i64, item: &str) -> String {
     format!("srv:{server}:{item}")
@@ -127,6 +187,39 @@ pub fn server_address(typed: &str) -> Result<String> {
 }
 
 const ANSWER_BYTES: usize = 16 * 1024 * 1024;
+/// Titles fetched at once for a shelf of a whole library.
+const LIST_LENGTH: u32 = 300;
+
+/// A picture's height in words: "4K", "1080p", "720p"…
+fn quality(width: Option<f64>, height: Option<f64>) -> Option<String> {
+    let (width, height) = (width.unwrap_or(0.0), height.unwrap_or(0.0));
+    if width <= 0.0 && height <= 0.0 {
+        return None;
+    }
+    Some(if width >= 3800.0 || height >= 2000.0 {
+        "4K".to_owned()
+    } else if width >= 1900.0 || height >= 1000.0 {
+        "1080p".to_owned()
+    } else if width >= 1260.0 || height >= 700.0 {
+        "720p".to_owned()
+    } else if height > 0.0 {
+        format!("{height:.0}p")
+    } else {
+        "SD".to_owned()
+    })
+}
+
+/// A file size in words: "4.2 GB", "700 MB".
+fn size(bytes: f64) -> Option<String> {
+    const MB: f64 = 1024.0 * 1024.0;
+    if bytes < MB {
+        None
+    } else if bytes >= 1024.0 * MB {
+        Some(format!("{:.1} GB", bytes / (1024.0 * MB)))
+    } else {
+        Some(format!("{:.0} MB", bytes / MB))
+    }
+}
 
 /// Talks to media servers.
 #[derive(Clone)]
@@ -211,9 +304,38 @@ impl Client {
 
     /// A library's titles by name (the first few hundred).
     pub async fn all(&self, server: &Server, library: &str) -> Result<Vec<MetaPreview>> {
+        self.page(server, library, 0, LIST_LENGTH).await
+    }
+
+    /// Part of a library's titles by name: `length` of them from `start`.
+    pub async fn page(
+        &self,
+        server: &Server,
+        library: &str,
+        start: u32,
+        length: u32,
+    ) -> Result<Vec<MetaPreview>> {
         match server.kind {
-            Kind::Plex => plex::titles(self, server, library, false).await,
-            _ => emby::all(self, server, library).await,
+            Kind::Plex => plex::page(self, server, library, start, length).await,
+            _ => emby::page(self, server, library, start, length).await,
+        }
+    }
+
+    /// Whether the server answers right now. Needs no sign-in.
+    pub async fn online(&self, server: &Server) -> bool {
+        match server.kind {
+            Kind::Plex => plex::online(self, server).await,
+            _ => emby::online(self, server).await,
+        }
+    }
+
+    /// Looks for a film or episode on the server. Gives the item's id
+    /// there (the part after the server's number), or `None` if the
+    /// server does not have it.
+    pub async fn find(&self, server: &Server, wanted: &Wanted) -> Result<Option<String>> {
+        match server.kind {
+            Kind::Plex => plex::find(self, server, wanted).await,
+            _ => emby::find(self, server, wanted).await,
         }
     }
 
@@ -238,7 +360,7 @@ impl Client {
     pub async fn streams(&self, server: &Server, item: &str) -> Result<Vec<Stream>> {
         match server.kind {
             Kind::Plex => plex::streams(self, server, item).await,
-            _ => Ok(emby::streams(server, item)),
+            _ => emby::streams(self, server, item).await,
         }
     }
 
@@ -330,6 +452,48 @@ mod tests {
         assert_eq!(server_address("https://media.example.org/jf/").unwrap(), "https://media.example.org/jf");
         assert!(matches!(server_address("ftp://x"), Err(Error::InvalidAddress(_))));
         assert!(matches!(server_address(""), Err(Error::InvalidAddress(_))));
+    }
+
+    #[test]
+    fn the_wanted_title_is_matched_by_id_then_by_name_and_year() {
+        let candidate = |id: &str, name: &str, year: &str, imdb: Option<&str>| Candidate {
+            id: id.into(),
+            name: name.into(),
+            year: Some(year.into()),
+            imdb: imdb.map(Into::into),
+            tmdb: None,
+        };
+        let on_server = [
+            candidate("a", "The Film", "1990", Some("tt1")),
+            candidate("b", "The Film", "2021", Some("tt2")),
+            candidate("c", "Another: Film!", "2005", None),
+        ];
+        let wanted = |name: &str, year: &str, imdb: Option<&str>| Wanted {
+            name: name.into(),
+            year: Some(year.into()),
+            imdb: imdb.map(Into::into),
+            ..Wanted::default()
+        };
+        // The id decides, whatever the name says.
+        assert_eq!(best_match(&wanted("Renamed", "2021", Some("TT2")), &on_server).unwrap().id, "b");
+        // A different id of the same kind is another title, even by the same name.
+        assert!(best_match(&wanted("The Film", "1990", Some("tt9")), &on_server).is_none());
+        // No id to compare: name and year.
+        assert_eq!(best_match(&wanted("another film", "2005-2009", None), &on_server).unwrap().id, "c");
+        assert!(best_match(&wanted("another film", "2006", None), &on_server).is_none());
+        assert!(best_match(&wanted("", "2005", None), &on_server).is_none());
+    }
+
+    #[test]
+    fn sizes_and_qualities_read_well() {
+        assert_eq!(quality(Some(3840.0), Some(1600.0)).as_deref(), Some("4K"));
+        assert_eq!(quality(Some(1920.0), Some(800.0)).as_deref(), Some("1080p"));
+        assert_eq!(quality(None, Some(720.0)).as_deref(), Some("720p"));
+        assert_eq!(quality(Some(720.0), Some(576.0)).as_deref(), Some("576p"));
+        assert_eq!(quality(None, None), None);
+        assert_eq!(size(4.5 * 1024.0 * 1024.0 * 1024.0).as_deref(), Some("4.5 GB"));
+        assert_eq!(size(700.0 * 1024.0 * 1024.0).as_deref(), Some("700 MB"));
+        assert_eq!(size(10.0), None);
     }
 
     #[test]

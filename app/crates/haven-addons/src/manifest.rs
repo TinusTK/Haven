@@ -81,6 +81,9 @@ pub struct Extra {
     pub name: String,
     #[serde(default, rename = "isRequired")]
     pub is_required: bool,
+    /// The values it takes, such as the genres to choose from.
+    #[serde(default, deserialize_with = "crate::lenient::texts")]
+    pub options: Vec<String>,
 }
 
 impl Manifest {
@@ -122,6 +125,22 @@ impl Catalog {
         let supports = self.extra.iter().any(|extra| extra.name == "search")
             || self.extra_supported.iter().any(|name| name == "search");
         supports && self.required().all(|name| name == "search")
+    }
+
+    /// The genres this catalogue can be narrowed to; empty if it has none.
+    pub fn genres(&self) -> &[String] {
+        self.extra.iter().find(|extra| extra.name == "genre").map_or(&[], |extra| &extra.options)
+    }
+
+    /// True when the catalogue hands out further pages (`skip`).
+    pub fn pages(&self) -> bool {
+        self.extra.iter().any(|extra| extra.name == "skip")
+            || self.extra_supported.iter().any(|name| name == "skip")
+    }
+
+    /// True when the catalogue can be browsed with at most a genre chosen.
+    pub fn browsable(&self) -> bool {
+        self.required().all(|name| name == "genre" && !self.genres().is_empty())
     }
 
     /// What this catalogue's content is called: "films", "series"…

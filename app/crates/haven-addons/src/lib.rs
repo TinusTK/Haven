@@ -17,7 +17,7 @@ pub use client::Client;
 pub use manifest::{Catalog, Extra, Manifest, Resource, parse_manifest};
 pub use meta::{MetaDetail, MetaPreview, Video, parse_catalog, parse_meta};
 pub use stream::{Stream, StreamKind, parse_streams};
-pub use url::{catalog_url, manifest_url, resource_url};
+pub use url::{catalog_url, manifest_url, resource_url, resource_url_with};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
