@@ -52,8 +52,10 @@ jobs:
           New-Item $dir -ItemType Directory | Out-Null
           Copy-Item target/release/haven.exe $dir
           Copy-Item packaging/windows/libmpv/*.dll $dir
-          $p = Start-Process (Join-Path $dir "haven.exe") -PassThru
+          $said = Join-Path $dir "stderr.txt"
+          $p = Start-Process (Join-Path $dir "haven.exe") -PassThru -RedirectStandardError $said
           if ($p.WaitForExit(15000)) {
+            if (Test-Path $said) { Get-Content $said | ForEach-Object { Write-Host "haven.exe said: $_" } }
             if ($p.ExitCode -eq -1073741515) { throw "haven.exe could not find a DLL it needs" }
             Write-Host "::warning::haven.exe stopped early with exit code $($p.ExitCode); its DLLs were found"
           } else {
