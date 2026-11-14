@@ -25,10 +25,22 @@ components that keep their own licences:
   linked inside the DLL. FFmpeg there is built with `--enable-version3`,
   so it is under LGPL version 3. The source code of each is at the
   addresses above.
+- **Vulkan loader** (`vulkan-1.dll`, Windows only), from the official
+  Vulkan Runtime 1.4.363.0 components published by LunarG
+  (https://vulkan.lunarg.com). Copyright The Khronos Group Inc., LunarG,
+  Inc. and Valve Corporation; Apache-2.0 and MIT. Its licence file is
+  installed beside it as `VulkanRT-License.txt`. libmpv needs it to load.
 - **libmpv2** (Rust bindings to libmpv), LGPL-2.1.
 - **SQLite** (public domain), and the Rust crates listed in
   `app/Cargo.lock`, each under its own permissive licence (MIT, Apache-2.0,
   BSD, ISC, Zlib, MPL-2.0 and similar).
+
+The Windows installer puts the licence texts in the `licenses` folder
+beside `haven.exe`: `LGPL-2.1.txt` (mpv), `LGPL-3.0.txt` with
+`GPL-3.0.txt`, which it refers to (FFmpeg as built here), and
+`VulkanRT-License.txt` beside `vulkan-1.dll`. `GPL-3.0.txt` is there only
+because the LGPL version 3 text builds on it: nothing shipped with Haven
+is under the GPL.
 
 Before a public release: regenerate the full list of crate licences (for
 example with `cargo about`) and have the LGPL points above checked.

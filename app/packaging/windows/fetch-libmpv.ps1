@@ -1,15 +1,22 @@
-# Puts the LGPL libmpv for Windows into packaging\windows\libmpv:
-# libmpv-2.dll (shipped beside haven.exe) and mpv.lib (what the build links
-# against). Run from anywhere; CI runs it before the release build.
+# Puts what the Windows player needs into packaging\windows\libmpv:
+# libmpv-2.dll (the LGPL libmpv, shipped beside haven.exe), mpv.lib (what
+# the build links against) and vulkan-1.dll with its licence (the Vulkan
+# loader, which libmpv-2.dll cannot load without and which PCs without
+# full graphics drivers lack). Run from anywhere; CI runs it before the
+# release build.
 #
 #   pwsh packaging\windows\fetch-libmpv.ps1                 # download (needs gh, signed in)
-#   pwsh packaging\windows\fetch-libmpv.ps1 -Archive x.7z   # use a file already here
+#   pwsh packaging\windows\fetch-libmpv.ps1 -Archive x.7z   # use a libmpv archive already here
 #
 # The archive is the LGPL build from https://github.com/zhongfly/mpv-winbuild
 # (mpv built with -Dgpl=false, FFmpeg without --enable-gpl). That project
 # deletes its releases after 30 days, so a copy is kept as a release of
 # Haven's own repository. To move to a newer libmpv: upload the new archive
 # as a new release there and change the three values below.
+#
+# The Vulkan loader is the official runtime zip from LunarG
+# (https://vulkan.lunarg.com/sdk/home, "Runtime zip"), also kept as a
+# release of Haven's repository so the build does not depend on that site.
 
 param(
     [string]$Archive = ""
@@ -21,6 +28,10 @@ $Repo   = "TinusTK/Haven"
 $Tag    = "libmpv-win-20261113"
 $File   = "mpv-dev-lgpl-x86_64-20261113-git-fe753a7824.7z"
 $Sha256 = "d4f9e4ae675685d1a35d926aac65573cc05e71ea7391c344a91f325f73e4386e"
+
+$VulkanTag    = "vulkan-rt-1.4.363.0"
+$VulkanFile   = "VulkanRT-X64-1.4.363.0-Components.zip"
+$VulkanSha256 = "a25a927aa8b9f0371048f1861cf88ac3b9bc9b1fb332c42d897c8ab32695769a"
 
 $dest = Join-Path $PSScriptRoot "libmpv"
 $work = Join-Path ([System.IO.Path]::GetTempPath()) "haven-libmpv"
@@ -65,4 +76,18 @@ Set-Content $def (@("LIBRARY libmpv-2.dll", "EXPORTS") + $exports) -Encoding asc
 & (Join-Path $bin "lib.exe") /nologo "/def:$def" /name:libmpv-2.dll "/out:$(Join-Path $dest 'mpv.lib')" /machine:x64
 if ($LASTEXITCODE -ne 0) { throw "lib.exe could not make mpv.lib" }
 
-Write-Host "libmpv ready in ${dest}: libmpv-2.dll, mpv.lib ($($exports.Count) functions)"
+# The Vulkan loader, from the official runtime zip.
+gh release download $VulkanTag --repo $Repo --pattern $VulkanFile --dir $work
+if ($LASTEXITCODE -ne 0) { throw "Could not download $VulkanFile from release $VulkanTag of $Repo" }
+$vulkanZip = Join-Path $work $VulkanFile
+$hash = (Get-FileHash $vulkanZip -Algorithm SHA256).Hash.ToLower()
+if ($hash -ne $VulkanSha256) { throw "Checksum of $VulkanFile is $hash, expected $VulkanSha256" }
+$vulkan = Join-Path $work "vulkan"
+Expand-Archive $vulkanZip -DestinationPath $vulkan
+$vulkanDll = Get-ChildItem $vulkan -Recurse -Filter vulkan-1.dll | Where-Object { $_.Directory.Name -eq "x64" }
+$vulkanLicence = Get-ChildItem $vulkan -Recurse -Filter VulkanRT-License.txt
+if (-not $vulkanDll -or -not $vulkanLicence) { throw "$VulkanFile does not hold x64\vulkan-1.dll and VulkanRT-License.txt" }
+Copy-Item $vulkanDll.FullName $dest -Force
+Copy-Item $vulkanLicence.FullName $dest -Force
+
+Write-Host "Ready in ${dest}: libmpv-2.dll, mpv.lib ($($exports.Count) functions), vulkan-1.dll"

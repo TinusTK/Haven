@@ -7,12 +7,19 @@ these two files in this folder:
 - `libmpv-2.dll`: the library itself, which the installer puts beside
   `haven.exe` (plus any other `.dll` put in this same folder).
 
+The script also puts `vulkan-1.dll` (the Vulkan loader) and its licence
+file here. `libmpv-2.dll` cannot load without it, and a PC without full
+graphics drivers (a virtual machine, for one) does not have it, so Haven
+ships its own copy: the official Vulkan Runtime "Components" zip from
+https://vulkan.lunarg.com, kept as release `vulkan-rt-<version>` of
+Haven's repository.
+
 ## Getting them
 
 Run `..\fetch-libmpv.ps1` (CI does this before the release build). It
 downloads the archive named in the script from a release of Haven's own
-repository, checks its SHA-256, copies `libmpv-2.dll` here and makes
-`mpv.lib` from the functions the DLL exports. It needs `gh` (signed in),
+repository, checks its SHA-256, copies `libmpv-2.dll` here, makes
+`mpv.lib` from the functions the DLL exports, and adds the Vulkan loader. It needs `gh` (signed in),
 7-Zip and the Visual Studio C++ build tools.
 
 ## Where the build comes from

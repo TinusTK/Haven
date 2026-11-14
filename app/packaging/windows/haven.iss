@@ -4,7 +4,7 @@
 ; libmpv-2.dll (an LGPL build) in packaging\windows\libmpv.
 
 #ifndef AppVersion
-  #define AppVersion "0.1.0"
+  #define AppVersion "0.1.1"
 #endif
 
 [Setup]
@@ -37,8 +37,11 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 Source: "..\..\target\release\haven.exe"; DestDir: "{app}"; Flags: ignoreversion
 ; The video engine and whatever it needs beside it; absent in a build without the player.
 Source: "libmpv\*.dll"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
+Source: "libmpv\VulkanRT-License.txt"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "..\..\..\LICENSE"; DestDir: "{app}"; DestName: "LICENSE.txt"; Flags: ignoreversion
 Source: "..\..\..\THIRD-PARTY.md"; DestDir: "{app}"; Flags: ignoreversion
+; Licence texts of the libraries shipped beside haven.exe (see THIRD-PARTY.md).
+Source: "..\licenses\*.txt"; DestDir: "{app}\licenses"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\Haven"; Filename: "{app}\haven.exe"

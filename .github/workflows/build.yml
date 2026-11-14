@@ -41,6 +41,30 @@ jobs:
         run: ./packaging/windows/fetch-libmpv.ps1
       - name: Build release with the player
         run: cargo build --release -p haven-app --features player
+      # Starts haven.exe from a folder laid out like an installed copy.
+      # Fails if Windows cannot find a DLL it needs, or if it runs without
+      # Haven's own libmpv and Vulkan loader. The build machine has no
+      # real graphics, so an early exit for another reason is a warning.
+      - name: Check haven.exe starts
+        shell: pwsh
+        run: |
+          $dir = Join-Path $env:RUNNER_TEMP "haven-start"
+          New-Item $dir -ItemType Directory | Out-Null
+          Copy-Item target/release/haven.exe $dir
+          Copy-Item packaging/windows/libmpv/*.dll $dir
+          $p = Start-Process (Join-Path $dir "haven.exe") -PassThru
+          if ($p.WaitForExit(15000)) {
+            if ($p.ExitCode -eq -1073741515) { throw "haven.exe could not find a DLL it needs" }
+            Write-Host "::warning::haven.exe stopped early with exit code $($p.ExitCode); its DLLs were found"
+          } else {
+            $p.Refresh()
+            $loaded = $p.Modules | Where-Object { $_.ModuleName -in "libmpv-2.dll", "vulkan-1.dll" }
+            $loaded | ForEach-Object { Write-Host "loaded: $($_.FileName)" }
+            $p.Kill()
+            $own = @($loaded | Where-Object { $_.FileName.StartsWith($dir, [System.StringComparison]::OrdinalIgnoreCase) })
+            if ($own.Count -ne 2) { throw "haven.exe is running without its own libmpv-2.dll and vulkan-1.dll" }
+            Write-Host "haven.exe started with its own libmpv-2.dll and vulkan-1.dll"
+          }
       - name: Build installer
         shell: pwsh
         run: |
