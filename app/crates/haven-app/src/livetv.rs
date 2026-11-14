@@ -710,6 +710,8 @@ impl LiveTv {
                 poster: None,
                 // A channel has no place to come back to.
                 remember: false,
+                source: String::new(),
+                next: None,
             });
         }
     }

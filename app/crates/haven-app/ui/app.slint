@@ -586,6 +586,99 @@ component PlayerButton inherits Rectangle {
     }
 }
 
+// A round button drawn over the picture, with a shape for a face and,
+// under it, a few letters ("10", "30") where that helps.
+component RoundButton inherits Rectangle {
+    in property <string> shape;
+    in property <string> caption;
+    in property <string> name;
+    in property <length> size: 64px;
+    out property <bool> hovered: touch.has-hover;
+    callback clicked();
+
+    width: self.size;
+    height: self.size;
+    border-radius: self.size / 2;
+    background: touch.pressed ? #000000c0 : touch.has-hover ? #000000a0 : #00000070;
+    border-width: 1.5px;
+    border-color: touch.has-hover ? #f2c66d : #ffffff50;
+    accessible-role: button;
+    accessible-label: name;
+    accessible-action-default => { root.clicked(); }
+
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+    Path {
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2 - (root.caption == "" ? 0px : root.size * 0.08);
+        width: root.size * 0.42;
+        height: root.size * 0.42;
+        viewbox-width: 24;
+        viewbox-height: 24;
+        commands: root.shape;
+        fill: white;
+    }
+    if root.caption != "": Text {
+        y: parent.height * 0.66;
+        width: parent.width;
+        text: root.caption;
+        color: white;
+        font-size: root.size * 0.17;
+        font-weight: 700;
+        horizontal-alignment: center;
+    }
+}
+
+// A bar to drag: 0 at the left, 1 at the right.
+component LevelBar inherits Rectangle {
+    in property <float> value;
+    out property <bool> hovered: touch.has-hover || touch.pressed;
+    callback changed(float);
+
+    height: 22px;
+    accessible-role: slider;
+    accessible-label: "Volume";
+    accessible-value: root.value;
+    accessible-value-minimum: 0;
+    accessible-value-maximum: 1;
+
+    Rectangle {
+        y: (parent.height - self.height) / 2;
+        height: 4px;
+        border-radius: 2px;
+        background: #ffffff40;
+        Rectangle {
+            x: 0;
+            width: parent.width * clamp(root.value, 0, 1);
+            border-radius: 2px;
+            background: white;
+        }
+    }
+    Rectangle {
+        x: root.width * clamp(root.value, 0, 1) - 6px;
+        y: (parent.height - 12px) / 2;
+        width: 12px;
+        height: 12px;
+        border-radius: 6px;
+        background: white;
+    }
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        pointer-event(event) => {
+            if (event.button == PointerEventButton.left && event.kind == PointerEventKind.down) {
+                root.changed(clamp(self.mouse-x / self.width, 0, 1));
+            }
+        }
+        moved => {
+            if (self.pressed) {
+                root.changed(clamp(self.mouse-x / self.width, 0, 1));
+            }
+        }
+    }
+}
+
 component SeekBar inherits Rectangle {
     in property <float> duration;
     in property <float> position;
@@ -594,6 +687,12 @@ component SeekBar inherits Rectangle {
     private property <float> dragged;
     private property <float> shown: touch.pressed ? dragged : position;
     private property <float> share: duration > 0 ? clamp(shown / duration, 0, 1) : 0;
+    // The time under the pointer.
+    private property <float> pointed: clamp(touch.mouse-x / self.width, 0, 1) * root.duration;
+
+    pure function clock(seconds: float) -> string {
+        return (seconds >= 3600 ? floor(seconds / 3600) + ":" + (floor(mod(seconds, 3600) / 60) < 10 ? "0" : "") : "") + floor(mod(seconds, 3600) / 60) + ":" + (floor(mod(seconds, 60)) < 10 ? "0" : "") + floor(mod(seconds, 60));
+    }
 
     height: 22px;
     accessible-role: slider;
@@ -622,6 +721,23 @@ component SeekBar inherits Rectangle {
         height: 14px;
         border-radius: 7px;
         background: white;
+    }
+    // The time the pointer is over, above the bar.
+    if root.hovered && root.duration > 0: Rectangle {
+        x: clamp(touch.mouse-x - self.width / 2, 0px, root.width - self.width);
+        y: -30px;
+        width: bubble.preferred-width + 16px;
+        height: 24px;
+        border-radius: 6px;
+        background: #151821f0;
+        bubble := Text {
+            text: root.clock(root.pointed);
+            color: white;
+            font-size: 12px;
+            font-weight: 600;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
     }
     touch := TouchArea {
         enabled: root.duration > 0;
@@ -676,6 +792,55 @@ component TrackItem inherits Rectangle {
     }
 }
 
+// A value with a button either side to step it down or up.
+component StepRow inherits Rectangle {
+    in property <string> label;
+    in property <string> value;
+    callback step(int);
+
+    height: 38px;
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 6px;
+        spacing: 6px;
+        Text {
+            horizontal-stretch: 1;
+            text: root.label;
+            color: #ffffffb0;
+            font-size: 13px;
+            vertical-alignment: center;
+        }
+        VerticalLayout {
+            alignment: center;
+            PlayerButton {
+                width: 36px;
+                height: 30px;
+                label: "−";
+                name: root.label + ": less";
+                clicked => { root.step(-1); }
+            }
+        }
+        Text {
+            width: 64px;
+            text: root.value;
+            color: white;
+            font-size: 13px;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+        VerticalLayout {
+            alignment: center;
+            PlayerButton {
+                width: 36px;
+                height: 30px;
+                label: "+";
+                name: root.label + ": more";
+                clicked => { root.step(1); }
+            }
+        }
+    }
+}
+
 component PlayerView inherits Rectangle {
     in property <image> frame;
     in property <string> title;
@@ -686,10 +851,27 @@ component PlayerView inherits Rectangle {
     in property <string> error;
     in property <float> duration;
     in property <float> position;
-    in property <string> time-text;
+    // Time watched, time left, and when it will end by the clock.
+    in property <string> elapsed-text;
+    in property <string> remaining-text;
+    in property <string> ends-at;
     in property <[TrackRow]> audio-tracks;
     in property <[TrackRow]> subtitle-tracks;
     in property <bool> fullscreen;
+    // 0 silent to 1 as recorded.
+    in property <float> volume;
+    in property <bool> muted;
+    in property <float> speed;
+    // 0 the whole picture, 1 fill (edges cut), 2 stretch.
+    in property <int> fit;
+    in property <float> subtitle-scale;
+    in property <float> subtitle-delay;
+    // What is known of the picture and sound, a fact a line.
+    in property <string> info;
+    // The episode after this one, in words; empty if there is none.
+    in property <string> next-title;
+    // Seconds until the next episode starts by itself; below 0, no countdown.
+    in property <int> next-countdown;
     callback close();
     callback toggle-pause();
     callback seek(float);
@@ -698,16 +880,28 @@ component PlayerView inherits Rectangle {
     // 0 turns subtitles off.
     callback choose-subtitle(int);
     callback toggle-fullscreen();
+    callback set-volume(float);
+    callback toggle-mute();
+    callback set-speed(float);
+    callback set-fit(int);
+    // -1 or 1: a step smaller or larger, earlier or later.
+    callback subtitle-scale-step(int);
+    callback subtitle-delay-step(int);
+    callback next();
+    callback cancel-next();
     // The bars came up or went away (subtitles move out of their way).
     callback controls-shown(bool);
 
-    // Which list is open: 0 none, 1 audio, 2 subtitles.
+    // Which list is open: 0 none, 1 audio, 2 subtitles, 3 speed,
+    // 4 picture, 5 info.
     in-out property <int> menu: 0;
     private property <bool> controls: true;
-    private property <bool> on-controls: top-touch.has-hover || bottom-touch.has-hover || back.hovered || bar.hovered || rewind.hovered || play.hovered || forward.hovered || audio.hovered || subs.hovered || full.hovered;
-    private property <bool> pinned: root.paused || root.busy || root.menu != 0 || root.error != "" || root.on-controls;
+    private property <bool> on-controls: top-touch.has-hover || bottom-touch.has-hover || back.hovered || bar.hovered || mute.hovered || level.hovered || audio.hovered || subs.hovered || pace.hovered || shape.hovered || about.hovered || following.hovered || full.hovered || rewind.hovered || play.hovered || forward.hovered;
+    private property <bool> pinned: root.paused || root.busy || root.menu != 0 || root.error != "" || root.on-controls || root.next-countdown >= 0;
     // Set by the app: a subtitle track is showing.
     in property <bool> any-subtitle;
+    private property <[float]> speeds: [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
+    private property <[string]> fits: ["Whole picture", "Fill the window (edges cut off)", "Stretch to the window"];
 
     private property <bool> bars: root.controls || root.pinned;
     changed bars => { root.controls-shown(root.bars); }
@@ -743,6 +937,32 @@ component PlayerView inherits Rectangle {
             }
             if (event.text == Key.RightArrow) {
                 root.skip(30);
+                return accept;
+            }
+            if (event.text == Key.UpArrow) {
+                root.set-volume(clamp(root.volume + 0.05, 0, 1));
+                root.controls = true;
+                hide.restart();
+                return accept;
+            }
+            if (event.text == Key.DownArrow) {
+                root.set-volume(clamp(root.volume - 0.05, 0, 1));
+                root.controls = true;
+                hide.restart();
+                return accept;
+            }
+            if (event.text == "m" || event.text == "M") {
+                root.toggle-mute();
+                return accept;
+            }
+            if (event.text == "n" || event.text == "N") {
+                if (root.next-title != "") {
+                    root.next();
+                }
+                return accept;
+            }
+            if (event.text == "s" || event.text == "S") {
+                root.menu = root.menu == 2 ? 0 : 2;
                 return accept;
             }
             if (event.text == "f" || event.text == "F") {
@@ -784,6 +1004,8 @@ component PlayerView inherits Rectangle {
     }
 
     if root.busy && root.error == "": Text {
+        y: parent.height / 2 + 70px;
+        height: 30px;
         text: "Loading…";
         color: white;
         font-size: 16px;
@@ -807,7 +1029,7 @@ component PlayerView inherits Rectangle {
         }
     }
 
-    // Top: back and what is playing.
+    // Top: back, what is playing, and when it ends.
     Rectangle {
         visible: root.bars;
         y: 0;
@@ -817,7 +1039,6 @@ component PlayerView inherits Rectangle {
         HorizontalLayout {
             padding: 16px;
             spacing: 14px;
-            alignment: start;
             VerticalLayout {
                 height: 40px;
                 alignment: center;
@@ -828,6 +1049,7 @@ component PlayerView inherits Rectangle {
                 }
             }
             VerticalLayout {
+                horizontal-stretch: 1;
                 height: 40px;
                 alignment: center;
                 spacing: 2px;
@@ -845,50 +1067,99 @@ component PlayerView inherits Rectangle {
                     overflow: elide;
                 }
             }
+            Text {
+                height: 40px;
+                text: root.ends-at;
+                color: #ffffffb0;
+                font-size: 13px;
+                vertical-alignment: center;
+            }
         }
+    }
+
+    // Middle: back 10 seconds, play or pause, forward 30 seconds.
+    rewind := RoundButton {
+        visible: root.bars && root.error == "" && root.duration > 0;
+        x: parent.width / 2 - 48px - 40px - self.width;
+        y: (parent.height - self.height) / 2;
+        shape: "M 12 5 L 3 12 L 12 19 Z M 21 5 L 12 12 L 21 19 Z";
+        caption: "10";
+        name: "Back 10 seconds";
+        clicked => { root.skip(-10); }
+    }
+    play := RoundButton {
+        visible: root.bars && root.error == "";
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        size: 96px;
+        shape: root.paused ? "M 7 4 L 20 12 L 7 20 Z" : "M 6 4 H 10 V 20 H 6 Z M 14 4 H 18 V 20 H 14 Z";
+        name: root.paused ? "Play" : "Pause";
+        clicked => { root.toggle-pause(); }
+    }
+    forward := RoundButton {
+        visible: root.bars && root.error == "" && root.duration > 0;
+        x: parent.width / 2 + 48px + 40px;
+        y: (parent.height - self.height) / 2;
+        shape: "M 3 5 L 12 12 L 3 19 Z M 12 5 L 21 12 L 12 19 Z";
+        caption: "30";
+        name: "Forward 30 seconds";
+        clicked => { root.skip(30); }
     }
 
     // Bottom: position and the buttons.
     Rectangle {
         visible: root.bars && root.error == "";
         y: parent.height - self.height;
-        height: 104px;
-        background: @linear-gradient(180deg, #00000000 0%, #000000d0 100%);
+        height: 112px;
+        background: @linear-gradient(180deg, #00000000 0%, #000000d8 100%);
         bottom-touch := TouchArea { }
         VerticalLayout {
             padding-left: 20px;
             padding-right: 20px;
             padding-bottom: 12px;
-            spacing: 4px;
+            spacing: 6px;
             alignment: end;
 
-            bar := SeekBar {
-                duration: root.duration;
-                position: root.position;
-                seek(seconds) => { root.seek(seconds); }
-            }
             HorizontalLayout {
-                spacing: 6px;
-                rewind := PlayerButton {
-                    label: "−10 s";
-                    name: "Back 10 seconds";
-                    clicked => { root.skip(-10); }
-                }
-                play := PlayerButton {
-                    width: 76px;
-                    label: root.paused ? "Play" : "Pause";
-                    clicked => { root.toggle-pause(); }
-                }
-                forward := PlayerButton {
-                    label: "+30 s";
-                    name: "Forward 30 seconds";
-                    clicked => { root.skip(30); }
-                }
+                spacing: 12px;
                 Text {
-                    text: root.time-text;
+                    min-width: 52px;
+                    text: root.elapsed-text;
                     color: white;
                     font-size: 13px;
+                    font-weight: 600;
                     vertical-alignment: center;
+                }
+                bar := SeekBar {
+                    horizontal-stretch: 1;
+                    duration: root.duration;
+                    position: root.position;
+                    seek(seconds) => { root.seek(seconds); }
+                }
+                Text {
+                    min-width: 52px;
+                    text: root.remaining-text;
+                    color: #ffffffb0;
+                    font-size: 13px;
+                    horizontal-alignment: right;
+                    vertical-alignment: center;
+                }
+            }
+            HorizontalLayout {
+                spacing: 4px;
+                mute := PlayerButton {
+                    label: root.muted || root.volume <= 0 ? "Muted" : "Volume";
+                    name: root.muted ? "Turn the sound on" : "Mute";
+                    active: root.muted || root.volume <= 0;
+                    clicked => { root.toggle-mute(); }
+                }
+                VerticalLayout {
+                    alignment: center;
+                    level := LevelBar {
+                        width: 110px;
+                        value: root.muted ? 0 : root.volume;
+                        changed(value) => { root.set-volume(value); }
+                    }
                 }
                 Rectangle { horizontal-stretch: 1; }
                 audio := PlayerButton {
@@ -898,10 +1169,31 @@ component PlayerView inherits Rectangle {
                     clicked => { root.menu = root.menu == 1 ? 0 : 1; }
                 }
                 subs := PlayerButton {
-                    visible: root.subtitle-tracks.length > 0;
                     label: "Subtitles";
                     active: root.menu == 2;
                     clicked => { root.menu = root.menu == 2 ? 0 : 2; }
+                }
+                pace := PlayerButton {
+                    label: root.speed == 1 ? "Speed" : root.speed + "×";
+                    name: "Speed";
+                    active: root.menu == 3 || root.speed != 1;
+                    clicked => { root.menu = root.menu == 3 ? 0 : 3; }
+                }
+                shape := PlayerButton {
+                    label: "Picture";
+                    active: root.menu == 4 || root.fit != 0;
+                    clicked => { root.menu = root.menu == 4 ? 0 : 4; }
+                }
+                about := PlayerButton {
+                    label: "Info";
+                    active: root.menu == 5;
+                    clicked => { root.menu = root.menu == 5 ? 0 : 5; }
+                }
+                following := PlayerButton {
+                    visible: root.next-title != "";
+                    label: "Next ›";
+                    name: "Next episode: " + root.next-title;
+                    clicked => { root.next(); }
                 }
                 full := PlayerButton {
                     label: root.fullscreen ? "Exit full screen" : "Full screen";
@@ -911,13 +1203,12 @@ component PlayerView inherits Rectangle {
         }
     }
 
-    // The audio or subtitle list, above the buttons that open it.
+    // The open list, above the buttons that open it.
     if root.menu != 0: Rectangle {
-        private property <int> rows: root.menu == 1 ? root.audio-tracks.length : root.subtitle-tracks.length + 1;
         x: parent.width - self.width - 20px;
-        y: parent.height - 104px - self.height + 30px;
-        width: 320px;
-        height: min(self.rows * 34px + 52px, parent.height - 200px);
+        y: parent.height - 112px - self.height + 30px;
+        width: 340px;
+        height: min(list.preferred-height + 50px, parent.height - 200px);
         border-radius: 10px;
         background: #151821f4;
         border-width: 1px;
@@ -927,7 +1218,7 @@ component PlayerView inherits Rectangle {
         Text {
             x: 14px;
             y: 10px;
-            text: root.menu == 1 ? "Audio" : "Subtitles";
+            text: root.menu == 1 ? "Audio" : root.menu == 2 ? "Subtitles" : root.menu == 3 ? "Speed" : root.menu == 4 ? "Picture" : "About what is playing";
             color: #ffffffb0;
             font-size: 12px;
             font-weight: 600;
@@ -937,8 +1228,8 @@ component PlayerView inherits Rectangle {
             y: 36px;
             width: parent.width - 12px;
             height: parent.height - 44px;
-            content-height: parent.rows * 34px;
-            VerticalLayout {
+            content-height: list.preferred-height;
+            list := VerticalLayout {
                 alignment: start;
                 if root.menu == 2: TrackItem {
                     label: "Off";
@@ -948,17 +1239,112 @@ component PlayerView inherits Rectangle {
                         root.menu = 0;
                     }
                 }
-                for track in root.menu == 1 ? root.audio-tracks : root.subtitle-tracks: TrackItem {
-                    label: track.label;
-                    selected: track.selected;
-                    clicked => {
-                        if (root.menu == 1) {
-                            root.choose-audio(track.id);
-                        } else {
-                            root.choose-subtitle(track.id);
+                if root.menu == 1 || root.menu == 2: VerticalLayout {
+                    for track in root.menu == 1 ? root.audio-tracks : root.subtitle-tracks: TrackItem {
+                        label: track.label;
+                        selected: track.selected;
+                        clicked => {
+                            if (root.menu == 1) {
+                                root.choose-audio(track.id);
+                            } else {
+                                root.choose-subtitle(track.id);
+                            }
+                            root.menu = 0;
                         }
-                        root.menu = 0;
                     }
+                }
+                if root.menu == 2 && root.subtitle-tracks.length == 0: Text {
+                    height: 34px;
+                    x: 12px;
+                    text: "This has no subtitles of its own.";
+                    color: #ffffffb0;
+                    font-size: 13px;
+                    vertical-alignment: center;
+                }
+                if root.menu == 2: StepRow {
+                    label: "Size";
+                    value: round(root.subtitle-scale * 100) + " %";
+                    step(way) => { root.subtitle-scale-step(way); }
+                }
+                if root.menu == 2: StepRow {
+                    label: "Shown later by";
+                    value: (round(root.subtitle-delay * 10) / 10) + " s";
+                    step(way) => { root.subtitle-delay-step(way); }
+                }
+                if root.menu == 3: VerticalLayout {
+                    for speed in root.speeds: TrackItem {
+                        label: speed == 1 ? "Normal" : speed + "×";
+                        selected: root.speed == speed;
+                        clicked => {
+                            root.set-speed(speed);
+                            root.menu = 0;
+                        }
+                    }
+                }
+                if root.menu == 4: VerticalLayout {
+                    for name[index] in root.fits: TrackItem {
+                        label: name;
+                        selected: root.fit == index;
+                        clicked => {
+                            root.set-fit(index);
+                            root.menu = 0;
+                        }
+                    }
+                }
+                if root.menu == 5: Rectangle {
+                    height: facts.preferred-height + 16px;
+                    facts := Text {
+                        x: 12px;
+                        y: 4px;
+                        width: parent.width - 24px;
+                        text: root.info == "" ? "Nothing is known yet." : root.info;
+                        color: white;
+                        font-size: 13px;
+                        wrap: word-wrap;
+                    }
+                }
+            }
+        }
+    }
+
+    // The next episode is about to start by itself.
+    if root.next-countdown >= 0: Rectangle {
+        x: parent.width - self.width - 20px;
+        y: parent.height - 112px - self.height - 8px;
+        width: 380px;
+        height: 104px;
+        border-radius: 12px;
+        background: #151821f4;
+        border-width: 1px;
+        border-color: #ffffff26;
+        TouchArea { }
+        VerticalLayout {
+            padding: 14px;
+            spacing: 8px;
+            Text {
+                text: root.next-countdown > 0 ? "Next episode in " + root.next-countdown + " s" : "Starting the next episode…";
+                color: #ffffffb0;
+                font-size: 12px;
+                font-weight: 600;
+            }
+            Text {
+                text: root.next-title;
+                color: white;
+                font-size: 15px;
+                font-weight: 600;
+                overflow: elide;
+            }
+            HorizontalLayout {
+                spacing: 8px;
+                alignment: end;
+                PlayerButton {
+                    label: "Cancel";
+                    clicked => { root.cancel-next(); }
+                }
+                PlayerButton {
+                    label: "Play now";
+                    active: true;
+                    clicked => { root.next(); }
                 }
             }
         }
@@ -1479,6 +1865,18 @@ export component AppWindow inherits Window {
     in property <float> player-duration;
     in property <float> player-position;
     in property <string> player-time;
+    in property <string> player-elapsed;
+    in property <string> player-remaining;
+    in property <string> player-ends-at;
+    in property <float> player-volume: 1;
+    in property <bool> player-muted;
+    in property <float> player-speed: 1;
+    in property <int> player-fit;
+    in property <float> player-subtitle-scale: 1;
+    in property <float> player-subtitle-delay;
+    in property <string> player-info;
+    in property <string> player-next-title;
+    in property <int> player-next-countdown: -1;
     in property <[TrackRow]> player-audio;
     in property <[TrackRow]> player-subtitles;
     in property <bool> player-any-subtitle;
@@ -1567,6 +1965,14 @@ export component AppWindow inherits Window {
     callback player-choose-audio(int);
     callback player-choose-subtitle(int);
     callback player-toggle-fullscreen();
+    callback player-set-volume(float);
+    callback player-toggle-mute();
+    callback player-set-speed(float);
+    callback player-set-fit(int);
+    callback player-subtitle-scale-step(int);
+    callback player-subtitle-delay-step(int);
+    callback player-next();
+    callback player-cancel-next();
     callback player-controls-shown(bool);
 
     title: "Haven";
@@ -2844,7 +3250,18 @@ export component AppWindow inherits Window {
         error: root.player-error;
         duration: root.player-duration;
         position: root.player-position;
-        time-text: root.player-time;
+        elapsed-text: root.player-elapsed;
+        remaining-text: root.player-remaining;
+        ends-at: root.player-ends-at;
+        volume: root.player-volume;
+        muted: root.player-muted;
+        speed: root.player-speed;
+        fit: root.player-fit;
+        subtitle-scale: root.player-subtitle-scale;
+        subtitle-delay: root.player-subtitle-delay;
+        info: root.player-info;
+        next-title: root.player-next-title;
+        next-countdown: root.player-next-countdown;
         audio-tracks: root.player-audio;
         subtitle-tracks: root.player-subtitles;
         any-subtitle: root.player-any-subtitle;
@@ -2857,6 +3274,14 @@ export component AppWindow inherits Window {
         choose-audio(id) => { root.player-choose-audio(id); }
         choose-subtitle(id) => { root.player-choose-subtitle(id); }
         toggle-fullscreen => { root.player-toggle-fullscreen(); }
+        set-volume(volume) => { root.player-set-volume(volume); }
+        toggle-mute => { root.player-toggle-mute(); }
+        set-speed(speed) => { root.player-set-speed(speed); }
+        set-fit(fit) => { root.player-set-fit(fit); }
+        subtitle-scale-step(way) => { root.player-subtitle-scale-step(way); }
+        subtitle-delay-step(way) => { root.player-subtitle-delay-step(way); }
+        next => { root.player-next(); }
+        cancel-next => { root.player-cancel-next(); }
         controls-shown(shown) => { root.player-controls-shown(shown); }
     }
 }

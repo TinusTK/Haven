@@ -147,6 +147,10 @@ pub struct PlayRequest {
     pub poster: Option<String>,
     /// Remember how far it was watched (films and episodes, not channels).
     pub remember: bool,
+    /// Where it plays from, in words, for the player's information.
+    pub source: String,
+    /// The episode after this one, in words; `None` if there is none.
+    pub next: Option<String>,
 }
 
 #[derive(Clone, Copy)]
@@ -191,6 +195,14 @@ pub struct Library {
     listed: RefCell<Option<Listed>>,
     /// Plays a stream; unset in a build without the player.
     player: RefCell<Option<Box<dyn Fn(PlayRequest)>>>,
+    /// Leaves the player page when the next episode cannot start by itself.
+    player_dismiss: RefCell<Option<Box<dyn Fn()>>>,
+    /// The source and name of the row that was last played, to pick the
+    /// same again for the next episode.
+    last_played: RefCell<Option<(String, String)>>,
+    /// Set while the next episode's places to watch are being asked for
+    /// and the one like the last is to be played as soon as it shows.
+    autoplay: RefCell<Option<(String, String)>>,
     continuing: Rc<VecModel<Poster>>,
     continue_generation: Cell<u64>,
     watchlist: Rc<VecModel<Poster>>,
@@ -268,6 +280,9 @@ impl Library {
             playing_item: RefCell::default(),
             listed: RefCell::default(),
             player: RefCell::default(),
+            player_dismiss: RefCell::default(),
+            last_played: RefCell::default(),
+            autoplay: RefCell::default(),
             continuing: Rc::default(),
             continue_generation: Cell::new(0),
             watchlist: Rc::default(),
@@ -356,6 +371,12 @@ impl Library {
         *self.player.borrow_mut() = Some(Box::new(play));
     }
 
+    /// Gives the library the way out of the player page.
+    #[cfg_attr(not(feature = "player"), allow(dead_code))]
+    pub fn set_player_dismiss(&self, dismiss: impl Fn() + 'static) {
+        *self.player_dismiss.borrow_mut() = Some(Box::new(dismiss));
+    }
+
     /// Call when the player has closed: what was watched may have changed.
     #[cfg_attr(not(feature = "player"), allow(dead_code))]
     pub fn player_closed(&self, played: Option<Played>) {
@@ -365,6 +386,7 @@ impl Library {
                 self.track_watched(&played.kind, &played.title_id, &played.video_id);
             }
         }
+        *self.autoplay.borrow_mut() = None;
         self.reload_continue();
         self.show_resume_note();
     }

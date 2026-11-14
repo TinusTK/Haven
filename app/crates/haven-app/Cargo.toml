@@ -19,6 +19,7 @@ path = "src/main.rs"
 player = ["haven-player/mpv"]
 
 [dependencies]
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 haven-addons.workspace = true
 haven-cast.workspace = true
 haven-core.workspace = true

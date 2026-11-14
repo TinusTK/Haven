@@ -272,6 +272,35 @@ fn act(ui: &AppWindow, action: &str) {
                 window.dispatch_event(WindowEvent::PointerReleased { position, button });
             }
         }
+        "volume" => ui.invoke_player_set_volume(number),
+        "mute" => ui.invoke_player_toggle_mute(),
+        "speed" => ui.invoke_player_set_speed(number),
+        "fit" => ui.invoke_player_set_fit(number as i32),
+        "subsize" => ui.invoke_player_subtitle_scale_step(number as i32),
+        "subdelay" => ui.invoke_player_subtitle_delay_step(number as i32),
+        "next" => ui.invoke_player_next(),
+        "cancelnext" => ui.invoke_player_cancel_next(),
+        "controls" => eprintln!(
+            "haven-controls: open={} title=\"{}\" sub=\"{}\" elapsed={} left={} ends=\"{}\" volume={:.2} muted={} \
+             speed={} fit={} subsize={:.1} subdelay={:.1} next=\"{}\" countdown={} busy={} error=\"{}\" info=\"{}\"",
+            ui.get_player_open(),
+            ui.get_player_title(),
+            ui.get_player_subtitle(),
+            ui.get_player_elapsed(),
+            ui.get_player_remaining(),
+            ui.get_player_ends_at(),
+            ui.get_player_volume(),
+            ui.get_player_muted(),
+            ui.get_player_speed(),
+            ui.get_player_fit(),
+            ui.get_player_subtitle_scale(),
+            ui.get_player_subtitle_delay(),
+            ui.get_player_next_title(),
+            ui.get_player_next_countdown(),
+            ui.get_player_busy(),
+            ui.get_player_error(),
+            ui.get_player_info().replace('\n', " / "),
+        ),
         "clearcache" => ui.invoke_clear_cache(),
         "uncontinue" => {
             if let Some(card) = ui.get_continue_shelf().items.row_data(number as usize) {

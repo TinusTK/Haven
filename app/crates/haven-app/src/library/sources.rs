@@ -8,7 +8,9 @@ use haven_player::source::web_address;
 use haven_servers::{Wanted, split_id, title_id};
 use slint::Model;
 
-use super::{Library, Listed, PlayRequest, on_ui};
+use haven_addons::Video;
+
+use super::{Library, Listed, PlayRequest, Played, on_ui};
 use crate::StreamRow;
 
 /// The heading over the list.
@@ -155,6 +157,7 @@ impl Library {
 
         self.streams_pending.set(pending);
         if pending == 0 {
+            self.give_up_autoplay();
             return self.set_streams_state(
                 Some(heading),
                 false,
@@ -206,9 +209,30 @@ impl Library {
             }
             Err(err) => haven_core::diag::note(&format!("{source} gave no places to watch: {err}")),
         }
+        // The next episode plays from the same place as the last, as soon
+        // as that place has answered.
+        let wanted = self.autoplay.borrow().clone();
+        if let Some((wanted_source, wanted_name)) = wanted.filter(|(wanted, _)| wanted == source) {
+            let rows: Vec<(usize, StreamRow)> = self
+                .streams
+                .iter()
+                .enumerate()
+                .filter(|(_, row)| row.playable && row.source == wanted_source.as_str())
+                .collect();
+            let pick = rows
+                .iter()
+                .find(|(_, row)| row.name == wanted_name.as_str())
+                .or_else(|| rows.first())
+                .map(|(at, _)| *at);
+            if let Some(at) = pick {
+                *self.autoplay.borrow_mut() = None;
+                self.play_stream(at as i32);
+            }
+        }
         let pending = self.streams_pending.get().saturating_sub(1);
         self.streams_pending.set(pending);
         if pending == 0 {
+            self.give_up_autoplay();
             let note = if self.streams.row_count() == 0 {
                 "None of your media servers or add-ons has this."
             } else {
@@ -216,6 +240,69 @@ impl Library {
             };
             self.set_streams_state(None, false, note);
         }
+    }
+
+    /// The next episode's own source did not turn up: leave the player,
+    /// so the list of places to watch it shows instead.
+    fn give_up_autoplay(&self) {
+        if self.autoplay.borrow_mut().take().is_some() {
+            if let Some(dismiss) = self.player_dismiss.borrow().as_ref() {
+                dismiss();
+            }
+        }
+    }
+
+    /// The episode after the one whose places to watch are listed.
+    fn next_video(&self) -> Option<Video> {
+        let open = self.open.borrow();
+        let meta = open.as_ref()?.meta.as_ref()?;
+        let current = self.listed.borrow().as_ref()?.video_id.clone();
+        // In the order they are watched; specials (season 0) are not in the run.
+        let mut run: Vec<&Video> =
+            meta.videos.iter().filter(|video| video.season.is_none_or(|season| season > 0)).collect();
+        run.sort_by_key(|video| (video.season, video.episode));
+        let at = run.iter().position(|video| video.id == current)?;
+        run.get(at + 1).map(|video| (*video).clone())
+    }
+
+    fn episode_label(video: &Video) -> String {
+        let number = match (video.season, video.episode) {
+            (Some(season), Some(episode)) => format!("S{season} E{episode}"),
+            (None, Some(episode)) => format!("E{episode}"),
+            _ => String::new(),
+        };
+        [number.as_str(), video.title.as_deref().unwrap_or_default()]
+            .into_iter()
+            .filter(|part| !part.is_empty())
+            .collect::<Vec<_>>()
+            .join(" · ")
+    }
+
+    /// The player wants the next episode. Notes what was watched, opens
+    /// the next episode on the title's page and plays it from the same
+    /// place as the last as soon as that place answers. False if there
+    /// is no next episode.
+    #[cfg_attr(not(feature = "player"), allow(dead_code))]
+    pub fn play_next(&self, played: Option<Played>) -> bool {
+        if let Some(played) = played {
+            self.report_played(&played);
+            if played.finished {
+                self.track_watched(&played.kind, &played.title_id, &played.video_id);
+            }
+        }
+        self.reload_continue();
+        let (Some(next), Some(last)) = (self.next_video(), self.last_played.borrow().clone()) else {
+            return false;
+        };
+        if let Some(season) = next.season {
+            if self.ui.upgrade().is_some_and(|ui| ui.get_season() != season as i32) {
+                self.show_season(season as i32);
+            }
+        }
+        *self.autoplay.borrow_mut() = Some(last);
+        self.open_episode(&next.id);
+        // Nothing to ask: the list is already showing instead.
+        self.autoplay.borrow().is_some() || self.streams_pending.get() > 0
     }
 
     /// Plays the place to watch in that row of the list, if Haven can.
@@ -229,6 +316,7 @@ impl Library {
             return;
         };
         let Some(ui) = self.ui.upgrade() else { return };
+        let row_shown = self.streams.row_data(row.max(0) as usize);
         let open = self.open.borrow().as_ref().map(|open| {
             (
                 open.kind.clone(),
@@ -253,7 +341,11 @@ impl Library {
             video_id,
             poster,
             remember: true,
+            source: row_shown.as_ref().map(|row| row.source.to_string()).unwrap_or_default(),
+            next: self.next_video().map(|video| Self::episode_label(&video)),
         };
+        *self.last_played.borrow_mut() =
+            row_shown.map(|row| (row.source.to_string(), row.name.to_string()));
         if let Some(device) = self.cast_target() {
             return self.cast_to(device, request);
         }

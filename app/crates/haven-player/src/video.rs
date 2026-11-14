@@ -265,6 +265,32 @@ pub struct Status {
     pub buffering: bool,
 }
 
+/// How the picture fills the window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Fit {
+    /// All of the picture, with bars where the window's shape differs.
+    #[default]
+    Whole,
+    /// The window filled, the picture's edges cut off.
+    Fill,
+    /// The window filled, the picture pulled out of shape.
+    Stretch,
+}
+
+/// What mpv knows about what is playing. Anything may be unknown.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Details {
+    pub width: Option<i64>,
+    pub height: Option<i64>,
+    pub frames_per_second: Option<f64>,
+    pub video: Option<String>,
+    pub audio: Option<String>,
+    pub channels: Option<String>,
+    pub container: Option<String>,
+    /// The graphics card's decoder in use, if any.
+    pub decoder: Option<String>,
+}
+
 struct Start {
     address: String,
     /// Seconds to start at, or from the beginning.
@@ -637,6 +663,72 @@ impl Video {
     pub fn set_subtitle_margin(&self, margin: i64) {
         if let Some(mpv) = self.mpv {
             let _ = mpv.set_property("sub-margin-y", margin.clamp(0, 400));
+        }
+    }
+
+    /// Loudness from 0 (silent) to 1 (as recorded).
+    pub fn set_volume(&self, volume: f64) {
+        if let Some(mpv) = self.mpv {
+            let _ = mpv.set_property("volume", (volume.clamp(0.0, 1.0) * 100.0).round());
+        }
+    }
+
+    pub fn set_muted(&self, muted: bool) {
+        if let Some(mpv) = self.mpv {
+            let _ = mpv.set_property("mute", muted);
+        }
+    }
+
+    /// 1 is normal speed. The sound's pitch is kept.
+    pub fn set_speed(&self, speed: f64) {
+        if let Some(mpv) = self.mpv {
+            let _ = mpv.set_property("speed", speed.clamp(0.25, 4.0));
+        }
+    }
+
+    /// How the picture fills the window.
+    pub fn set_fit(&self, fit: Fit) {
+        if let Some(mpv) = self.mpv {
+            let (keep_shape, crop) = match fit {
+                Fit::Whole => (true, 0.0),
+                Fit::Fill => (true, 1.0),
+                Fit::Stretch => (false, 0.0),
+            };
+            let _ = mpv.set_property("keepaspect", keep_shape);
+            let _ = mpv.set_property("panscan", crop);
+        }
+    }
+
+    /// Subtitle size, 1 being the usual size.
+    pub fn set_subtitle_scale(&self, scale: f64) {
+        if let Some(mpv) = self.mpv {
+            let _ = mpv.set_property("sub-scale", scale.clamp(0.3, 3.0));
+        }
+    }
+
+    /// Shows subtitles this many seconds later (earlier if negative).
+    pub fn set_subtitle_delay(&self, seconds: f64) {
+        if let Some(mpv) = self.mpv {
+            let _ = mpv.set_property("sub-delay", seconds.clamp(-60.0, 60.0));
+        }
+    }
+
+    /// What is known about the picture and sound of what is playing.
+    pub fn details(&self) -> Details {
+        let Some(mpv) = self.mpv else { return Details::default() };
+        let text = |name: &str| {
+            mpv.get_property::<String>(name).ok().map(|text| text.trim().to_owned()).filter(|t| !t.is_empty())
+        };
+        let whole = |name: &str| mpv.get_property::<i64>(name).ok().filter(|n| *n > 0);
+        Details {
+            width: whole("width"),
+            height: whole("height"),
+            frames_per_second: mpv.get_property::<f64>("container-fps").ok().filter(|fps| *fps > 0.0),
+            video: text("video-format").or_else(|| text("video-codec")),
+            audio: text("audio-codec-name").or_else(|| text("audio-codec")),
+            channels: text("audio-params/hr-channels").or_else(|| text("audio-params/channels")),
+            container: text("file-format"),
+            decoder: text("hwdec-current").filter(|decoder| decoder != "no"),
         }
     }
 

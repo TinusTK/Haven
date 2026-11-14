@@ -100,6 +100,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         library.set_player(move |request| playing.play(request));
         let playing = player.clone();
         live.set_player(move |request| playing.play(request));
+        let playing = player.clone();
+        library.set_player_dismiss(move || playing.dismiss());
+        let next = std::rc::Rc::downgrade(&library);
+        player.on_next(move |played| next.upgrade().is_some_and(|library| library.play_next(played)));
         let library = std::rc::Rc::downgrade(&library);
         player.on_closed(move |played| {
             if let Some(library) = library.upgrade() {
