@@ -157,13 +157,16 @@ impl Library {
             }
         }
 
+        // The films and series of the user's Xtream Codes accounts.
+        pending += self.ask_accounts(generation, &wanted);
+
         self.streams_pending.set(pending);
         if pending == 0 {
             self.give_up_autoplay();
             return self.set_streams_state(
                 Some(heading),
                 false,
-                "Nothing you have added can play this. Add a media server in Settings, or install an add-on that offers streams.",
+                "Nothing you have added can play this. Add a media server or an Xtream Codes account in Settings, or install an add-on that offers streams.",
             );
         }
         self.set_streams_state(Some(heading), true, "");
@@ -171,7 +174,7 @@ impl Library {
 
     /// One media server or add-on has answered. `server_item` is the
     /// item the streams play when they come from a media server.
-    fn streams_loaded(
+    pub(super) fn streams_loaded(
         &self,
         generation: u64,
         source: &str,
@@ -240,7 +243,7 @@ impl Library {
         if pending == 0 {
             self.give_up_autoplay();
             let note = if self.streams.row_count() == 0 {
-                "None of your media servers or add-ons has this."
+                "None of your media servers, accounts or add-ons has this."
             } else {
                 ""
             };

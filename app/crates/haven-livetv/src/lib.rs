@@ -9,7 +9,10 @@ mod m3u;
 mod xtream;
 
 pub use m3u::{Channel, parse_m3u};
-pub use xtream::{XtreamAccount, XtreamError, XtreamInfo, to_m3u, xtream_channels, xtream_sign_in};
+pub use xtream::{
+    OnDemand, XtreamAccount, XtreamError, XtreamInfo, on_demand_matches, to_m3u, xtream_channels,
+    xtream_episode, xtream_films, xtream_series, xtream_sign_in,
+};
 
 /// The channels' groups, in the order they first appear, without repeats.
 pub fn groups(channels: &[Channel]) -> Vec<String> {

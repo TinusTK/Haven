@@ -11,6 +11,7 @@ use std::{
 mod cast;
 mod explore;
 mod offers;
+mod ondemand;
 mod servers;
 mod sources;
 mod tracking;
@@ -217,6 +218,8 @@ pub struct Library {
     server_generation: Cell<u64>,
     /// Whether each server answers: 0 not known yet, 1 online, 2 offline.
     server_states: RefCell<std::collections::HashMap<i64, i32>>,
+    /// The Xtream Codes accounts' films and series, as far as fetched.
+    on_demand: ondemand::Lists,
     /// The add-ons that media servers use and share with their owner.
     shared_addons: RefCell<Vec<(String, haven_servers::SharedAddon)>>,
     /// Every library of every server that answered, for Explore.
@@ -293,6 +296,7 @@ impl Library {
             server_shelves: ShelfSet::default(),
             server_generation: Cell::new(0),
             server_states: RefCell::default(),
+            on_demand: ondemand::Lists::default(),
             shared_addons: RefCell::default(),
             server_libraries: RefCell::default(),
             server_timer: slint::Timer::default(),
@@ -352,6 +356,7 @@ impl Library {
         library.show_cache_size();
 
         library.load_installed();
+        library.install_free_catalogue();
         library.reload_home();
         library.reload_continue();
         library.reload_watchlist();
@@ -439,6 +444,29 @@ impl Library {
             ui.set_addons(ModelRc::new(VecModel::from(rows)));
         }
         self.show_shared_addons();
+    }
+
+    /// The first time Haven runs, installs Cinemeta: a free catalogue of
+    /// films and series that needs no key, so Home and Explore have
+    /// something in them from the start. It is an add-on like any other:
+    /// it can be switched off or removed, and is not put back.
+    fn install_free_catalogue(&self) {
+        const DONE: &str = "free_catalogue_installed";
+        const CINEMETA: &str = "https://v3-cinemeta.strem.io/manifest.json";
+        if self.store.get::<bool>(DONE).ok().flatten() == Some(true) {
+            return;
+        }
+        // Checks of Haven itself can do without it.
+        #[cfg(debug_assertions)]
+        if std::env::var_os("HAVEN_NO_FREE_CATALOGUE").is_some() {
+            return;
+        }
+        if let Err(err) = self.store.put(DONE, &true) {
+            return eprintln!("haven: could not note the free catalogue: {err}");
+        }
+        if !self.addon_urls.borrow().iter().any(|url| url == CINEMETA) {
+            self.install(CINEMETA);
+        }
     }
 
     fn set_status(&self, text: &str, is_error: bool) {

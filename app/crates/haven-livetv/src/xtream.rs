@@ -149,6 +149,29 @@ impl XtreamAccount {
         format!("{} at {}", self.username, crate::source_name(&self.server))
     }
 
+    /// Where one of the account's films plays from.
+    pub fn film(&self, id: &str, extension: &str) -> String {
+        self.file("movie", id, extension)
+    }
+
+    /// Where one episode of one of the account's series plays from.
+    pub fn episode(&self, id: &str, extension: &str) -> String {
+        self.file("series", id, extension)
+    }
+
+    fn file(&self, kind: &str, id: &str, extension: &str) -> String {
+        // Only letters and digits make a file ending; anything else is left off.
+        let extension: String = extension.chars().filter(char::is_ascii_alphanumeric).collect();
+        format!(
+            "{}/{kind}/{}/{}/{}.{}",
+            self.server,
+            encoded(&self.username),
+            encoded(&self.password),
+            encoded(id),
+            if extension.is_empty() { "mp4" } else { extension.as_str() }
+        )
+    }
+
     /// Where one live channel plays from.
     fn stream(&self, id: &str, format: &str) -> String {
         format!(
@@ -229,6 +252,147 @@ pub fn xtream_channels(
             })
         })
         .collect())
+}
+
+/// A film or a series in an account's library of things to watch on
+/// demand, as its list names it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OnDemand {
+    /// The name as the provider wrote it ("EN - A Film (2021) 4K").
+    pub name: String,
+    /// A film's stream id, or a series' id.
+    pub id: String,
+    /// A film's file ending; empty for a series.
+    pub extension: String,
+    /// The year, where the list gives one.
+    pub year: Option<String>,
+    /// Its number at TMDB, where the list gives one.
+    pub tmdb: Option<String>,
+}
+
+fn on_demand(json: &str, id_key: &str) -> Result<Vec<OnDemand>, XtreamError> {
+    let listed: Value = serde_json::from_str(json).map_err(|_| XtreamError::BadAnswer)?;
+    let listed = listed.as_array().ok_or(XtreamError::BadAnswer)?;
+    let year = |text: String| text.get(..4).filter(|y| y.bytes().all(|b| b.is_ascii_digit())).map(str::to_owned);
+    Ok(listed
+        .iter()
+        .filter_map(|entry| {
+            Some(OnDemand {
+                name: text(entry, "name")?,
+                id: text(entry, id_key)?,
+                extension: text(entry, "container_extension").unwrap_or_default(),
+                year: text(entry, "year")
+                    .and_then(year)
+                    .or_else(|| text(entry, "releaseDate").and_then(year))
+                    .or_else(|| text(entry, "release_date").and_then(year)),
+                tmdb: text(entry, "tmdb").or_else(|| text(entry, "tmdb_id")).filter(|id| id != "0"),
+            })
+        })
+        .collect())
+}
+
+/// The account's films, from its answer to `get_vod_streams`.
+pub fn xtream_films(json: &str) -> Result<Vec<OnDemand>, XtreamError> {
+    on_demand(json, "stream_id")
+}
+
+/// The account's series, from its answer to `get_series`.
+pub fn xtream_series(json: &str) -> Result<Vec<OnDemand>, XtreamError> {
+    on_demand(json, "series_id")
+}
+
+/// A provider's name for a title, down to what tells titles apart: no
+/// country tag in front ("EN - "), nothing from a bracket on, no year
+/// or picture-quality words at the end; letters and digits only. With
+/// it comes a year found in the name, if any.
+pub(crate) fn plain_title(name: &str) -> (String, Option<String>) {
+    let is_year = |word: &str| {
+        word.len() == 4 && word.bytes().all(|b| b.is_ascii_digit()) && (word.starts_with("19") || word.starts_with("20"))
+    };
+    let mut year = name
+        .split(['(', '['])
+        .skip(1)
+        .filter_map(|part| part.get(..4))
+        .find(|part| is_year(part))
+        .map(str::to_owned);
+    let mut head = name.split(['(', '[']).next().unwrap_or(name).trim();
+    // "EN - ", "UK: ", "4K| " in front: a short tag in capitals, then a mark.
+    let tagged = [head.split_once(" - "), head.split_once('|'), head.split_once(':')]
+        .into_iter()
+        .flatten()
+        .find(|(tag, rest)| {
+            let tag = tag.trim();
+            (1..=5).contains(&tag.len())
+                && tag.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '+')
+                && tag.chars().any(|c| c.is_ascii_uppercase())
+                && !rest.trim().is_empty()
+        });
+    if let Some((_, rest)) = tagged {
+        head = rest.trim();
+    }
+    let mut words: Vec<&str> = head.split_whitespace().collect();
+    const QUALITY: [&str; 12] =
+        ["4k", "uhd", "fhd", "hd", "sd", "hdr", "hevc", "multi", "1080p", "720p", "2160p", "480p"];
+    while words.len() > 1 {
+        let last = words[words.len() - 1].to_lowercase();
+        if is_year(&last) {
+            year.get_or_insert(last);
+        } else if !QUALITY.contains(&last.as_str()) {
+            break;
+        }
+        words.pop();
+    }
+    let plain = words.concat().chars().filter(|c| c.is_alphanumeric()).flat_map(char::to_lowercase).collect();
+    (plain, year)
+}
+
+/// The entries of a list that are the wanted title: by TMDB number
+/// where both sides have one, else by name, and by year where both
+/// sides have one. A provider often lists a film several times (in
+/// other qualities or languages): all of them are returned.
+pub fn on_demand_matches<'a>(
+    listed: &'a [OnDemand],
+    name: &str,
+    year: Option<&str>,
+    tmdb: Option<&str>,
+) -> Vec<&'a OnDemand> {
+    let (wanted, _) = plain_title(name);
+    let wanted_year = year.and_then(|year| year.get(..4));
+    listed
+        .iter()
+        .filter(|entry| {
+            if let (Some(wanted), Some(listed)) = (tmdb, entry.tmdb.as_deref()) {
+                return wanted == listed;
+            }
+            let (plain, year_in_name) = plain_title(&entry.name);
+            let listed_year = entry.year.as_deref().or(year_in_name.as_deref());
+            !wanted.is_empty()
+                && plain == wanted
+                && match (wanted_year, listed_year) {
+                    (Some(a), Some(b)) => a == b,
+                    _ => true,
+                }
+        })
+        .collect()
+}
+
+/// One episode from the account's answer to `get_series_info`: its id
+/// and file ending.
+pub fn xtream_episode(json: &str, season: u32, episode: u32) -> Option<(String, String)> {
+    let info: Value = serde_json::from_str(json).ok()?;
+    let episodes = info.get("episodes")?;
+    // Seasons come as an object keyed by number, or as a list of lists.
+    let seasons: Vec<&Value> = match episodes {
+        Value::Object(seasons) => seasons.values().collect(),
+        Value::Array(seasons) => seasons.iter().collect(),
+        _ => return None,
+    };
+    seasons.into_iter().filter_map(Value::as_array).flatten().find_map(|entry| {
+        let number = |key: &str| text(entry, key).and_then(|n| n.parse::<u32>().ok());
+        (number("season") == Some(season) && number("episode_num") == Some(episode))
+            .then(|| Some((text(entry, "id")?, text(entry, "container_extension").unwrap_or_default())))
+            .flatten()
+    })
 }
 
 /// Writes channels as playlist text that [`crate::parse_m3u`] reads back
@@ -317,6 +481,59 @@ mod tests {
         assert_eq!(xtream_sign_in("<html>"), Err(XtreamError::BadAnswer));
         assert_eq!(xtream_sign_in("[]"), Err(XtreamError::BadAnswer));
         assert_eq!(xtream_sign_in(r#"{"user_info": {"auth": 1, "exp_date": null}}"#), Ok(XtreamInfo::default()));
+    }
+
+    #[test]
+    fn provider_names_are_stripped_down_to_the_title() {
+        for (name, plain, year) in [
+            ("EN - Dune: Part Two (2024)", "duneparttwo", Some("2024")),
+            ("Dune Part Two 2024 4K", "duneparttwo", Some("2024")),
+            ("UK| The Film [Multi-Sub] HD", "thefilm", None),
+            ("2001: A Space Odyssey (1968)", "2001aspaceodyssey", Some("1968")),
+            ("1917", "1917", None),
+            ("Blade Runner 2049", "bladerunner", Some("2049")),
+        ] {
+            let (got, got_year) = plain_title(name);
+            assert_eq!((got.as_str(), got_year.as_deref()), (plain, year), "{name}");
+        }
+    }
+
+    // Made up in the shape Xtream Codes servers answer with.
+    #[test]
+    fn films_and_series_are_matched_and_episodes_found() {
+        let films = xtream_films(
+            r#"[
+            {"name": "EN - A Film (2021)", "stream_id": 11, "container_extension": "mkv"},
+            {"name": "A Film 2021 4K", "stream_id": "12", "container_extension": "mp4", "tmdb": "500"},
+            {"name": "A Film (1984)", "stream_id": 13, "container_extension": "avi"},
+            {"name": "Another Film", "stream_id": 14, "tmdb": "0", "year": "2021"},
+            {"name": "No id"}
+        ]"#,
+        )
+        .unwrap();
+        assert_eq!(films.len(), 4);
+        let ids = |found: Vec<&OnDemand>| found.iter().map(|f| f.id.clone()).collect::<Vec<_>>();
+        // The one with a TMDB number is judged by it alone.
+        assert_eq!(ids(on_demand_matches(&films, "A Film", Some("2021"), Some("500"))), ["11", "12"]);
+        assert_eq!(ids(on_demand_matches(&films, "A Film", Some("2021"), Some("999"))), ["11"]);
+        assert_eq!(ids(on_demand_matches(&films, "A Film", Some("1984"), None)), ["13"]);
+        assert!(on_demand_matches(&films, "", None, None).is_empty());
+        assert_eq!(xtream_films("{}"), Err(XtreamError::BadAnswer));
+
+        let series = xtream_series(r#"[{"name": "A Show", "series_id": 7, "releaseDate": "2019-04-01"}]"#).unwrap();
+        assert_eq!((series[0].id.as_str(), series[0].year.as_deref()), ("7", Some("2019")));
+
+        let info = r#"{"episodes": {"1": [
+            {"id": "101", "episode_num": 1, "season": 1, "container_extension": "mkv"},
+            {"id": "102", "episode_num": "2", "season": "1", "container_extension": "mp4"}
+        ], "2": [{"id": "201", "episode_num": 1, "season": 2}]}}"#;
+        assert_eq!(xtream_episode(info, 1, 2), Some(("102".into(), "mp4".into())));
+        assert_eq!(xtream_episode(info, 2, 1), Some(("201".into(), String::new())));
+        assert_eq!(xtream_episode(info, 3, 1), None);
+
+        let account = account();
+        assert_eq!(account.film("12", "mp4"), "http://tv.example.org:8080/movie/me/p%26ss%20word/12.mp4");
+        assert_eq!(account.episode("201", ""), "http://tv.example.org:8080/series/me/p%26ss%20word/201.mp4");
     }
 
     #[test]
