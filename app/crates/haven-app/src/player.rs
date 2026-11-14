@@ -43,11 +43,13 @@ struct Preferences {
     volume: f64,
     muted: bool,
     subtitle_scale: f64,
+    /// Send Dolby and DTS sound untouched to a receiver.
+    passthrough: bool,
 }
 
 impl Default for Preferences {
     fn default() -> Self {
-        Self { volume: 1.0, muted: false, subtitle_scale: 1.0 }
+        Self { volume: 1.0, muted: false, subtitle_scale: 1.0, passthrough: false }
     }
 }
 
@@ -178,6 +180,8 @@ impl Player {
         connect!(on_player_toggle_mute, | | |p: &Rc<Self>| p.toggle_mute());
         connect!(on_player_set_speed, |speed| |p: &Rc<Self>| p.set_speed(speed as f64));
         connect!(on_player_set_fit, |fit| |p: &Rc<Self>| p.set_fit(fit));
+        connect!(on_player_set_passthrough, |on| |p: &Rc<Self>| p
+            .change_preferences(|preferences| preferences.passthrough = on));
         connect!(on_player_subtitle_scale_step, |way| |p: &Rc<Self>| p.step_subtitle_scale(way));
         connect!(on_player_subtitle_delay_step, |way| |p: &Rc<Self>| p.step_subtitle_delay(way));
         connect!(on_player_next, | | |p: &Rc<Self>| p.go_next());
@@ -217,6 +221,7 @@ impl Player {
         ui.set_player_volume(preferences.volume as f32);
         ui.set_player_muted(preferences.muted);
         ui.set_player_subtitle_scale(preferences.subtitle_scale as f32);
+        ui.set_player_passthrough(preferences.passthrough);
         ui.set_player_speed(self.speed.get() as f32);
         ui.set_player_fit(self.fit.get());
         ui.set_player_subtitle_delay(self.subtitle_delay.get() as f32);
@@ -230,6 +235,7 @@ impl Player {
         video.set_volume(preferences.volume);
         video.set_muted(preferences.muted);
         video.set_subtitle_scale(preferences.subtitle_scale);
+        video.set_passthrough(preferences.passthrough);
         video.set_speed(self.speed.get());
         video.set_fit(fit_of(self.fit.get()));
         video.set_subtitle_delay(self.subtitle_delay.get());

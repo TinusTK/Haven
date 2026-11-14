@@ -274,6 +274,7 @@ fn act(ui: &AppWindow, action: &str) {
         }
         "volume" => ui.invoke_player_set_volume(number),
         "mute" => ui.invoke_player_toggle_mute(),
+        "passthrough" => ui.invoke_player_set_passthrough(number > 0.0),
         "speed" => ui.invoke_player_set_speed(number),
         "fit" => ui.invoke_player_set_fit(number as i32),
         "subsize" => ui.invoke_player_subtitle_scale_step(number as i32),

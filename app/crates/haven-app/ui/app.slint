@@ -1875,6 +1875,8 @@ export component AppWindow inherits Window {
     in property <float> player-subtitle-scale: 1;
     in property <float> player-subtitle-delay;
     in property <string> player-info;
+    // Dolby and DTS sound goes to the sound device untouched.
+    in property <bool> player-passthrough;
     in property <string> player-next-title;
     in property <int> player-next-countdown: -1;
     in property <[TrackRow]> player-audio;
@@ -1971,6 +1973,7 @@ export component AppWindow inherits Window {
     callback player-set-fit(int);
     callback player-subtitle-scale-step(int);
     callback player-subtitle-delay-step(int);
+    callback player-set-passthrough(bool);
     callback player-next();
     callback player-cancel-next();
     callback player-controls-shown(bool);
@@ -2947,6 +2950,24 @@ export component AppWindow inherits Window {
                                 root.country-selected(self.current-index);
                             }
                         }
+                    }
+
+                    Rectangle { height: 8px; }
+                    SectionTitle { text: "Player"; }
+                    SettingsRow {
+                        label: "Send surround sound to a receiver untouched";
+                        detail: "For an AV receiver or soundbar on HDMI: needed for Dolby Atmos and DTS:X.";
+                        Switch {
+                            checked: root.player-passthrough;
+                            accessible-label: "Send surround sound to a receiver untouched";
+                            toggled => { root.player-set-passthrough(self.checked); }
+                        }
+                    }
+                    Text {
+                        text: "Off, Haven decodes the sound itself and plays it on whatever this computer has, in surround where the device can. On, Dolby Digital, Dolby TrueHD and DTS sound is passed on as it is in the file for the receiver to decode. Turn it on only with a receiver or soundbar that takes those; without one there may be no sound.";
+                        color: Theme.text-dim;
+                        font-size: 12px;
+                        wrap: word-wrap;
                     }
 
                     Rectangle { height: 8px; }

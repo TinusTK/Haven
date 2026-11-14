@@ -679,6 +679,17 @@ impl Video {
         }
     }
 
+    /// Sends Dolby and DTS sound to the sound device as it is in the
+    /// file, for an AV receiver or soundbar to decode. That is the only
+    /// way Dolby Atmos and DTS:X reach one: decoded here, they play as
+    /// their ordinary surround sound. Off, everything is decoded here.
+    pub fn set_passthrough(&self, on: bool) {
+        if let Some(mpv) = self.mpv {
+            let formats = if on { "ac3,eac3,dts,dts-hd,truehd" } else { "" };
+            let _ = mpv.set_property("audio-spdif", formats);
+        }
+    }
+
     /// 1 is normal speed. The sound's pitch is kept.
     pub fn set_speed(&self, speed: f64) {
         if let Some(mpv) = self.mpv {
