@@ -34,6 +34,25 @@ pub struct Genre {
     pub name: String,
 }
 
+/// A service that carries a title, and the ways it offers it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Service {
+    pub name: String,
+    /// "Subscription", "Free", "Free with ads", "Rent", "Buy".
+    pub ways: Vec<&'static str>,
+}
+
+/// Where a title can be watched in one country. The data is JustWatch's,
+/// passed on by TMDB, and must be credited to JustWatch where shown.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Offers {
+    /// The country's two-letter code, upper case.
+    pub country: String,
+    /// TMDB's page for the title in that country, with links to each service.
+    pub link: Option<String>,
+    pub services: Vec<Service>,
+}
+
 /// The id Haven gives a TMDB title.
 pub fn title_id(series: bool, number: u64) -> String {
     format!("tmdb:{}:{number}", if series { "tv" } else { "movie" })
@@ -137,6 +156,29 @@ impl Tmdb {
         Ok(read_page(&found, series, &self.images))
     }
 
+    /// The TMDB number of the title with that IMDb id, if TMDB knows it.
+    pub async fn number_of(&self, series: bool, imdb_id: &str) -> Result<Option<u64>, Error> {
+        if !crate::is_imdb_id(imdb_id) {
+            return Ok(None);
+        }
+        let found = self.get(&format!("/find/{imdb_id}?external_source=imdb_id")).await?;
+        Ok(crate::found_id(&found, series))
+    }
+
+    /// The services that carry a title, in the first of `countries`
+    /// (two-letter codes, most wanted first) that has any. `None` when
+    /// none of them has.
+    pub async fn offers(
+        &self,
+        series: bool,
+        number: u64,
+        countries: &[String],
+    ) -> Result<Option<Offers>, Error> {
+        let kind = if series { "tv" } else { "movie" };
+        let answer = self.get(&format!("/{kind}/{number}/watch/providers")).await?;
+        Ok(read_offers(&answer, countries))
+    }
+
     /// Everything about one title; for a series, with all its episodes.
     pub async fn title(&self, series: bool, number: u64) -> Result<MetaDetail, Error> {
         let kind = if series { "tv" } else { "movie" };
@@ -210,6 +252,32 @@ pub(crate) fn read_genres(found: &Value) -> Vec<Genre> {
         .iter()
         .filter_map(|genre| Some(Genre { id: genre.get("id")?.as_u64()?, name: text(genre, "name")? }))
         .collect()
+}
+
+pub(crate) fn read_offers(answer: &Value, countries: &[String]) -> Option<Offers> {
+    let results = answer.get("results")?.as_object()?;
+    const WAYS: [(&str, &str); 5] = [
+        ("flatrate", "Subscription"),
+        ("free", "Free"),
+        ("ads", "Free with ads"),
+        ("rent", "Rent"),
+        ("buy", "Buy"),
+    ];
+    countries.iter().find_map(|country| {
+        let country = country.trim().to_uppercase();
+        let entry = results.get(&country)?;
+        let mut services: Vec<Service> = Vec::new();
+        for (key, way) in WAYS {
+            let listed = entry.get(key).and_then(Value::as_array).map_or(&[][..], Vec::as_slice);
+            for name in listed.iter().filter_map(|provider| text(provider, "provider_name")) {
+                match services.iter_mut().find(|service| service.name == name) {
+                    Some(service) => service.ways.push(way),
+                    None => services.push(Service { name, ways: vec![way] }),
+                }
+            }
+        }
+        (!services.is_empty()).then(|| Offers { country, link: text(entry, "link"), services })
+    })
 }
 
 /// The numbers of a series' seasons that have episodes, specials included.
@@ -367,6 +435,30 @@ mod tests {
         // Without an IMDb id the episode ids stay Haven's own.
         let bare = read_title(&json!({"name": "Bare"}), true, 23, IMAGES).unwrap();
         assert_eq!(read_season(&answer, &bare, 23, 1)[0].id, "tmdb:tv:23:1:1");
+    }
+
+    #[test]
+    fn offers_come_from_the_first_country_that_has_any() {
+        let answer = json!({"results": {
+            "AU": {"link": "https://www.themoviedb.org/movie/11/watch?locale=AU"},
+            "US": {"link": "https://www.themoviedb.org/movie/11/watch?locale=US",
+                   "flatrate": [{"provider_name": "Service One"}],
+                   "rent": [{"provider_name": "Shop Two"}, {"provider_name": "Service One"}],
+                   "buy": [{"provider_name": "Shop Two"}]}
+        }});
+        let wanted = ["au".to_owned(), "US".to_owned()];
+        let offers = read_offers(&answer, &wanted).unwrap();
+        assert_eq!(offers.country, "US");
+        assert_eq!(offers.link.as_deref(), Some("https://www.themoviedb.org/movie/11/watch?locale=US"));
+        assert_eq!(
+            offers.services,
+            [
+                Service { name: "Service One".into(), ways: vec!["Subscription", "Rent"] },
+                Service { name: "Shop Two".into(), ways: vec!["Rent", "Buy"] },
+            ]
+        );
+        assert_eq!(read_offers(&answer, &["GB".to_owned()]), None);
+        assert_eq!(read_offers(&json!({}), &wanted), None);
     }
 
     #[test]

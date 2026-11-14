@@ -5,9 +5,12 @@ use haven_addons::{MetaDetail, MetaPreview, Stream, Video};
 use serde_json::{Value, json};
 
 use crate::{
-    Candidate, Client, Error, Kind, Library, Result, Server, Wanted, best_match, list, number,
-    quality, query, size, text, title_id,
+    Candidate, Client, Error, Kind, Library, Result, Server, SharedAddon, Wanted, best_match, list,
+    number, quality, query, size, text, title_id,
 };
+
+/// Collections listed per server (each becomes a shelf).
+const COLLECTIONS: u32 = 60;
 
 /// One tick is 100 nanoseconds.
 const TICKS_PER_SECOND: f64 = 10_000_000.0;
@@ -64,7 +67,75 @@ pub async fn sign_in(
 
 pub async fn libraries(client: &Client, server: &Server) -> Result<Vec<Library>> {
     let views = get(client, server, &format!("/Users/{}/Views", server.user_id)).await?;
-    Ok(read_libraries(&views))
+    let mut libraries = read_libraries(&views);
+    // The collections view holds lists, not titles: each list is offered
+    // as a library of its own. On a server that gathers add-ons these
+    // are the add-ons' catalogues.
+    for view in collection_views(&views) {
+        let path = format!(
+            "/Users/{}/Items?ParentId={}&StartIndex=0&Limit={COLLECTIONS}",
+            server.user_id,
+            query(&view)
+        );
+        if let Ok(found) = get(client, server, &path).await {
+            libraries.extend(read_collections(&found));
+        }
+    }
+    Ok(libraries)
+}
+
+fn collection_views(views: &Value) -> Vec<String> {
+    list(views, "Items")
+        .iter()
+        .filter(|view| text(view, "CollectionType").as_deref() == Some("boxsets"))
+        .filter_map(|view| text(view, "Id"))
+        .collect()
+}
+
+pub(crate) fn read_collections(found: &Value) -> Vec<Library> {
+    list(found, "Items")
+        .iter()
+        .filter(|item| text(item, "Type").as_deref() == Some("BoxSet"))
+        .filter_map(|item| {
+            Some(Library { id: text(item, "Id")?, name: text(item, "Name")?, collection: true })
+        })
+        .collect()
+}
+
+pub async fn genres(client: &Client, server: &Server, library: &str) -> Vec<String> {
+    let path = format!("/Items/Filters?UserId={}&ParentId={}", server.user_id, query(library));
+    match get(client, server, &path).await {
+        Ok(filters) => list(&filters, "Genres")
+            .iter()
+            .filter_map(|genre| genre.as_str().map(str::trim).filter(|g| !g.is_empty()).map(str::to_owned))
+            .collect(),
+        Err(_) => Vec::new(),
+    }
+}
+
+/// Trellis tells its owner which add-ons it uses, at `/api/config`.
+/// Any other server has no such page, which reads as no add-ons.
+pub async fn shared_addons(client: &Client, server: &Server) -> Result<Vec<SharedAddon>> {
+    match get(client, server, "/api/config").await {
+        Ok(config) => Ok(read_shared_addons(&config)),
+        Err(Error::Status(_) | Error::BadAnswer) => Ok(Vec::new()),
+        Err(err) => Err(err),
+    }
+}
+
+pub(crate) fn read_shared_addons(config: &Value) -> Vec<SharedAddon> {
+    list(config, "addons")
+        .iter()
+        .filter(|addon| addon.get("disabled").and_then(Value::as_bool) != Some(true))
+        .filter_map(|addon| {
+            let manifest_url = text(addon, "manifestUrl")
+                .filter(|url| url.starts_with("http://") || url.starts_with("https://"))?;
+            Some(SharedAddon {
+                name: text(addon, "nameOverride").or_else(|| text(addon, "name"))?,
+                manifest_url,
+            })
+        })
+        .collect()
 }
 
 pub(crate) fn read_libraries(views: &Value) -> Vec<Library> {
@@ -74,7 +145,9 @@ pub(crate) fn read_libraries(views: &Value) -> Vec<Library> {
             // No type means a mixed library; other types (music, books) are skipped.
             matches!(text(view, "CollectionType").as_deref(), Some("movies" | "tvshows") | None)
         })
-        .filter_map(|view| Some(Library { id: text(view, "Id")?, name: text(view, "Name")? }))
+        .filter_map(|view| {
+            Some(Library { id: text(view, "Id")?, name: text(view, "Name")?, collection: false })
+        })
         .collect()
 }
 
@@ -92,15 +165,19 @@ pub async fn page(
     client: &Client,
     server: &Server,
     library: &str,
+    genre: Option<&str>,
     start: u32,
     length: u32,
 ) -> Result<Vec<MetaPreview>> {
-    let path = format!(
+    let mut path = format!(
         "/Users/{}/Items?ParentId={}&Recursive=true&IncludeItemTypes=Movie,Series\
          &SortBy=SortName&SortOrder=Ascending&StartIndex={start}&Limit={length}",
         server.user_id,
         query(library)
     );
+    if let Some(genre) = genre {
+        path.push_str(&format!("&Genres={}", query(genre)));
+    }
     let items = get(client, server, &path).await?;
     Ok(read_previews(server, list(&items, "Items")))
 }
@@ -378,9 +455,11 @@ pub async fn streams(client: &Client, server: &Server, item: &str) -> Result<Vec
     let mut sources: Vec<Value> = Vec::new();
     for answer in [&asked, &detail].into_iter().flatten() {
         for source in list(answer, "MediaSources") {
-            let known = |seen: &Value| {
-                (text(seen, "Id").is_some() && text(seen, "Id") == text(source, "Id"))
-                    || (text(seen, "Path").is_some() && text(seen, "Path") == text(source, "Path"))
+            // The same source in both answers has the same id; only
+            // one without an id is told by where it plays from.
+            let known = |seen: &Value| match (text(seen, "Id"), text(source, "Id")) {
+                (Some(seen), Some(new)) => seen == new,
+                _ => text(seen, "Path").is_some() && text(seen, "Path") == text(source, "Path"),
             };
             if !sources.iter().any(known) {
                 sources.push(source.clone());
@@ -469,10 +548,20 @@ pub(crate) fn read_streams(server: &Server, item: &str, answer: &Value) -> Vec<S
                 (None, None, None) => return None,
             };
             let mut facts: Vec<String> = Vec::new();
-            // The server's name for the source tells several apart, and
-            // is all there is to go by when it says nothing of the picture.
-            if versions.len() > 1 || quality.is_none() {
-                facts.extend(text(version, "Name"));
+            // The server's name for the source tells several apart. When
+            // the server says nothing of the picture (a gathered stream),
+            // the name's first line heads the row and the rest describes it.
+            let mut heading = quality.clone();
+            if let Some(name) = text(version, "Name") {
+                if quality.is_some() {
+                    if versions.len() > 1 {
+                        facts.push(name);
+                    }
+                } else {
+                    let mut lines = name.lines().map(str::trim).filter(|line| !line.is_empty());
+                    heading = lines.next().map(str::to_owned);
+                    facts.extend(lines.map(str::to_owned));
+                }
             }
             // Containers can come as a list ("mov,mp4,m4a"): the first will do.
             facts.extend(
@@ -483,7 +572,7 @@ pub(crate) fn read_streams(server: &Server, item: &str, answer: &Value) -> Vec<S
             facts.extend(codec(track("Audio")));
             facts.extend(number(version, "Size").and_then(size));
             Some(Stream {
-                name: Some(quality.unwrap_or_else(|| "Direct".to_owned())),
+                name: Some(heading.unwrap_or_else(|| "Direct".to_owned())),
                 description: Some(if facts.is_empty() {
                     format!("The file as stored on {}", server.name)
                 } else {
@@ -555,6 +644,38 @@ mod tests {
         ]});
         let names: Vec<String> = read_libraries(&views).into_iter().map(|l| l.name).collect();
         assert_eq!(names, ["Films", "Shows", "Mixed"]);
+    }
+
+    // Made up in the shape Trellis answers with.
+    #[test]
+    fn collections_become_libraries_and_shared_addons_are_read() {
+        let views = json!({"Items": [
+            {"Id": "a", "Name": "Movies", "CollectionType": "movies"},
+            {"Id": "636f6c", "Name": "Collections", "CollectionType": "boxsets"}
+        ]});
+        assert_eq!(collection_views(&views), ["636f6c"]);
+        assert_eq!(read_libraries(&views).len(), 1);
+        let found = json!({"Items": [
+            {"Id": "c1", "Name": "Popular films", "Type": "BoxSet"},
+            {"Id": "m1", "Name": "A Film", "Type": "Movie"},
+            {"Name": "No id", "Type": "BoxSet"}
+        ]});
+        assert_eq!(
+            read_collections(&found),
+            [Library { id: "c1".into(), name: "Popular films".into(), collection: true }]
+        );
+
+        let config = json!({"addons": [
+            {"name": "One", "manifestUrl": "https://one.example/key123/manifest.json"},
+            {"name": "Two", "nameOverride": "Second", "manifestUrl": "https://two.example/manifest.json"},
+            {"name": "Off", "manifestUrl": "https://off.example/manifest.json", "disabled": true},
+            {"name": "No address"},
+            {"name": "Odd", "manifestUrl": "file:///x"}
+        ]});
+        let addons = read_shared_addons(&config);
+        assert_eq!(addons.iter().map(|a| a.name.as_str()).collect::<Vec<_>>(), ["One", "Second"]);
+        assert!(!format!("{:?}", addons[0]).contains("key123"));
+        assert!(read_shared_addons(&json!({})).is_empty());
     }
 
     #[test]
@@ -655,8 +776,8 @@ mod tests {
         let streams = read_streams(&server(), "m1", &info);
         assert_eq!(streams.len(), 3);
         assert_eq!(streams[0].url.as_deref(), Some("https://streams.example/one.mkv"));
-        assert_eq!(streams[0].name.as_deref(), Some("Direct"));
-        assert_eq!(streams[0].description.as_deref(), Some("Provider One 1080p WEB · MKV"));
+        assert_eq!(streams[0].name.as_deref(), Some("Provider One 1080p WEB"));
+        assert_eq!(streams[0].description.as_deref(), Some("MKV"));
         assert_eq!(streams[1].name.as_deref(), Some("4K"));
         assert_eq!(streams[1].url.as_deref(), Some("https://streams.example/two.mp4"));
         assert_eq!(

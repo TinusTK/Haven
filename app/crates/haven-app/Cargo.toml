@@ -30,6 +30,7 @@ haven-tracking.workspace = true
 image.workspace = true
 png.workspace = true
 reqwest.workspace = true
+serde.workspace = true
 slint.workspace = true
 tokio.workspace = true
 

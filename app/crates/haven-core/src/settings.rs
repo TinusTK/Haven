@@ -82,6 +82,40 @@ impl Keys {
     }
 }
 
+const SWITCHED_OFF: &str = "switched_off";
+
+/// The add-ons, media servers and television sources the user has
+/// switched off. They stay installed and signed in; Haven just leaves
+/// them alone until they are switched on again.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SwitchedOff {
+    /// Add-ons, by manifest address.
+    pub addons: Vec<String>,
+    /// Media servers, by their number in the database.
+    pub servers: Vec<i64>,
+    /// Playlists and Xtream Codes accounts, by the address they are kept under.
+    pub tv_sources: Vec<String>,
+}
+
+impl SwitchedOff {
+    pub fn load(store: &Store) -> Result<Self> {
+        Ok(store.get(SWITCHED_OFF)?.unwrap_or_default())
+    }
+
+    pub fn save(&self, store: &Store) -> Result<()> {
+        store.put(SWITCHED_OFF, self)
+    }
+}
+
+/// Puts `item` on a list of switched-off things, or takes it off.
+pub fn switch<T: PartialEq>(off: &mut Vec<T>, item: T, on: bool) {
+    off.retain(|known| *known != item);
+    if !on {
+        off.push(item);
+    }
+}
+
 impl Settings {
     pub fn load(store: &Store) -> Result<Self> {
         Ok(store.get(KEY)?.unwrap_or_default())
@@ -124,6 +158,22 @@ mod tests {
         assert_eq!(resolved.tmdb_api_key.as_deref(), Some("typed"));
         assert_eq!(resolved.simkl_client_id.as_deref(), Some("simkl"));
         assert!(!format!("{keys:?}").contains("typed"));
+    }
+
+    #[test]
+    fn switching_off_is_remembered_and_undone() {
+        let store = Store::in_memory().unwrap();
+        let mut off = SwitchedOff::load(&store).unwrap();
+        assert_eq!(off, SwitchedOff::default());
+        switch(&mut off.servers, 3, false);
+        switch(&mut off.servers, 3, false);
+        switch(&mut off.addons, "https://a.example/manifest.json".to_owned(), false);
+        off.save(&store).unwrap();
+        let mut off = SwitchedOff::load(&store).unwrap();
+        assert_eq!(off.servers, [3]);
+        switch(&mut off.servers, 3, true);
+        assert!(off.servers.is_empty());
+        assert_eq!(off.addons.len(), 1);
     }
 
     #[test]

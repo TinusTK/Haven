@@ -12,7 +12,7 @@ use super::{Library, Listed, PlayRequest, on_ui};
 use crate::StreamRow;
 
 /// The heading over the list.
-pub(super) const HEADING: &str = "Where to watch";
+pub(super) const HEADING: &str = "Play from your sources";
 
 /// What is behind one row of the list.
 pub(super) struct StreamSource {

@@ -99,6 +99,24 @@ impl std::fmt::Debug for Server {
 pub struct Library {
     pub id: String,
     pub name: String,
+    /// A collection (a list someone put together, such as an add-on's
+    /// catalogue on a server that gathers them) and not a whole library.
+    pub collection: bool,
+}
+
+/// An add-on a server uses and is willing to tell its owner about.
+#[derive(Clone, PartialEq, Eq)]
+pub struct SharedAddon {
+    pub name: String,
+    /// The add-on's manifest address. It can hold the user's keys for
+    /// other services, so it is never printed.
+    pub manifest_url: String,
+}
+
+impl std::fmt::Debug for SharedAddon {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SharedAddon").field("name", &self.name).finish_non_exhaustive()
+    }
 }
 
 /// A film or episode to look for on a server: the one Haven has open
@@ -304,20 +322,41 @@ impl Client {
 
     /// A library's titles by name (the first few hundred).
     pub async fn all(&self, server: &Server, library: &str) -> Result<Vec<MetaPreview>> {
-        self.page(server, library, 0, LIST_LENGTH).await
+        self.page(server, library, None, 0, LIST_LENGTH).await
     }
 
-    /// Part of a library's titles by name: `length` of them from `start`.
+    /// Part of a library's titles by name: `length` of them from `start`,
+    /// narrowed to a genre if one is given (Jellyfin and Emby only).
     pub async fn page(
         &self,
         server: &Server,
         library: &str,
+        genre: Option<&str>,
         start: u32,
         length: u32,
     ) -> Result<Vec<MetaPreview>> {
         match server.kind {
             Kind::Plex => plex::page(self, server, library, start, length).await,
-            _ => emby::page(self, server, library, start, length).await,
+            _ => emby::page(self, server, library, genre, start, length).await,
+        }
+    }
+
+    /// The genres a library or collection can be narrowed to; empty when
+    /// the server does not say.
+    pub async fn genres(&self, server: &Server, library: &str) -> Vec<String> {
+        match server.kind {
+            Kind::Plex => Vec::new(),
+            _ => emby::genres(self, server, library).await,
+        }
+    }
+
+    /// The add-ons the server itself uses, when it is the kind of server
+    /// that gathers add-ons (Trellis) and the signed-in user owns it.
+    /// Empty for every other server.
+    pub async fn shared_addons(&self, server: &Server) -> Result<Vec<SharedAddon>> {
+        match server.kind {
+            Kind::Jellyfin => emby::shared_addons(self, server).await,
+            _ => Ok(Vec::new()),
         }
     }
 

@@ -28,12 +28,27 @@ enum Source {
 }
 
 impl Source {
-    fn label(&self) -> String {
+    /// Where the source comes from: the heading it is listed under.
+    fn origin(&self) -> String {
         match self {
             Source::Tmdb => "TMDB".to_owned(),
-            Source::Library { server, library } => format!("{}  ·  {}", library.name, server.name),
-            Source::Addon { addon, catalog, .. } => format!("{}  ·  {addon}", catalog.title()),
+            Source::Library { server, .. } => server.name.clone(),
+            Source::Addon { addon, .. } => addon.clone(),
         }
+    }
+
+    /// Its name under that heading.
+    fn name(&self) -> String {
+        match self {
+            Source::Tmdb => "Films and series".to_owned(),
+            Source::Library { library, .. } => library.name.clone(),
+            Source::Addon { catalog, .. } => catalog.title(),
+        }
+    }
+
+    /// Tells sources apart, whatever their place in the list.
+    fn label(&self) -> String {
+        format!("{}  ·  {}", self.name(), self.origin())
     }
 }
 
@@ -48,6 +63,10 @@ pub(super) struct Explore {
     genre: Cell<i32>,
     /// TMDB's genres for the chosen kind, once they have arrived.
     tmdb_genres: RefCell<Vec<Genre>>,
+    /// The chosen media server library's genres, once they have arrived.
+    server_genres: RefCell<Vec<String>>,
+    /// Words the listed sources must hold.
+    words: RefCell<String>,
     items: Rc<VecModel<Poster>>,
     /// Goes up whenever the grid starts over.
     generation: Cell<u64>,
@@ -63,6 +82,13 @@ impl Library {
         ui.on_explore_pick({
             let library = self.clone();
             move |source, kind, genre| library.explore_pick(source, kind, genre)
+        });
+        ui.on_explore_filter({
+            let library = self.clone();
+            move |words| {
+                *library.explore.words.borrow_mut() = words.to_string();
+                library.show_explore_sources();
+            }
         });
         ui.on_explore_load_more({
             let library = self.clone();
@@ -90,15 +116,41 @@ impl Library {
                 });
             }
         }
-        let labels: Vec<SharedString> = sources.iter().map(|source| source.label().into()).collect();
         let kept = sources.iter().position(|source| source.label() == *self.explore.chosen.borrow());
         *self.explore.sources.borrow_mut() = sources;
+        self.show_explore_sources();
         let Some(ui) = self.ui.upgrade() else { return };
-        ui.set_explore_sources(ModelRc::new(VecModel::from(labels)));
         match kept {
             // Still there: only its place among the chips may have moved.
             Some(index) => ui.set_explore_source(index as i32),
             None => self.explore_pick(0, 0, -1),
+        }
+    }
+
+    /// Fills the list of sources down the side: a heading for each place
+    /// they come from, then its sources that match the filter.
+    fn show_explore_sources(&self) {
+        let words = self.explore.words.borrow().to_lowercase();
+        let mut rows: Vec<crate::ExploreRow> = Vec::new();
+        let mut heading = String::new();
+        for (index, source) in self.explore.sources.borrow().iter().enumerate() {
+            let label = source.label().to_lowercase();
+            if !words.split_whitespace().all(|word| label.contains(word)) {
+                continue;
+            }
+            if source.origin() != heading {
+                heading = source.origin();
+                rows.push(crate::ExploreRow { index: -1, label: heading.as_str().into(), header: true });
+            }
+            rows.push(crate::ExploreRow {
+                index: index as i32,
+                label: source.name().into(),
+                header: false,
+            });
+        }
+        if let Some(ui) = self.ui.upgrade() {
+            ui.set_explore_count(self.explore.sources.borrow().len() as i32);
+            ui.set_explore_sources(ModelRc::new(VecModel::from(rows)));
         }
     }
 
@@ -143,15 +195,35 @@ impl Library {
                     self.explore_fetch_genres(kind == 1);
                 }
             }
-            Source::Library { .. } => {
+            Source::Library { server, library } => {
                 explore.next.set(0);
                 ui.set_explore_kinds(ModelRc::default());
-                ui.set_explore_genres(ModelRc::default());
+                if !same_kind {
+                    explore.server_genres.borrow_mut().clear();
+                    ui.set_explore_genres(ModelRc::default());
+                    let (client, server, library, label) =
+                        (self.server_client.clone(), server.clone(), library.id.clone(), chosen.label());
+                    self.tasks.spawn(async move {
+                        let genres = client.genres(&server, &library).await;
+                        on_ui(move |library| {
+                            // Still looking at the same source.
+                            if *library.explore.chosen.borrow() != label || genres.is_empty() {
+                                return;
+                            }
+                            let names: Vec<SharedString> =
+                                genres.iter().map(|genre| genre.as_str().into()).collect();
+                            *library.explore.server_genres.borrow_mut() = genres;
+                            if let Some(ui) = library.ui.upgrade() {
+                                ui.set_explore_genres(genre_choices(names));
+                            }
+                        });
+                    });
+                }
             }
             Source::Addon { catalog, .. } => {
                 explore.next.set(0);
                 ui.set_explore_kinds(ModelRc::default());
-                ui.set_explore_genres(texts(catalog.genres().to_vec()));
+                ui.set_explore_genres(genre_choices(catalog.genres().iter().map(|genre| genre.as_str().into()).collect()));
                 // A catalogue that only answers with a genre starts on its first.
                 if genre < 0 && catalog.needs_input() {
                     explore.genre.set(0);
@@ -177,7 +249,7 @@ impl Library {
                     genres.iter().map(|genre| genre.name.as_str().into()).collect();
                 *library.explore.tmdb_genres.borrow_mut() = genres;
                 if let Some(ui) = library.ui.upgrade() {
-                    ui.set_explore_genres(ModelRc::new(VecModel::from(names)));
+                    ui.set_explore_genres(genre_choices(names));
                 }
             });
         });
@@ -209,6 +281,8 @@ impl Library {
             .ok()
             .and_then(|at| explore.tmdb_genres.borrow().get(at).map(|genre| genre.id));
         let series = explore.kind.get() == 1;
+        let server_genre =
+            usize::try_from(genre).ok().and_then(|at| explore.server_genres.borrow().get(at).cloned());
         self.tasks.spawn(async move {
             // The titles, where the page after them starts, and whether
             // there may be one.
@@ -237,7 +311,7 @@ impl Library {
                     None => Err("there is no TMDB key".to_owned()),
                 },
                 Source::Library { server, library } => servers
-                    .page(server, &library.id, next, SERVER_PAGE)
+                    .page(server, &library.id, server_genre.as_deref(), next, SERVER_PAGE)
                     .await
                     .map(|titles| {
                         let more = titles.len() as u32 >= SERVER_PAGE;
@@ -312,4 +386,15 @@ impl Library {
         ui.set_explore_more(more && added > 0);
         ui.set_explore_note(if explore.items.row_count() == 0 { "Nothing here." } else { "" }.into());
     }
+}
+
+/// The genres as the chooser lists them: "All genres" first, which
+/// stands for no genre (-1). Empty when there are none to choose from.
+fn genre_choices(names: Vec<SharedString>) -> ModelRc<SharedString> {
+    if names.is_empty() {
+        return ModelRc::default();
+    }
+    let mut choices: Vec<SharedString> = vec!["All genres".into()];
+    choices.extend(names);
+    ModelRc::new(VecModel::from(choices))
 }

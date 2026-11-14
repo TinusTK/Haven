@@ -1,4 +1,4 @@
-import { Button, LineEdit, ListView, Palette, ScrollView, Switch } from "std-widgets.slint";
+import { Button, ComboBox, LineEdit, ListView, Palette, ScrollView, Switch } from "std-widgets.slint";
 
 // One title in a shelf. `has-image` is false until its poster has loaded.
 export struct Poster {
@@ -73,6 +73,46 @@ export struct ChannelRow {
     index: int,
     name: string,
     group: string,
+    // In one of the user's Favourites groups.
+    starred: bool,
+}
+
+// One line of the list of categories beside the channels.
+export struct CategoryRow {
+    // What choosing it asks for: "" every channel, "g:<name>" a group of
+    // the playlist, "f:<name>" one of the user's Favourites groups.
+    key: string,
+    label: string,
+    count: int,
+    favourite: bool,
+}
+
+// A Favourites group in the chooser, ticked if it holds the channel.
+export struct FavPick {
+    name: string,
+    has: bool,
+}
+
+// One line of the list of sources on Explore: a heading (where the
+// sources below come from) or a source.
+export struct ExploreRow {
+    index: int,
+    label: string,
+    header: bool,
+}
+
+// A service that has the open title, and how: "Subscription", "Rent"…
+export struct OfferRow {
+    name: string,
+    ways: string,
+}
+
+// An add-on a media server uses and shares with its owner.
+export struct SharedAddonRow {
+    index: int,
+    name: string,
+    server: string,
+    installed: bool,
 }
 
 // A playlist or an Xtream Codes account the user added.
@@ -83,6 +123,11 @@ export struct SourceRow {
     // What to show under the name: the playlist's address, or for an
     // account who it belongs to (never its password).
     detail: string,
+    // Switched on. Off, it stays here but its channels are not shown.
+    enabled: bool,
+    // An Xtream Codes account's server: 0 nothing to show, 1 being
+    // checked, 2 online, 3 offline.
+    state: int,
 }
 
 // A media server the user signed in to.
@@ -94,6 +139,8 @@ export struct ServerRow {
     address: string,
     // 0 still checking, 1 online, 2 offline.
     state: int,
+    // Switched on. Off, Haven stays signed in but leaves it alone.
+    enabled: bool,
 }
 
 // Trakt or Simkl in Settings.
@@ -113,6 +160,8 @@ export struct AddonRow {
     description: string,
     version: string,
     catalogs: int,
+    // Switched on. Off, it stays installed but is not asked for anything.
+    enabled: bool,
 }
 
 export global Theme {
@@ -294,11 +343,16 @@ component ShelfRow inherits VerticalLayout {
     in property <Shelf> shelf;
     // What a right-click offers to do with a card; empty for nothing.
     in property <string> remove-label;
+    // Take up no room once it turns out to hold nothing.
+    in property <bool> hide-empty;
     callback open(Poster);
     callback remove(Poster);
     private property <length> step: 162px;
+    private property <bool> hidden: root.hide-empty && !root.shelf.loading && root.shelf.error == "" && root.shelf.items.length == 0;
 
     spacing: 10px;
+    visible: !root.hidden;
+    max-height: root.hidden ? 0px : 100000px;
 
     HorizontalLayout {
         spacing: 10px;
@@ -380,37 +434,6 @@ component Chip inherits Rectangle {
         font-weight: root.selected ? 600 : 400;
         horizontal-alignment: center;
         vertical-alignment: center;
-    }
-}
-
-// A row of chips that scrolls sideways when it is too long. With
-// `with-all`, an "All" chip comes first and stands for -1.
-component ChipRow inherits Rectangle {
-    in property <[string]> labels;
-    in property <int> selected;
-    in property <bool> with-all;
-    callback picked(int);
-
-    height: 30px;
-    Flickable {
-        width: parent.width;
-        height: parent.height;
-        content-width: chips.preferred-width;
-        content-height: self.height;
-        chips := HorizontalLayout {
-            spacing: 8px;
-            alignment: start;
-            if root.with-all: Chip {
-                label: "All";
-                selected: root.selected < 0;
-                clicked => { root.picked(-1); }
-            }
-            for label[index] in root.labels: Chip {
-                label: label;
-                selected: root.selected == index;
-                clicked => { root.picked(index); }
-            }
-        }
     }
 }
 
@@ -945,6 +968,7 @@ component PlayerView inherits Rectangle {
 component AddonCard inherits Rectangle {
     in property <AddonRow> addon;
     callback remove();
+    callback switched(bool);
 
     height: 84px;
     border-radius: 10px;
@@ -961,8 +985,8 @@ component AddonCard inherits Rectangle {
             spacing: 3px;
             horizontal-stretch: 1;
             Text {
-                text: root.addon.version == "" ? root.addon.name : root.addon.name + "  " + root.addon.version;
-                color: Theme.text;
+                text: (root.addon.version == "" ? root.addon.name : root.addon.name + "  " + root.addon.version) + (root.addon.enabled ? "" : "  ·  switched off");
+                color: root.addon.enabled ? Theme.text : Theme.text-dim;
                 font-size: 14px;
                 font-weight: 600;
                 overflow: elide;
@@ -982,6 +1006,14 @@ component AddonCard inherits Rectangle {
         }
         VerticalLayout {
             alignment: center;
+            Switch {
+                checked: root.addon.enabled;
+                accessible-label: "Use " + root.addon.name;
+                toggled => { root.switched(self.checked); }
+            }
+        }
+        VerticalLayout {
+            alignment: center;
             Button {
                 text: "Remove";
                 accessible-label: "Remove " + root.addon.name;
@@ -991,10 +1023,84 @@ component AddonCard inherits Rectangle {
     }
 }
 
+// One line of a list down the side of a page: a category, a source.
+component SideItem inherits Rectangle {
+    in property <string> label;
+    // Shown dimmed at the end, such as a count.
+    in property <string> trailing;
+    in property <bool> selected;
+    in property <bool> star;
+    // Shows a small cross that asks to remove it.
+    in property <bool> removable;
+    callback clicked();
+    callback remove();
+
+    height: 34px;
+    accessible-role: button;
+    accessible-label: label;
+    accessible-action-default => { root.clicked(); }
+
+    Rectangle {
+        y: 1px;
+        height: parent.height - 2px;
+        border-radius: 8px;
+        background: root.selected ? Theme.selected : touch.has-hover ? Theme.hover : transparent;
+    }
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 8px;
+        spacing: 6px;
+        if root.star: Text {
+            text: "★";
+            color: Theme.accent;
+            font-size: 12px;
+            vertical-alignment: center;
+        }
+        Text {
+            horizontal-stretch: 1;
+            text: root.label;
+            color: root.selected ? Theme.text : Theme.text-dim;
+            font-weight: root.selected ? 600 : 400;
+            font-size: 13px;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        Text {
+            text: root.trailing;
+            color: Theme.text-dim;
+            font-size: 12px;
+            vertical-alignment: center;
+        }
+        if root.removable: Rectangle {
+            width: 20px;
+            accessible-role: button;
+            accessible-label: "Delete " + root.label;
+            accessible-action-default => { root.remove(); }
+            cross := TouchArea {
+                mouse-cursor: pointer;
+                clicked => { root.remove(); }
+            }
+            Text {
+                text: "×";
+                color: cross.has-hover ? Theme.text : Theme.text-dim;
+                font-size: 16px;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+    }
+}
+
 component ChannelItem inherits Rectangle {
     in property <ChannelRow> channel;
     in property <bool> can-play;
     callback clicked();
+    // Asks to choose the channel's Favourites groups.
+    callback star();
 
     height: 46px;
     accessible-role: button;
@@ -1015,8 +1121,8 @@ component ChannelItem inherits Rectangle {
     }
     HorizontalLayout {
         padding-left: 14px;
-        padding-right: 14px;
-        spacing: 14px;
+        padding-right: 8px;
+        spacing: 12px;
         Text {
             horizontal-stretch: 1;
             text: root.channel.name;
@@ -1036,26 +1142,52 @@ component ChannelItem inherits Rectangle {
             font-size: 12px;
             vertical-alignment: center;
         }
+        Rectangle {
+            width: 32px;
+            accessible-role: button;
+            accessible-label: (root.channel.starred ? "Change the Favourites groups of " : "Add to Favourites: ") + root.channel.name;
+            accessible-action-default => { root.star(); }
+            star-touch := TouchArea {
+                mouse-cursor: pointer;
+                clicked => { root.star(); }
+            }
+            Text {
+                text: root.channel.starred ? "★" : "☆";
+                color: root.channel.starred || star-touch.has-hover ? Theme.accent : Theme.text-dim;
+                font-size: 16px;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
     }
 }
 
-// Live TV and Radio share this: a filter, group chips and the channels.
+// Live TV and Radio share this: the categories down the left (Favourites
+// groups first), and the chosen category's channels beside them.
 component ChannelsPage inherits VerticalLayout {
     in property <string> title;
     in property <string> hint;
     in property <[ChannelRow]> channels;
-    in property <[string]> groups;
+    in property <[CategoryRow]> categories;
     // Channels before filtering.
     in property <int> total;
-    in-out property <string> group;
+    // The chosen category's key; empty for every channel.
+    in-out property <string> category;
     in-out property <string> words;
     in property <bool> can-play;
+    private property <string> new-group;
+    // The words to look for, and the category's key.
     callback filter(string, string);
+    callback filter-categories(string);
     callback play(int);
+    callback star(int);
+    callback make-group(string);
+    callback delete-group(string);
 
     padding-left: 32px;
     padding-right: 32px;
     padding-top: 32px;
+    padding-bottom: 16px;
     spacing: 12px;
 
     PageTitle { text: root.title; }
@@ -1071,55 +1203,85 @@ component ChannelsPage inherits VerticalLayout {
         wrap: word-wrap;
     }
     if root.total > 0: HorizontalLayout {
-        spacing: 12px;
-        LineEdit {
-            text <=> root.words;
-            placeholder-text: "Filter by name";
-            accessible-label: "Filter by name";
-            edited(text) => { root.filter(text, root.group); }
-        }
-        Text {
-            text: root.channels.length == root.total ? root.total + " in all" : root.channels.length + " of " + root.total;
-            color: Theme.text-dim;
-            font-size: 12px;
-            vertical-alignment: center;
-        }
-    }
-    if root.groups.length > 0: Rectangle {
-        height: 30px;
-        Flickable {
-            width: parent.width;
-            height: parent.height;
-            content-width: chips.preferred-width;
-            content-height: self.height;
-            chips := HorizontalLayout {
-                spacing: 8px;
-                alignment: start;
-                Chip {
-                    label: "All";
-                    selected: root.group == "";
-                    clicked => {
-                        root.group = "";
-                        root.filter(root.words, "");
+        vertical-stretch: 1;
+        spacing: 20px;
+        VerticalLayout {
+            width: 270px;
+            spacing: 8px;
+            LineEdit {
+                placeholder-text: "Find a category";
+                accessible-label: "Find a category";
+                edited(text) => { root.filter-categories(text); }
+            }
+            HorizontalLayout {
+                spacing: 6px;
+                LineEdit {
+                    text <=> root.new-group;
+                    placeholder-text: "New Favourites group";
+                    accessible-label: "Name of a new Favourites group";
+                    accepted(text) => {
+                        root.make-group(text);
+                        root.new-group = "";
                     }
                 }
-                for name in root.groups: Chip {
-                    label: name;
-                    selected: root.group == name;
+                Button {
+                    text: "Add";
+                    enabled: root.new-group != "";
+                    accessible-label: "Add the Favourites group";
                     clicked => {
-                        root.group = name;
-                        root.filter(root.words, name);
+                        root.make-group(root.new-group);
+                        root.new-group = "";
                     }
                 }
             }
+            ListView {
+                vertical-stretch: 1;
+                for row in root.categories: SideItem {
+                    label: row.label;
+                    trailing: row.count;
+                    selected: row.key == root.category;
+                    star: row.favourite;
+                    removable: row.favourite;
+                    clicked => {
+                        root.category = row.key;
+                        root.filter(root.words, row.key);
+                    }
+                    remove => { root.delete-group(row.label); }
+                }
+            }
         }
-    }
-    if root.total > 0: ListView {
-        vertical-stretch: 1;
-        for channel in root.channels: ChannelItem {
-            channel: channel;
-            can-play: root.can-play;
-            clicked => { root.play(channel.index); }
+        VerticalLayout {
+            horizontal-stretch: 1;
+            spacing: 8px;
+            HorizontalLayout {
+                spacing: 12px;
+                LineEdit {
+                    text <=> root.words;
+                    placeholder-text: "Filter by name";
+                    accessible-label: "Filter by name";
+                    edited(text) => { root.filter(text, root.category); }
+                }
+                Text {
+                    text: root.channels.length == root.total ? root.total + " in all" : root.channels.length + " of " + root.total;
+                    color: Theme.text-dim;
+                    font-size: 12px;
+                    vertical-alignment: center;
+                }
+            }
+            if root.channels.length == 0: Text {
+                text: "Nothing here. Use the ☆ on a channel to put it in a Favourites group.";
+                color: Theme.text-dim;
+                wrap: word-wrap;
+            }
+            ListView {
+                vertical-stretch: 1;
+                for channel in root.channels: ChannelItem {
+                    channel: channel;
+                    can-play: root.can-play;
+                    clicked => { root.play(channel.index); }
+                    star => { root.star(channel.index); }
+                }
+            }
         }
     }
     if root.total == 0: Rectangle { vertical-stretch: 1; }
@@ -1170,6 +1332,14 @@ export component AppWindow inherits Window {
     in property <string> version;
     in property <string> data-path;
     in property <string> log-path;
+    // The services that have the open title, and what to say about them.
+    in property <[OfferRow]> offers;
+    in property <string> offers-note;
+    in property <string> offers-link;
+    // The countries to choose from for those services, and the chosen one.
+    in property <[string]> countries;
+    in-out property <int> country-index;
+    in property <[SharedAddonRow]> shared-addons;
     // How many pictures are kept on this computer, in words.
     in property <string> cache-status;
     in property <[string]> pages: ["Home", "Explore", "Search", "Live TV", "Radio", "Watchlist", "Add-ons", "Settings"];
@@ -1243,7 +1413,9 @@ export component AppWindow inherits Window {
 
     // Explore: where to browse (the TMDB catalogue, each media server
     // library, each add-on catalogue), then what kind and which genre.
-    in property <[string]> explore-sources;
+    in property <[ExploreRow]> explore-sources;
+    // How many sources there are, whatever the filter shows.
+    in property <int> explore-count;
     in-out property <int> explore-source;
     // "Films" and "Series" where the source has both; else empty.
     in property <[string]> explore-kinds;
@@ -1280,14 +1452,19 @@ export component AppWindow inherits Window {
     in property <string> tv-status;
     in property <bool> tv-status-is-error;
     in property <[ChannelRow]> tv-channels;
-    in property <[string]> tv-groups;
+    in property <[CategoryRow]> tv-categories;
     in property <int> tv-total;
-    in-out property <string> tv-group;
+    in-out property <string> tv-category;
     in-out property <string> tv-words;
     in property <[ChannelRow]> radio-channels;
-    in property <[string]> radio-groups;
+    in property <[CategoryRow]> radio-categories;
     in property <int> radio-total;
-    in-out property <string> radio-group;
+    in-out property <string> radio-category;
+    // The chooser of Favourites groups for one channel.
+    in property <bool> fav-open;
+    in property <string> fav-channel;
+    in property <[FavPick]> fav-picks;
+    in-out property <string> fav-new-name;
     in-out property <string> radio-words;
     // False in a build without the player.
     in property <bool> can-play-channels;
@@ -1338,6 +1515,22 @@ export component AppWindow inherits Window {
     callback plex-sign-in();
     callback plex-cancel();
     callback remove-server(int);
+    // Switch an add-on (by address), a media server (by number) or a
+    // television source (by address) on or off without removing it.
+    callback set-addon-enabled(string, bool);
+    callback set-server-enabled(int, bool);
+    callback set-tv-source-enabled(string, bool);
+    callback filter-categories(bool, string);
+    // Radio or television and a channel's index: choose its Favourites groups.
+    callback fav-pick(bool, int);
+    callback fav-toggle(string);
+    callback fav-new-group(string);
+    callback fav-delete-group(string);
+    callback fav-close();
+    callback explore-filter(string);
+    callback country-selected(int);
+    // Installs a media server's add-on in Haven; -1 for all of them.
+    callback install-shared(int);
     // Deletes the pictures kept on this computer.
     callback clear-cache();
     // Asks every media server again whether it answers.
@@ -1361,7 +1554,7 @@ export component AppWindow inherits Window {
     callback tracking-import(int);
     callback add-tv-source(string);
     callback remove-tv-source(string);
-    // Radio or television, the words to look for, the group ("" for all).
+    // Radio or television, the words to look for, the category's key.
     callback filter-channels(bool, string, string);
     // Radio or television, and the channel's index.
     callback play-channel(bool, int);
@@ -1456,7 +1649,9 @@ export component AppWindow inherits Window {
                     alignment: start;
 
                     Rectangle {
-                        height: 220px;
+                        // Tall enough for the wide picture's faces: up to
+                        // the picture's own shape, within reason.
+                        height: clamp(detail-view.visible-width * 0.3, 220px, 380px);
                         clip: true;
                         background: Theme.surface;
 
@@ -1465,6 +1660,8 @@ export component AppWindow inherits Window {
                             height: 100%;
                             source: root.detail.background;
                             image-fit: cover;
+                            // Keep the top of the picture, where heads are.
+                            vertical-alignment: top;
                         }
                         Rectangle {
                             background: @linear-gradient(180deg, transparent 35%, Theme.background 100%);
@@ -1583,12 +1780,63 @@ export component AppWindow inherits Window {
                             }
                         }
 
+                        if root.offers-note != "" || root.offers.length > 0: VerticalLayout {
+                            spacing: 8px;
+
+                            SectionTitle { text: "Where to watch"; }
+                            if root.offers-note != "": Text {
+                                text: root.offers-note;
+                                color: Theme.text-dim;
+                                wrap: word-wrap;
+                            }
+                            for offer in root.offers: Rectangle {
+                                height: 40px;
+                                border-radius: 8px;
+                                background: Theme.surface;
+                                border-width: 1px;
+                                border-color: Theme.border;
+                                HorizontalLayout {
+                                    padding-left: 14px;
+                                    padding-right: 14px;
+                                    spacing: 12px;
+                                    Text {
+                                        horizontal-stretch: 1;
+                                        text: offer.name;
+                                        color: Theme.text;
+                                        font-weight: 600;
+                                        vertical-alignment: center;
+                                        overflow: elide;
+                                    }
+                                    Text {
+                                        text: offer.ways;
+                                        color: Theme.text-dim;
+                                        font-size: 12px;
+                                        vertical-alignment: center;
+                                    }
+                                }
+                            }
+                            if root.offers.length > 0: HorizontalLayout {
+                                spacing: 12px;
+                                alignment: start;
+                                if root.offers-link != "": Button {
+                                    text: "Open these in your web browser";
+                                    clicked => { root.open-link(root.offers-link); }
+                                }
+                                Text {
+                                    text: "Availability from JustWatch, by way of TMDB.";
+                                    color: Theme.text-dim;
+                                    font-size: 12px;
+                                    vertical-alignment: center;
+                                }
+                            }
+                        }
+
                         VerticalLayout {
                             spacing: 10px;
 
                             SectionTitle { text: root.streams-title; }
                             if root.streams-loading: Text {
-                                text: "Looking for places to watch…";
+                                text: "Asking your media servers and add-ons…";
                                 color: Theme.text-dim;
                             }
                             if root.streams-note != "": Text {
@@ -1710,13 +1958,17 @@ export component AppWindow inherits Window {
                 title: "Live TV";
                 hint: "Add an M3U playlist or an Xtream Codes account in Settings, under Live TV, to see the channels here.";
                 channels: root.tv-channels;
-                groups: root.tv-groups;
+                categories: root.tv-categories;
                 total: root.tv-total;
-                group <=> root.tv-group;
+                category <=> root.tv-category;
                 words <=> root.tv-words;
                 can-play: root.can-play-channels;
-                filter(words, group) => { root.filter-channels(false, words, group); }
+                filter(words, category) => { root.filter-channels(false, words, category); }
+                filter-categories(words) => { root.filter-categories(false, words); }
                 play(index) => { root.play-channel(false, index); }
+                star(index) => { root.fav-pick(false, index); }
+                make-group(name) => { root.fav-new-group(name); }
+                delete-group(name) => { root.fav-delete-group(name); }
 
                 if root.tv-total == 0: HorizontalLayout {
                     alignment: start;
@@ -1732,15 +1984,19 @@ export component AppWindow inherits Window {
             }
             if !root.detail-open && root.page == root.radio-page: ChannelsPage {
                 title: "Radio";
-                hint: "Stations marked as radio in your Live TV playlists show here.";
+                hint: "Stations marked as radio in your Live TV sources show here.";
                 channels: root.radio-channels;
-                groups: root.radio-groups;
+                categories: root.radio-categories;
                 total: root.radio-total;
-                group <=> root.radio-group;
+                category <=> root.radio-category;
                 words <=> root.radio-words;
                 can-play: root.can-play-channels;
-                filter(words, group) => { root.filter-channels(true, words, group); }
+                filter(words, category) => { root.filter-channels(true, words, category); }
+                filter-categories(words) => { root.filter-categories(true, words); }
                 play(index) => { root.play-channel(true, index); }
+                star(index) => { root.fav-pick(true, index); }
+                make-group(name) => { root.fav-new-group(name); }
+                delete-group(name) => { root.fav-delete-group(name); }
             }
 
             if !root.detail-open && root.page != root.home-page && root.page != root.search-page && root.page != root.explore-page && root.page != root.tv-page && root.page != root.radio-page && root.page != root.watchlist-page && root.page != root.addons-page && root.page != root.settings-page: EmptyPage {
@@ -1810,6 +2066,7 @@ export component AppWindow inherits Window {
                     // Your own libraries first, then add-ons, then TMDB.
                     for shelf in root.server-shelves: ShelfRow {
                         shelf: shelf;
+                        hide-empty: true;
                         open(poster) => { root.open-title(poster); }
                     }
                     for shelf in root.shelves: ShelfRow {
@@ -1823,91 +2080,117 @@ export component AppWindow inherits Window {
                 }
             }
 
-            if !root.detail-open && root.page == root.explore-page: explore-view := ScrollView {
-                private property <length> step: 162px;
-                private property <length> line: 286px;
-                private property <int> columns: max(1, floor((self.visible-width - 64px + 12px) / self.step));
-                private property <length> row-height: 42px;
-                private property <length> kinds-top: 32px + 62px + self.row-height;
-                private property <length> genres-top: self.kinds-top + (root.explore-kinds.length > 0 ? self.row-height : 0px);
-                private property <length> note-top: self.genres-top + (root.explore-genres.length > 0 ? self.row-height : 0px);
-                private property <length> grid-top: self.note-top + (root.explore-note != "" || root.explore-loading ? 34px : 0px) + 8px;
-                private property <length> grid-height: ceil(root.explore-items.length / self.columns) * self.line;
-                content-width: self.visible-width;
-                content-height: self.grid-top + self.grid-height + 32px + 48px;
+            if !root.detail-open && root.page == root.explore-page: VerticalLayout {
+                padding-left: 32px;
+                padding-right: 32px;
+                padding-top: 32px;
+                spacing: 12px;
 
-                PageTitle {
-                    x: 32px;
-                    y: 32px;
-                    text: "Explore";
-                }
-                if root.explore-sources.length == 0: Text {
-                    x: 32px;
-                    y: 32px + 62px;
-                    width: parent.width - 64px;
+                PageTitle { text: "Explore"; }
+                if root.explore-count == 0: Text {
                     text: "Explore browses everything you can watch. Add a media server or a TMDB key in Settings, or install an add-on, and it shows here.";
                     color: Theme.text-dim;
                     wrap: word-wrap;
                 }
-                if root.explore-sources.length > 0: ChipRow {
-                    x: 32px;
-                    y: 32px + 62px;
-                    width: explore-view.visible-width - 64px;
-                    labels: root.explore-sources;
-                    selected: root.explore-source;
-                    picked(index) => {
-                        root.explore-source = index;
-                        root.explore-kind = 0;
-                        root.explore-genre = -1;
-                        root.explore-pick(index, 0, -1);
+                if root.explore-count == 0: Rectangle { vertical-stretch: 1; }
+                if root.explore-count > 0: HorizontalLayout {
+                    vertical-stretch: 1;
+                    spacing: 20px;
+                    // Where to browse: every source, under where it comes from.
+                    VerticalLayout {
+                        width: 270px;
+                        spacing: 8px;
+                        padding-bottom: 16px;
+                        LineEdit {
+                            placeholder-text: "Find a source";
+                            accessible-label: "Find a source";
+                            edited(text) => { root.explore-filter(text); }
+                        }
+                        ListView {
+                            vertical-stretch: 1;
+                            for row in root.explore-sources: Rectangle {
+                                height: row.header ? 30px : 34px;
+                                if row.header: Text {
+                                    x: 4px;
+                                    width: parent.width - 8px;
+                                    y: 8px;
+                                    text: row.label;
+                                    color: Theme.accent;
+                                    font-size: 11px;
+                                    font-weight: 700;
+                                    overflow: elide;
+                                }
+                                if !row.header: SideItem {
+                                    width: parent.width;
+                                    label: row.label;
+                                    selected: row.index == root.explore-source;
+                                    clicked => {
+                                        root.explore-source = row.index;
+                                        root.explore-kind = 0;
+                                        root.explore-genre = -1;
+                                        root.explore-pick(row.index, 0, -1);
+                                    }
+                                }
+                            }
+                        }
                     }
-                }
-                if root.explore-kinds.length > 0: ChipRow {
-                    x: 32px;
-                    y: explore-view.kinds-top;
-                    width: explore-view.visible-width - 64px;
-                    labels: root.explore-kinds;
-                    selected: root.explore-kind;
-                    picked(index) => {
-                        root.explore-kind = index;
-                        root.explore-genre = -1;
-                        root.explore-pick(root.explore-source, index, -1);
+                    VerticalLayout {
+                        horizontal-stretch: 1;
+                        spacing: 10px;
+                        // Films or series, and the genre, where the source has them.
+                        if root.explore-kinds.length > 0 || root.explore-genres.length > 0: HorizontalLayout {
+                            spacing: 12px;
+                            alignment: start;
+                            for label[index] in root.explore-kinds: Chip {
+                                label: label;
+                                selected: root.explore-kind == index;
+                                clicked => {
+                                    root.explore-kind = index;
+                                    root.explore-genre = -1;
+                                    root.explore-pick(root.explore-source, index, -1);
+                                }
+                            }
+                            // The first choice stands for every genre.
+                            if root.explore-genres.length > 0: ComboBox {
+                                width: 230px;
+                                model: root.explore-genres;
+                                current-index: root.explore-genre + 1;
+                                accessible-label: "Genre";
+                                selected => {
+                                    root.explore-genre = self.current-index - 1;
+                                    root.explore-pick(root.explore-source, root.explore-kind, self.current-index - 1);
+                                }
+                            }
+                        }
+                        if root.explore-note != "" || root.explore-loading: Text {
+                            text: root.explore-note != "" ? root.explore-note : "Loading…";
+                            color: Theme.text-dim;
+                            overflow: elide;
+                        }
+                        explore-view := ScrollView {
+                            private property <length> step: 162px;
+                            private property <length> line: 286px;
+                            private property <int> columns: max(1, floor((self.visible-width + 12px) / self.step));
+                            private property <length> grid-height: ceil(root.explore-items.length / self.columns) * self.line;
+                            vertical-stretch: 1;
+                            content-width: self.visible-width;
+                            content-height: self.grid-height + 64px;
+
+                            for poster[index] in root.explore-items: PosterCard {
+                                x: mod(index, explore-view.columns) * explore-view.step;
+                                y: floor(index / explore-view.columns) * explore-view.line;
+                                poster: poster;
+                                clicked => { root.open-title(poster); }
+                            }
+                            if root.explore-more && root.explore-items.length > 0: Button {
+                                x: 0px;
+                                y: explore-view.grid-height + 8px;
+                                text: root.explore-loading ? "Loading…" : "Load more";
+                                enabled: !root.explore-loading;
+                                clicked => { root.explore-load-more(); }
+                            }
+                        }
                     }
-                }
-                if root.explore-genres.length > 0: ChipRow {
-                    x: 32px;
-                    y: explore-view.genres-top;
-                    width: explore-view.visible-width - 64px;
-                    labels: root.explore-genres;
-                    selected: root.explore-genre;
-                    with-all: true;
-                    picked(index) => {
-                        root.explore-genre = index;
-                        root.explore-pick(root.explore-source, root.explore-kind, index);
-                    }
-                }
-                if root.explore-note != "" || root.explore-loading: Text {
-                    x: 32px;
-                    y: explore-view.note-top;
-                    width: explore-view.visible-width - 64px;
-                    height: 30px;
-                    text: root.explore-note != "" ? root.explore-note : "Loading…";
-                    color: Theme.text-dim;
-                    vertical-alignment: center;
-                    overflow: elide;
-                }
-                for poster[index] in root.explore-items: PosterCard {
-                    x: 32px + mod(index, explore-view.columns) * explore-view.step;
-                    y: explore-view.grid-top + floor(index / explore-view.columns) * explore-view.line;
-                    poster: poster;
-                    clicked => { root.open-title(poster); }
-                }
-                if root.explore-more && root.explore-items.length > 0: Button {
-                    x: 32px;
-                    y: explore-view.grid-top + explore-view.grid-height + 8px;
-                    text: root.explore-loading ? "Loading…" : "Load more";
-                    enabled: !root.explore-loading;
-                    clicked => { root.explore-load-more(); }
                 }
             }
 
@@ -1956,6 +2239,32 @@ export component AppWindow inherits Window {
                     for addon in root.addons: AddonCard {
                         addon: addon;
                         remove => { root.remove-addon(addon.url); }
+                        switched(on) => { root.set-addon-enabled(addon.url, on); }
+                    }
+                    if root.shared-addons.length > 0: Rectangle { height: 8px; }
+                    if root.shared-addons.length > 0: SectionTitle { text: "From your media servers"; }
+                    if root.shared-addons.length > 0: Text {
+                        text: "These add-ons are set up on a media server of yours. The server already uses them for what it shows and plays in Haven. Install one here as well if you want Haven to ask it directly.";
+                        color: Theme.text-dim;
+                        wrap: word-wrap;
+                    }
+                    if root.shared-addons.length > 0: HorizontalLayout {
+                        alignment: start;
+                        Button {
+                            text: "Install all";
+                            enabled: !root.addon-busy;
+                            clicked => { root.install-shared(-1); }
+                        }
+                    }
+                    for shared in root.shared-addons: SettingsRow {
+                        label: shared.name;
+                        detail: "On " + shared.server;
+                        Button {
+                            text: shared.installed ? "Installed" : "Install";
+                            enabled: !shared.installed && !root.addon-busy;
+                            accessible-label: "Install " + shared.name;
+                            clicked => { root.install-shared(shared.index); }
+                        }
                     }
                 }
             }
@@ -2082,15 +2391,23 @@ export component AppWindow inherits Window {
                                     y: (parent.height - self.height) / 2;
                                     height: 10px;
                                     border-radius: 5px;
-                                    background: server.state == 1 ? #3fbf6f : server.state == 2 ? #e0564f : Theme.text-dim;
+                                    background: !server.enabled ? Theme.text-dim : server.state == 1 ? #3fbf6f : server.state == 2 ? #e0564f : Theme.text-dim;
                                 }
                             }
                             Text {
-                                text: server.state == 1 ? "Online" : server.state == 2 ? "Offline" : "Checking…";
-                                color: server.state == 1 ? (Theme.dark ? #6fdc97 : #1f8a4a) : server.state == 2 ? (Theme.dark ? #ff8b8b : #b3261e) : Theme.text-dim;
+                                text: !server.enabled ? "Switched off" : server.state == 1 ? "Online" : server.state == 2 ? "Offline" : "Checking…";
+                                color: !server.enabled ? Theme.text-dim : server.state == 1 ? (Theme.dark ? #6fdc97 : #1f8a4a) : server.state == 2 ? (Theme.dark ? #ff8b8b : #b3261e) : Theme.text-dim;
                                 font-weight: 600;
                                 vertical-alignment: center;
                                 accessible-label: server.name + " is " + self.text;
+                            }
+                            VerticalLayout {
+                                alignment: center;
+                                Switch {
+                                    checked: server.enabled;
+                                    accessible-label: "Use " + server.name;
+                                    toggled => { root.set-server-enabled(server.id, self.checked); }
+                                }
                             }
                             Button {
                                 text: "Remove";
@@ -2175,10 +2492,54 @@ export component AppWindow inherits Window {
                     for source in root.tv-sources: SettingsRow {
                         label: source.name;
                         detail: (source.channels == 1 ? "1 entry" : source.channels + " entries") + "  ·  " + source.detail;
-                        Button {
-                            text: "Remove";
-                            accessible-label: "Remove " + source.name;
-                            clicked => { root.remove-tv-source(source.url); }
+                        HorizontalLayout {
+                            spacing: 12px;
+                            if source.state != 0: Rectangle {
+                                width: 10px;
+                                Rectangle {
+                                    y: (parent.height - self.height) / 2;
+                                    height: 10px;
+                                    border-radius: 5px;
+                                    background: source.state == 2 ? #3fbf6f : source.state == 3 ? #e0564f : Theme.text-dim;
+                                }
+                            }
+                            if source.state != 0 || !source.enabled: Text {
+                                text: !source.enabled ? "Switched off" : source.state == 2 ? "Online" : source.state == 3 ? "Offline" : "Checking…";
+                                color: !source.enabled ? Theme.text-dim : source.state == 2 ? (Theme.dark ? #6fdc97 : #1f8a4a) : source.state == 3 ? (Theme.dark ? #ff8b8b : #b3261e) : Theme.text-dim;
+                                font-weight: 600;
+                                vertical-alignment: center;
+                                accessible-label: source.name + " is " + self.text;
+                            }
+                            VerticalLayout {
+                                alignment: center;
+                                Switch {
+                                    checked: source.enabled;
+                                    accessible-label: "Use " + source.name;
+                                    toggled => { root.set-tv-source-enabled(source.url, self.checked); }
+                                }
+                            }
+                            Button {
+                                text: "Remove";
+                                accessible-label: "Remove " + source.name;
+                                clicked => { root.remove-tv-source(source.url); }
+                            }
+                        }
+                    }
+
+                    Rectangle { height: 8px; }
+                    SectionTitle { text: "Where to watch"; }
+                    SettingsRow {
+                        label: "Country";
+                        detail: "A title's page lists the streaming services and shops that have it in this country. If none does, Haven looks in the United States, the United Kingdom, Canada and Australia.";
+                        ComboBox {
+                            width: 220px;
+                            model: root.countries;
+                            current-index: root.country-index;
+                            accessible-label: "Country";
+                            selected => {
+                                root.country-index = self.current-index;
+                                root.country-selected(self.current-index);
+                            }
                         }
                     }
 
@@ -2339,6 +2700,74 @@ export component AppWindow inherits Window {
                         color: Theme.text-dim;
                         font-size: 12px;
                         wrap: word-wrap;
+                    }
+                }
+            }
+        }
+    }
+
+    // Choosing the Favourites groups of one channel, over the page.
+    if root.fav-open && !root.player-open: Rectangle {
+        background: #000000a0;
+        TouchArea {
+            clicked => { root.fav-close(); }
+        }
+        Rectangle {
+            width: 440px;
+            height: min(parent.height - 80px, fav-box.preferred-height);
+            border-radius: 12px;
+            background: Theme.surface;
+            border-width: 1px;
+            border-color: Theme.border;
+            clip: true;
+            TouchArea { }
+            fav-box := VerticalLayout {
+                padding: 20px;
+                spacing: 10px;
+                alignment: start;
+                Text {
+                    text: "Favourites";
+                    color: Theme.text;
+                    font-size: 18px;
+                    font-weight: 600;
+                }
+                Text {
+                    text: root.fav-channel;
+                    color: Theme.text-dim;
+                    overflow: elide;
+                }
+                if root.fav-picks.length == 0: Text {
+                    text: "You have no Favourites groups yet. Name one below and this channel goes into it.";
+                    color: Theme.text-dim;
+                    wrap: word-wrap;
+                }
+                for pick in root.fav-picks: SideItem {
+                    label: pick.name;
+                    trailing: pick.has ? "✓  In this group" : "Add";
+                    selected: pick.has;
+                    star: true;
+                    clicked => { root.fav-toggle(pick.name); }
+                }
+                HorizontalLayout {
+                    spacing: 8px;
+                    LineEdit {
+                        text <=> root.fav-new-name;
+                        placeholder-text: "New group, for example Sport";
+                        accessible-label: "Name of a new Favourites group";
+                        accepted(text) => { root.fav-new-group(text); }
+                    }
+                    Button {
+                        text: "New group";
+                        enabled: root.fav-new-name != "";
+                        clicked => { root.fav-new-group(root.fav-new-name); }
+                    }
+                }
+                HorizontalLayout {
+                    alignment: end;
+                    Button {
+                        text: "Done";
+                        primary: true;
+                        clicked => { root.fav-close(); }
                     }
                 }
             }

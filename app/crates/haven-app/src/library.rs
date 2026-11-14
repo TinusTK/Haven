@@ -10,6 +10,7 @@ use std::{
 
 mod cast;
 mod explore;
+mod offers;
 mod servers;
 mod sources;
 mod tracking;
@@ -161,6 +162,8 @@ pub struct Library {
     addons: Client,
     http: reqwest::Client,
     installed: RefCell<Vec<Installed>>,
+    /// The address of every installed add-on, switched on or not.
+    addon_urls: RefCell<Vec<String>>,
     home: ShelfSet,
     search: ShelfSet,
     image_gate: Arc<Semaphore>,
@@ -193,12 +196,17 @@ pub struct Library {
     watchlist: Rc<VecModel<Poster>>,
     watchlist_generation: Cell<u64>,
 
+    /// The media servers in use (those switched on).
     servers: RefCell<Vec<haven_servers::Server>>,
+    /// Every media server signed in to, switched on or not.
+    all_servers: RefCell<Vec<haven_servers::Server>>,
     server_client: haven_servers::Client,
     server_shelves: ShelfSet,
     server_generation: Cell<u64>,
     /// Whether each server answers: 0 not known yet, 1 online, 2 offline.
     server_states: RefCell<std::collections::HashMap<i64, i32>>,
+    /// The add-ons that media servers use and share with their owner.
+    shared_addons: RefCell<Vec<(String, haven_servers::SharedAddon)>>,
     /// Every library of every server that answered, for Explore.
     server_libraries: RefCell<Vec<(haven_servers::Server, haven_servers::Library)>>,
     /// Asks the servers now and then whether they still answer.
@@ -243,6 +251,7 @@ impl Library {
             addons: Client::new(http.clone()),
             http,
             installed: RefCell::default(),
+            addon_urls: RefCell::default(),
             home: ShelfSet::default(),
             search: ShelfSet::default(),
             image_gate: Arc::new(Semaphore::new(IMAGES_AT_ONCE)),
@@ -264,10 +273,12 @@ impl Library {
             watchlist: Rc::default(),
             watchlist_generation: Cell::new(0),
             servers: RefCell::default(),
+            all_servers: RefCell::default(),
             server_client,
             server_shelves: ShelfSet::default(),
             server_generation: Cell::new(0),
             server_states: RefCell::default(),
+            shared_addons: RefCell::default(),
             server_libraries: RefCell::default(),
             server_timer: slint::Timer::default(),
             catalog: ShelfSet::default(),
@@ -313,6 +324,7 @@ impl Library {
         }
         connect!(on_install_addon, |address| |l: &Rc<Self>| l.install(address.as_str()));
         connect!(on_remove_addon, |url| |l: &Rc<Self>| l.remove(url.as_str()));
+        connect!(on_set_addon_enabled, |url, on| |l: &Rc<Self>| l.set_addon_enabled(url.as_str(), on));
         connect!(on_search, |query| |l: &Rc<Self>| l.run_search(query.as_str()));
         connect!(on_open_title, |poster| |l: &Rc<Self>| l.open_title(poster));
         connect!(on_close_detail, | | |l: &Rc<Self>| l.close_detail());
@@ -330,6 +342,7 @@ impl Library {
         library.reload_watchlist();
         library.start_tracking(ui);
         library.start_explore(ui);
+        library.start_offers(ui);
         library.start_servers(ui);
         library.start_casting(ui);
         library.reload_catalog();
@@ -373,6 +386,7 @@ impl Library {
             eprintln!("haven: could not read the installed add-ons: {err}");
             Vec::new()
         });
+        let off = haven_core::settings::SwitchedOff::load(&self.store).unwrap_or_default().addons;
         let installed: Vec<Installed> = stored
             .into_iter()
             .filter_map(|addon| match parse_manifest(&addon.manifest) {
@@ -392,12 +406,17 @@ impl Library {
                 description: addon.manifest.description.as_deref().unwrap_or_default().into(),
                 version: addon.manifest.version.as_str().into(),
                 catalogs: addon.manifest.catalogs.iter().filter(|c| !c.needs_input()).count() as i32,
+                enabled: !off.contains(&addon.url),
             })
             .collect();
-        *self.installed.borrow_mut() = installed;
+        *self.addon_urls.borrow_mut() = installed.iter().map(|addon| addon.url.clone()).collect();
+        // An add-on that is switched off is listed but never asked.
+        *self.installed.borrow_mut() =
+            installed.into_iter().filter(|addon| !off.contains(&addon.url)).collect();
         if let Some(ui) = self.ui.upgrade() {
             ui.set_addons(ModelRc::new(VecModel::from(rows)));
         }
+        self.show_shared_addons();
     }
 
     fn set_status(&self, text: &str, is_error: bool) {
@@ -455,6 +474,21 @@ impl Library {
         if let Some(ui) = self.ui.upgrade() {
             ui.set_addon_address("".into());
         }
+    }
+
+    /// Switches an add-on on or off. Off, it stays installed but is not
+    /// asked for shelves, details or streams.
+    fn set_addon_enabled(&self, url: &str, on: bool) {
+        let mut off = haven_core::settings::SwitchedOff::load(&self.store).unwrap_or_default();
+        haven_core::settings::switch(&mut off.addons, url.to_owned(), on);
+        if let Err(err) = off.save(&self.store) {
+            return self.set_status(&format!("Could not save that: {err}"), true);
+        }
+        self.load_installed();
+        self.reload_home();
+        self.clear_search();
+        self.rebuild_explore();
+        self.set_status(if on { "Add-on switched on." } else { "Add-on switched off." }, false);
     }
 
     fn remove(&self, url: &str) {
@@ -618,7 +652,7 @@ impl Library {
                         servers.latest(server, library).await.map_err(|err| err.to_string())
                     }
                     ShelfFrom::Server { server, library, latest: false } => servers
-                        .page(server, library, 0, SERVER_SHELF_LENGTH as u32)
+                        .page(server, library, None, 0, SERVER_SHELF_LENGTH as u32)
                         .await
                         .map_err(|err| err.to_string()),
                     ShelfFrom::Tmdb { list, series } => match &tmdb {
@@ -959,6 +993,7 @@ impl Library {
         self.seasons.set_vec(Vec::new());
         self.episodes.set_vec(Vec::new());
         self.clear_streams();
+        self.clear_offers("");
         self.set_streams_state(Some(sources::HEADING), false, "");
         // A Continue Watching card names the episode to go back to; its
         // second line is that episode, not the title's year.
@@ -1087,6 +1122,7 @@ impl Library {
         }
 
         self.enrich(generation, &meta);
+        self.load_offers(generation, &meta);
 
         let seasons = meta.seasons();
         let has_videos = !meta.videos.is_empty();

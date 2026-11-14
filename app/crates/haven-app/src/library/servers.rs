@@ -63,6 +63,14 @@ impl Library {
             move |id| library.remove_server(id as i64)
         });
         ui.on_open_link(|link| open_in_browser(link.as_str()));
+        ui.on_set_server_enabled({
+            let library = self.clone();
+            move |id, on| library.set_server_enabled(id as i64, on)
+        });
+        ui.on_install_shared({
+            let library = self.clone();
+            move |index| library.install_shared(index)
+        });
         ui.on_check_servers({
             let library = self.clone();
             move || library.check_servers(true)
@@ -79,8 +87,9 @@ impl Library {
     /// Fills the list of servers in Settings, each with its state.
     fn show_servers(&self) {
         let states = self.server_states.borrow();
+        let on = self.servers.borrow();
         let rows: Vec<ServerRow> = self
-            .servers
+            .all_servers
             .borrow()
             .iter()
             .map(|server| ServerRow {
@@ -89,6 +98,7 @@ impl Library {
                 kind: server.kind.label().into(),
                 address: server.address.as_str().into(),
                 state: states.get(&server.id).copied().unwrap_or(UNKNOWN),
+                enabled: on.iter().any(|known| known.id == server.id),
             })
             .collect();
         if let Some(ui) = self.ui.upgrade() {
@@ -154,6 +164,11 @@ impl Library {
                 })
             })
             .collect();
+        // A server that is switched off is listed but never asked.
+        let off = haven_core::settings::SwitchedOff::load(&self.store).unwrap_or_default().servers;
+        *self.all_servers.borrow_mut() = servers.clone();
+        let servers: Vec<Server> =
+            servers.into_iter().filter(|server| !off.contains(&server.id)).collect();
         self.server_states
             .borrow_mut()
             .retain(|id, _| servers.iter().any(|server| server.id == *id));
@@ -191,6 +206,8 @@ impl Library {
         let servers = self.servers.borrow().clone();
         if servers.is_empty() {
             self.server_libraries.borrow_mut().clear();
+            self.shared_addons.borrow_mut().clear();
+            self.show_shared_addons();
             self.rebuild_explore();
             return self.fill(Board::Servers, Vec::new(), None);
         }
@@ -210,7 +227,10 @@ impl Library {
                     Ok(libraries) => {
                         for library in libraries {
                             found.push((server.clone(), library.clone()));
-                            for latest in [true, false] {
+                            // A collection is one list: one shelf. A
+                            // library also gets a shelf of what is new.
+                            let shelves: &[bool] = if library.collection { &[false] } else { &[true, false] };
+                            for &latest in shelves {
                                 plans.push(ShelfPlan {
                                     title: if latest {
                                         format!("New in {}", library.name)
@@ -244,9 +264,76 @@ impl Library {
                 library.show_servers();
                 *library.server_libraries.borrow_mut() = found;
                 library.rebuild_explore();
+                library.load_shared_addons();
                 library.fill(Board::Servers, plans, None);
             });
         });
+    }
+
+    /// Asks each server for the add-ons it uses and shares (Trellis does,
+    /// with its owner), so they can be installed in Haven with a click.
+    fn load_shared_addons(&self) {
+        let servers = self.servers.borrow().clone();
+        let client = self.server_client.clone();
+        self.tasks.spawn(async move {
+            let mut shared = Vec::new();
+            for server in servers {
+                match client.shared_addons(&server).await {
+                    Ok(addons) => {
+                        shared.extend(addons.into_iter().map(|addon| (server.name.clone(), addon)))
+                    }
+                    // Only its owner may read a server's add-on list.
+                    Err(err) => haven_core::diag::note(&format!(
+                        "{} did not share its add-on list: {err}",
+                        server.name
+                    )),
+                }
+            }
+            on_ui(move |library| {
+                *library.shared_addons.borrow_mut() = shared;
+                library.show_shared_addons();
+            });
+        });
+    }
+
+    /// Fills the list of servers' add-ons on the Add-ons page.
+    pub(super) fn show_shared_addons(&self) {
+        let installed = self.addon_urls.borrow();
+        let rows: Vec<crate::SharedAddonRow> = self
+            .shared_addons
+            .borrow()
+            .iter()
+            .enumerate()
+            .map(|(index, (server, addon))| crate::SharedAddonRow {
+                index: index as i32,
+                name: addon.name.as_str().into(),
+                server: server.as_str().into(),
+                installed: haven_addons::manifest_url(&addon.manifest_url)
+                    .is_ok_and(|url| installed.contains(&url)),
+            })
+            .collect();
+        if let Some(ui) = self.ui.upgrade() {
+            ui.set_shared_addons(ModelRc::new(VecModel::from(rows)));
+        }
+    }
+
+    /// Installs one of the servers' add-ons in Haven; `index` -1 installs
+    /// every one that is not installed yet.
+    fn install_shared(&self, index: i32) {
+        let wanted: Vec<String> = self
+            .shared_addons
+            .borrow()
+            .iter()
+            .enumerate()
+            .filter(|(at, _)| index < 0 || *at as i32 == index)
+            .map(|(_, (_, addon))| addon.manifest_url.clone())
+            .collect();
+        let installed = self.addon_urls.borrow().clone();
+        for address in wanted {
+            if !haven_addons::manifest_url(&address).is_ok_and(|url| installed.contains(&url)) {
+                self.install(&address);
+            }
+        }
     }
 
     /// Signs in to a Jellyfin or Emby server. The password is passed on
@@ -363,6 +450,18 @@ impl Library {
             ui.set_server_user("".into());
             ui.set_server_address("".into());
         }
+    }
+
+    /// Switches a media server on or off. Off, Haven stays signed in to
+    /// it but does not ask it for anything.
+    fn set_server_enabled(&self, id: i64, on: bool) {
+        let mut off = haven_core::settings::SwitchedOff::load(&self.store).unwrap_or_default();
+        haven_core::settings::switch(&mut off.servers, id, on);
+        if let Err(err) = off.save(&self.store) {
+            return self.server_status(&format!("Could not save that: {err}"), true);
+        }
+        self.load_servers();
+        self.server_status(if on { "Server switched on." } else { "Server switched off." }, false);
     }
 
     fn remove_server(&self, id: i64) {

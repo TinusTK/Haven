@@ -8,7 +8,7 @@ use serde_json::Value;
 
 mod catalog;
 
-pub use catalog::{Genre, List, Tmdb, split_id, title_id};
+pub use catalog::{Genre, List, Offers, Service, Tmdb, split_id, title_id};
 
 const API: &str = "https://api.themoviedb.org/3";
 const IMAGES: &str = "https://image.tmdb.org/t/p";

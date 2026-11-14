@@ -100,26 +100,120 @@ fn act(ui: &AppWindow, action: &str) {
         "station" => ui.invoke_play_channel(true, number as i32),
         "tvfilter" => {
             ui.set_tv_words(rest.trim().into());
-            ui.invoke_filter_channels(false, rest.trim().into(), ui.get_tv_group());
+            ui.invoke_filter_channels(false, rest.trim().into(), ui.get_tv_category());
         }
-        "tvgroup" => {
-            ui.set_tv_group(rest.trim().into());
-            ui.invoke_filter_channels(false, ui.get_tv_words(), rest.trim().into());
+        // tvgroup <name>: a group of the playlist; favgroup <name>: one of
+        // the user's Favourites groups; tvgroup with nothing: every channel.
+        "tvgroup" | "favgroup" => {
+            let key = match (verb, rest.trim()) {
+                (_, "") => String::new(),
+                ("favgroup", name) => format!("f:{name}"),
+                (_, name) => format!("g:{name}"),
+            };
+            ui.set_tv_category(key.as_str().into());
+            ui.invoke_filter_channels(false, ui.get_tv_words(), key.into());
+        }
+        "catfilter" => ui.invoke_filter_categories(false, rest.trim().into()),
+        "star" => ui.invoke_fav_pick(false, number as i32),
+        "favtoggle" => ui.invoke_fav_toggle(rest.trim().into()),
+        "favnew" => ui.invoke_fav_new_group(rest.trim().into()),
+        "favdelete" => ui.invoke_fav_delete_group(rest.trim().into()),
+        "favclose" => ui.invoke_fav_close(),
+        "tvsource" => {
+            // tvsource <on|off> <row>
+            let mut parts = rest.split_whitespace();
+            let on = parts.next() == Some("on");
+            let row = parts.next().and_then(|row| row.parse::<usize>().ok()).unwrap_or(0);
+            if let Some(source) = ui.get_tv_sources().row_data(row) {
+                ui.invoke_set_tv_source_enabled(source.url, on);
+            }
+        }
+        "addon" => {
+            // addon <on|off> <row>
+            let mut parts = rest.split_whitespace();
+            let on = parts.next() == Some("on");
+            let row = parts.next().and_then(|row| row.parse::<usize>().ok()).unwrap_or(0);
+            if let Some(addon) = ui.get_addons().row_data(row) {
+                ui.invoke_set_addon_enabled(addon.url, on);
+            }
+        }
+        "server" => {
+            // server <on|off> <row>
+            let mut parts = rest.split_whitespace();
+            let on = parts.next() == Some("on");
+            let row = parts.next().and_then(|row| row.parse::<usize>().ok()).unwrap_or(0);
+            if let Some(server) = ui.get_servers().row_data(row) {
+                ui.invoke_set_server_enabled(server.id, on);
+            }
+        }
+        "installshared" => ui.invoke_install_shared(number as i32),
+        "addons" => eprintln!(
+            "haven-addons: status=\"{}\" installed=[{}] shared=[{}]",
+            ui.get_addon_status(),
+            ui.get_addons()
+                .iter()
+                .map(|addon| format!("{} {}", addon.name, if addon.enabled { "on" } else { "off" }))
+                .collect::<Vec<_>>()
+                .join(" | "),
+            ui.get_shared_addons()
+                .iter()
+                .map(|addon| format!("{} on {}{}", addon.name, addon.server, if addon.installed { " (installed)" } else { "" }))
+                .collect::<Vec<_>>()
+                .join(" | "),
+        ),
+        "offers" => eprintln!(
+            "haven-offers: note=\"{}\" link=\"{}\" rows=[{}]",
+            ui.get_offers_note(),
+            ui.get_offers_link(),
+            ui.get_offers()
+                .iter()
+                .map(|offer| format!("{}: {}", offer.name, offer.ways))
+                .collect::<Vec<_>>()
+                .join(" | "),
+        ),
+        "country" => {
+            ui.set_country_index(number as i32);
+            ui.invoke_country_selected(number as i32);
         }
         "tvstate" => eprintln!(
-            "haven-tv: status=\"{}\" xtream=\"{}\" sources=[{}] tv={}/{} radio={}/{} groups={}",
+            "haven-tv: status=\"{}\" xtream=\"{}\" sources=[{}] tv={}/{} radio={}/{} category=\"{}\" \
+             categories=[{}] fav-open={} picks=[{}] first=[{}]",
             ui.get_tv_status(),
             ui.get_xtream_status(),
             ui.get_tv_sources()
                 .iter()
-                .map(|source| format!("{}: {} ({})", source.name, source.detail, source.channels))
+                .map(|source| format!(
+                    "{}: {} ({}) {} {}",
+                    source.name,
+                    source.detail,
+                    source.channels,
+                    if source.enabled { "on" } else { "off" },
+                    ["", "checking", "online", "offline"][source.state.clamp(0, 3) as usize]
+                ))
                 .collect::<Vec<_>>()
                 .join(" | "),
             ui.get_tv_channels().row_count(),
             ui.get_tv_total(),
             ui.get_radio_channels().row_count(),
             ui.get_radio_total(),
-            ui.get_tv_groups().iter().map(|g| g.to_string()).collect::<Vec<_>>().join("|"),
+            ui.get_tv_category(),
+            ui.get_tv_categories()
+                .iter()
+                .map(|row| format!("{}{}:{}", if row.favourite { "★" } else { "" }, row.label, row.count))
+                .collect::<Vec<_>>()
+                .join("|"),
+            ui.get_fav_open(),
+            ui.get_fav_picks()
+                .iter()
+                .map(|pick| format!("{}{}", pick.name, if pick.has { "✓" } else { "" }))
+                .collect::<Vec<_>>()
+                .join("|"),
+            ui.get_tv_channels()
+                .iter()
+                .take(3)
+                .map(|row| format!("{}{}", if row.starred { "★" } else { "" }, row.name))
+                .collect::<Vec<_>>()
+                .join("|"),
         ),
         "signin" => {
             // signin <jellyfin|emby> <address> <user> [password]
@@ -208,7 +302,11 @@ fn act(ui: &AppWindow, action: &str) {
             eprintln!(
                 "haven-explore: sources=[{}] source={} kinds=[{}] kind={} genres=[{}] genre={} \
                  items={} pictures={} loading={} more={} note=\"{}\" first=[{}]",
-                names(ui.get_explore_sources()),
+                ui.get_explore_sources()
+                    .iter()
+                    .map(|row| if row.header { format!("# {}", row.label) } else { format!("{}:{}", row.index, row.label) })
+                    .collect::<Vec<_>>()
+                    .join("|"),
                 ui.get_explore_source(),
                 names(ui.get_explore_kinds()),
                 ui.get_explore_kind(),

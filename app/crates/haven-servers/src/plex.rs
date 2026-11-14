@@ -130,7 +130,9 @@ pub(crate) fn read_libraries(container: &Value) -> Vec<Library> {
     list(container, "Directory")
         .iter()
         .filter(|section| matches!(text(section, "type").as_deref(), Some("movie" | "show")))
-        .filter_map(|section| Some(Library { id: text(section, "key")?, name: text(section, "title")? }))
+        .filter_map(|section| {
+            Some(Library { id: text(section, "key")?, name: text(section, "title")?, collection: false })
+        })
         .collect()
 }
 
