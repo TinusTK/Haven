@@ -33,8 +33,11 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     // Must run before the first window exists: the player draws video with
     // OpenGL, so the window has to be drawn with OpenGL too.
+    // If that cannot be had, carry on: Haven then runs without the player.
     #[cfg(feature = "player")]
-    slint::BackendSelector::new().require_opengl().select()?;
+    if let Err(err) = slint::BackendSelector::new().require_opengl().select() {
+        eprintln!("haven: OpenGL is not available: {err}");
+    }
 
     let ui = AppWindow::new()?;
     ui.set_version(env!("CARGO_PKG_VERSION").into());
@@ -71,10 +74,20 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let live = livetv::LiveTv::start(&ui, store.clone(), tasks.handle().clone())?;
 
+    // On a computer whose graphics have no usable OpenGL, Slint draws the
+    // window in software and the player cannot hook into it. Haven then
+    // runs without the player (streams and channels are listed, not
+    // playable) instead of not starting at all.
     #[cfg(feature = "player")]
-    let player = player::Player::start(&ui, store.clone())?;
+    let player = match player::Player::start(&ui, store.clone()) {
+        Ok(player) => Some(player),
+        Err(err) => {
+            eprintln!("haven: no player on this computer (no usable OpenGL): {err}");
+            None
+        }
+    };
     #[cfg(feature = "player")]
-    {
+    if let Some(player) = &player {
         let playing = player.clone();
         library.set_player(move |request| playing.play(request));
         let playing = player.clone();
@@ -96,7 +109,9 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     #[cfg(feature = "player")]
     {
-        player.leaving();
+        if let Some(player) = &player {
+            player.leaving();
+        }
         // Dropping the window tears down its renderer, which frees the
         // video's OpenGL objects while that is still possible. Only then
         // can mpv be ended.
@@ -104,7 +119,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         drop(_devtools);
         drop((library, live));
         drop(ui);
-        player.finish();
+        if let Some(player) = &player {
+            player.finish();
+        }
     }
     #[cfg(not(feature = "player"))]
     drop((library, live));
