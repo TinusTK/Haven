@@ -204,7 +204,7 @@ impl Library {
                     }
                 }
             }
-            Err(err) => eprintln!("haven: {source} gave no streams: {err}"),
+            Err(err) => haven_core::diag::note(&format!("{source} gave no places to watch: {err}")),
         }
         let pending = self.streams_pending.get().saturating_sub(1);
         self.streams_pending.set(pending);

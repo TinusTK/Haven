@@ -255,14 +255,14 @@ impl Client {
         for (name, value) in headers {
             request = request.header(*name, value);
         }
-        let mut response = request.send().await?;
+        let mut response = request.send().await.map_err(reqwest::Error::without_url)?;
         match response.status().as_u16() {
             200..=299 => {}
             401 | 403 => return Err(Error::SignInRefused),
             other => return Err(Error::Status(other)),
         }
         let mut bytes = Vec::new();
-        while let Some(chunk) = response.chunk().await? {
+        while let Some(chunk) = response.chunk().await.map_err(reqwest::Error::without_url)? {
             if bytes.len() + chunk.len() > ANSWER_BYTES {
                 return Err(Error::TooLarge);
             }

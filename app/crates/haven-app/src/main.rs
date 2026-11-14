@@ -28,6 +28,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     };
     #[cfg(not(debug_assertions))]
     let paths = AppPaths::discover()?;
+    haven_core::diag::start(&paths.data_dir().join("haven.log"));
     let store = Rc::new(Store::open(&paths.database())?);
     let settings = Rc::new(RefCell::new(Settings::load(&store)?));
 
@@ -42,6 +43,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let ui = AppWindow::new()?;
     ui.set_version(env!("CARGO_PKG_VERSION").into());
     ui.set_data_path(paths.data_dir().display().to_string().into());
+    ui.set_log_path(paths.data_dir().join("haven.log").display().to_string().into());
     ui.set_dark(settings.borrow().theme == ThemeChoice::Dark);
     let page_count = ui.get_pages().row_count() as u32;
     ui.set_page(settings.borrow().last_page.min(page_count.saturating_sub(1)) as i32);
@@ -70,7 +72,13 @@ fn main() -> Result<(), Box<dyn Error>> {
         .build()?;
     // Optional keys file beside the database; Settings has fields too.
     let secrets = haven_core::secrets::Secrets::from_file(&paths.data_dir().join("secrets.env"))?;
-    let library = library::Library::start(&ui, store.clone(), tasks.handle().clone(), secrets)?;
+    let library = library::Library::start(
+        &ui,
+        store.clone(),
+        tasks.handle().clone(),
+        secrets,
+        paths.data_dir().join("cache").join("pictures"),
+    )?;
 
     let live = livetv::LiveTv::start(&ui, store.clone(), tasks.handle().clone())?;
 

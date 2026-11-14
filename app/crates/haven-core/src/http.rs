@@ -45,12 +45,12 @@ pub async fn get_bytes(
     url: &str,
     limit: usize,
 ) -> Result<Vec<u8>, HttpError> {
-    let mut response = client.get(web_url(url)?).send().await?;
+    let mut response = client.get(web_url(url)?).send().await.map_err(reqwest::Error::without_url)?;
     if !response.status().is_success() {
         return Err(HttpError::Status(response.status().as_u16()));
     }
     let mut body = Vec::new();
-    while let Some(chunk) = response.chunk().await? {
+    while let Some(chunk) = response.chunk().await.map_err(reqwest::Error::without_url)? {
         if body.len() + chunk.len() > limit {
             return Err(HttpError::TooLarge { limit });
         }
@@ -77,10 +77,10 @@ pub async fn send(
     for (name, value) in headers {
         request = request.header(*name, value);
     }
-    let mut response = request.send().await?;
+    let mut response = request.send().await.map_err(reqwest::Error::without_url)?;
     let status = response.status().as_u16();
     let mut bytes = Vec::new();
-    while let Some(chunk) = response.chunk().await? {
+    while let Some(chunk) = response.chunk().await.map_err(reqwest::Error::without_url)? {
         if bytes.len() + chunk.len() > limit {
             return Err(HttpError::TooLarge { limit });
         }

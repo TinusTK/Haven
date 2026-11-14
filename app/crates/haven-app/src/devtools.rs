@@ -163,6 +163,8 @@ fn act(ui: &AppWindow, action: &str) {
             );
         }
         "checkservers" => ui.invoke_check_servers(),
+        "clearcache" => ui.invoke_clear_cache(),
+        "cache" => eprintln!("haven-cache: {}", ui.get_cache_status()),
         "xtream" => {
             let mut parts = rest.split_whitespace();
             let server = parts.next().unwrap_or_default();

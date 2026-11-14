@@ -338,10 +338,14 @@ impl Library {
     /// Asks TMDB for what the add-on left out of a title's details.
     pub(super) fn enrich(&self, generation: u64, meta: &MetaDetail) {
         let Some(key) = self.keys.borrow().tmdb_api_key.clone() else { return };
-        if !haven_metadata::is_imdb_id(&meta.id) {
+        // A media server's title names its IMDb id beside its own.
+        let Some(id) = Some(meta.id.clone())
+            .filter(|id| haven_metadata::is_imdb_id(id))
+            .or_else(|| meta.imdb_id.clone().filter(|id| haven_metadata::is_imdb_id(id)))
+        else {
             return;
-        }
-        let (http, id, series) = (self.http.clone(), meta.id.clone(), meta.kind == "series");
+        };
+        let (http, series) = (self.http.clone(), meta.kind == "series");
         self.tasks.spawn(async move {
             let details = match haven_metadata::details(&http, &key, series, &id).await {
                 Ok(Some(details)) => details,

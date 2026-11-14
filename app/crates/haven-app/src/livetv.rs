@@ -373,7 +373,7 @@ impl LiveTv {
             return self.set_status(&format!("Could not remove the source: {err}"), true);
         }
         self.rebuild();
-        self.set_status("Source removed.", false);
+        self.set_status("", false);
         self.set_xtream_status("Source removed.", false);
     }
 

@@ -183,8 +183,36 @@ pub async fn find(client: &Client, server: &Server, wanted: &Wanted) -> Result<O
     Ok(read_episode(&get(client, server, &path).await?, season, episode))
 }
 
-fn image(server: &Server, item: &str, which: &str, height: u32) -> String {
-    format!("{}/Items/{}/Images/{which}?maxHeight={height}&quality=90", server.address, query(item))
+/// The address of one of an item's pictures. `tag` is the picture's
+/// version as the server names it, when known. The token is included
+/// because some servers that speak this API only hand pictures to a
+/// signed-in app.
+fn image(server: &Server, item: &str, which: &str, height: u32, tag: Option<&str>) -> String {
+    let mut address = format!(
+        "{}/Items/{}/Images/{which}?maxHeight={height}&quality=90",
+        server.address,
+        query(item)
+    );
+    if let Some(tag) = tag {
+        address.push_str(&format!("&tag={}", query(tag)));
+    }
+    address.push_str(&format!("&api_key={}", query(&server.token)));
+    address
+}
+
+/// The version tag of an item's poster, if it says it has one.
+fn poster_tag(item: &Value) -> Option<String> {
+    item.get("ImageTags").and_then(|tags| text(tags, "Primary"))
+}
+
+/// A picture the item names by its full web address, as servers that
+/// gather titles from elsewhere sometimes do instead of holding it.
+fn remote_image(item: &Value, kind: &str) -> Option<String> {
+    list(item, "RemoteImages")
+        .iter()
+        .find(|image| text(image, "Type").as_deref() == Some(kind))
+        .and_then(|image| text(image, "Url"))
+        .filter(|url| url.starts_with("http://") || url.starts_with("https://"))
 }
 
 /// Films and series as posters. An episode stands for its series; a
@@ -192,10 +220,15 @@ fn image(server: &Server, item: &str, which: &str, height: u32) -> String {
 pub(crate) fn read_previews(server: &Server, items: &[Value]) -> Vec<MetaPreview> {
     let mut previews: Vec<MetaPreview> = Vec::new();
     for item in items {
-        let (kind, id, name) = match text(item, "Type").as_deref() {
-            Some("Movie") => ("movie", text(item, "Id"), text(item, "Name")),
-            Some("Series") => ("series", text(item, "Id"), text(item, "Name")),
-            Some("Episode") => ("series", text(item, "SeriesId"), text(item, "SeriesName")),
+        let (kind, id, name, tag) = match text(item, "Type").as_deref() {
+            Some("Movie") => ("movie", text(item, "Id"), text(item, "Name"), poster_tag(item)),
+            Some("Series") => ("series", text(item, "Id"), text(item, "Name"), poster_tag(item)),
+            Some("Episode") => (
+                "series",
+                text(item, "SeriesId"),
+                text(item, "SeriesName"),
+                text(item, "SeriesPrimaryImageTag"),
+            ),
             _ => continue,
         };
         let (Some(id), Some(name)) = (id, name) else { continue };
@@ -207,7 +240,7 @@ pub(crate) fn read_previews(server: &Server, items: &[Value]) -> Vec<MetaPreview
             id: full,
             kind: kind.to_owned(),
             name,
-            poster: Some(image(server, &id, "Primary", 450)),
+            poster: Some(image(server, &id, "Primary", 450, tag.as_deref())),
             release_info: text(item, "ProductionYear"),
         });
     }
@@ -253,9 +286,14 @@ pub(crate) fn read_detail(server: &Server, detail: &Value, episodes: &Value) -> 
         id: title_id(server.id, &id),
         kind: if series { "series" } else { "movie" }.to_owned(),
         name: text(detail, "Name")?,
-        poster: Some(image(server, &id, "Primary", 450)),
-        background: (!list(detail, "BackdropImageTags").is_empty())
-            .then(|| image(server, &id, "Backdrop", 900)),
+        poster: remote_image(detail, "Primary")
+            .or_else(|| Some(image(server, &id, "Primary", 450, poster_tag(detail).as_deref()))),
+        // Asked for even when the item lists no backdrop: a server that
+        // gathers its titles from elsewhere may still have one to give.
+        background: remote_image(detail, "Backdrop").or_else(|| {
+            let tag = list(detail, "BackdropImageTags").first().and_then(|tag| tag.as_str());
+            Some(image(server, &id, "Backdrop", 900, tag))
+        }),
         description: text(detail, "Overview"),
         release_info: text(detail, "ProductionYear"),
         runtime: number(detail, "RunTimeTicks")
@@ -282,21 +320,45 @@ fn file_address(server: &Server, item: &str, version: Option<&str>) -> String {
     address
 }
 
-/// Every version of the film or episode the server holds, each as the
-/// file is stored. The token goes in the address because the player, not
-/// Haven's own HTTP client, opens it.
+/// Every way the server offers to play the film or episode: each version
+/// of the file it holds, and, on servers that gather streams from
+/// elsewhere, each of those streams. The token goes in the address
+/// because the player, not Haven's own HTTP client, opens it.
 pub async fn streams(client: &Client, server: &Server, item: &str) -> Result<Vec<Stream>> {
+    // The playback information is what the server's own apps list their
+    // sources from; some servers only work them out when asked this way.
+    let url = format!(
+        "{}/Items/{}/PlaybackInfo?UserId={}",
+        server.address,
+        query(item),
+        query(&server.user_id)
+    );
+    let asked = client
+        .call(
+            &url,
+            &headers(client, server.kind, Some(&server.token)),
+            Some(json!({ "UserId": server.user_id })),
+        )
+        .await;
+    if let Ok(info) = &asked {
+        if !list(info, "MediaSources").is_empty() {
+            return Ok(read_streams(server, item, info));
+        }
+    }
+    // Older servers, or one that refused: the item itself lists its files.
     let detail =
         get(client, server, &format!("/Users/{}/Items/{}", server.user_id, query(item))).await?;
     Ok(read_streams(server, item, &detail))
 }
 
-pub(crate) fn read_streams(server: &Server, item: &str, detail: &Value) -> Vec<Stream> {
-    let versions = list(detail, "MediaSources");
+/// One stream per entry of `MediaSources` in a playback-information or
+/// item answer.
+pub(crate) fn read_streams(server: &Server, item: &str, answer: &Value) -> Vec<Stream> {
+    let versions = list(answer, "MediaSources");
     let streams: Vec<Stream> = versions
         .iter()
         .filter_map(|version| {
-            let id = text(version, "Id")?;
+            let id = text(version, "Id");
             let track = |kind: &str| {
                 list(version, "MediaStreams")
                     .iter()
@@ -306,29 +368,43 @@ pub(crate) fn read_streams(server: &Server, item: &str, detail: &Value) -> Vec<S
             let codec = |stream: Option<&Value>| {
                 stream.and_then(|stream| text(stream, "Codec")).map(|codec| codec.to_uppercase())
             };
+            let quality = quality(
+                video.and_then(|video| number(video, "Width")),
+                video.and_then(|video| number(video, "Height")),
+            );
+            // A source that is itself a web address (a stream gathered
+            // from elsewhere) plays from there; a file plays from the server.
+            let remote = text(version, "Path").filter(|path| {
+                text(version, "Protocol").is_some_and(|protocol| protocol.eq_ignore_ascii_case("http"))
+                    && (path.starts_with("http://") || path.starts_with("https://"))
+            });
+            let url = match (remote, &id) {
+                (Some(path), _) => path,
+                (None, Some(id)) => file_address(server, item, Some(id)),
+                (None, None) => return None,
+            };
             let mut facts: Vec<String> = Vec::new();
-            // With several versions, the server's name for each tells them apart.
-            if versions.len() > 1 {
+            // The server's name for the source tells several apart, and
+            // is all there is to go by when it says nothing of the picture.
+            if versions.len() > 1 || quality.is_none() {
                 facts.extend(text(version, "Name"));
             }
-            facts.extend(text(version, "Container").map(|container| container.to_uppercase()));
+            // Containers can come as a list ("mov,mp4,m4a"): the first will do.
+            facts.extend(
+                text(version, "Container")
+                    .and_then(|container| container.split(',').next().map(str::to_uppercase)),
+            );
             facts.extend(codec(video));
             facts.extend(codec(track("Audio")));
             facts.extend(number(version, "Size").and_then(size));
             Some(Stream {
-                name: Some(
-                    quality(
-                        video.and_then(|video| number(video, "Width")),
-                        video.and_then(|video| number(video, "Height")),
-                    )
-                    .unwrap_or_else(|| "Direct".to_owned()),
-                ),
+                name: Some(quality.unwrap_or_else(|| "Direct".to_owned())),
                 description: Some(if facts.is_empty() {
                     format!("The file as stored on {}", server.name)
                 } else {
                     facts.join(" · ")
                 }),
-                url: Some(file_address(server, item, Some(&id))),
+                url: Some(url),
                 ..Stream::default()
             })
         })
@@ -415,7 +491,7 @@ mod tests {
         assert_eq!(previews[0].release_info.as_deref(), Some("2020"));
         assert_eq!(
             previews[0].poster.as_deref(),
-            Some("http://media.example/Items/m1/Images/Primary?maxHeight=450&quality=90")
+            Some("http://media.example/Items/m1/Images/Primary?maxHeight=450&quality=90&api_key=tok%20en")
         );
     }
 
@@ -479,6 +555,53 @@ mod tests {
         );
         assert_eq!(streams[1].name.as_deref(), Some("1080p"));
         assert_eq!(streams[1].description.as_deref(), Some("HD · MP4 · H264"));
+    }
+
+    #[test]
+    fn gathered_streams_play_from_their_own_address() {
+        let info = json!({"MediaSources": [
+            {"Id": "a", "Name": "Provider One 1080p WEB", "Protocol": "Http", "IsRemote": true,
+             "Path": "https://streams.example/one.mkv", "Container": "mkv"},
+            {"Name": "Provider Two 4K", "Protocol": "Http", "Path": "https://streams.example/two.mp4",
+             "MediaStreams": [{"Type": "Video", "Codec": "hevc", "Width": 3840, "Height": 2160}]},
+            {"Id": "c", "Name": "A file", "Protocol": "File", "Path": "/media/file.mkv"},
+            {"Name": "Nothing to play", "Protocol": "File", "Path": "/media/x.mkv"}
+        ]});
+        let streams = read_streams(&server(), "m1", &info);
+        assert_eq!(streams.len(), 3);
+        assert_eq!(streams[0].url.as_deref(), Some("https://streams.example/one.mkv"));
+        assert_eq!(streams[0].name.as_deref(), Some("Direct"));
+        assert_eq!(streams[0].description.as_deref(), Some("Provider One 1080p WEB · MKV"));
+        assert_eq!(streams[1].name.as_deref(), Some("4K"));
+        assert_eq!(streams[1].url.as_deref(), Some("https://streams.example/two.mp4"));
+        assert_eq!(
+            streams[2].url.as_deref(),
+            Some("http://media.example/Videos/m1/stream?static=true&MediaSourceId=c&api_key=tok%20en")
+        );
+    }
+
+    #[test]
+    fn pictures_carry_their_tag_and_remote_ones_are_used_as_given() {
+        let detail = json!({
+            "Id": "m1", "Type": "Movie", "Name": "A Film", "ImageTags": {"Primary": "p1"},
+            "BackdropImageTags": ["b1"]
+        });
+        let meta = read_detail(&server(), &detail, &Value::Null).unwrap();
+        assert_eq!(
+            meta.poster.as_deref(),
+            Some("http://media.example/Items/m1/Images/Primary?maxHeight=450&quality=90&tag=p1&api_key=tok%20en")
+        );
+        assert_eq!(
+            meta.background.as_deref(),
+            Some("http://media.example/Items/m1/Images/Backdrop?maxHeight=900&quality=90&tag=b1&api_key=tok%20en")
+        );
+        let gathered = json!({
+            "Id": "m2", "Type": "Movie", "Name": "Gathered",
+            "RemoteImages": [{"Type": "Primary", "Url": "https://pictures.example/p.jpg"}, {"Type": "Backdrop", "Url": "file:///x"}]
+        });
+        let meta = read_detail(&server(), &gathered, &Value::Null).unwrap();
+        assert_eq!(meta.poster.as_deref(), Some("https://pictures.example/p.jpg"));
+        assert!(meta.background.as_deref().unwrap().contains("/Items/m2/Images/Backdrop"));
     }
 
     #[test]

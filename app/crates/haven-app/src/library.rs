@@ -164,6 +164,8 @@ pub struct Library {
     home: ShelfSet,
     search: ShelfSet,
     image_gate: Arc<Semaphore>,
+    /// Where downloaded pictures are kept between runs.
+    picture_cache: Arc<std::path::PathBuf>,
 
     open: RefCell<Option<OpenTitle>>,
     /// Goes up when another title is opened or the page is closed.
@@ -230,6 +232,7 @@ impl Library {
         store: Rc<Store>,
         tasks: Handle,
         secrets_file: haven_core::secrets::Secrets,
+        picture_cache: std::path::PathBuf,
     ) -> Result<Rc<Self>, http::HttpError> {
         let http = http::client()?;
         let server_client = haven_servers::Client::new(http.clone(), device_id(&store));
@@ -243,6 +246,7 @@ impl Library {
             home: ShelfSet::default(),
             search: ShelfSet::default(),
             image_gate: Arc::new(Semaphore::new(IMAGES_AT_ONCE)),
+            picture_cache: Arc::new(picture_cache),
             open: RefCell::default(),
             detail_generation: Cell::new(0),
             seasons: Rc::default(),
@@ -316,6 +320,8 @@ impl Library {
         connect!(on_episode_selected, |id| |l: &Rc<Self>| l.open_episode(id.as_str()));
         connect!(on_play_stream, |row| |l: &Rc<Self>| l.play_stream(row));
         connect!(on_toggle_watchlist, | | |l: &Rc<Self>| l.toggle_watchlist());
+        connect!(on_clear_cache, | | |l: &Rc<Self>| l.clear_cache());
+        library.show_cache_size();
 
         library.load_installed();
         library.reload_home();
@@ -710,13 +716,55 @@ impl Library {
         size: (u32, u32),
         then: impl FnOnce(&Rc<Library>, Pixels) + Send + 'static,
     ) {
-        let (http, gate) = (self.http.clone(), self.image_gate.clone());
+        let (http, gate, cache) =
+            (self.http.clone(), self.image_gate.clone(), self.picture_cache.clone());
         self.tasks.spawn(async move {
             let Ok(_turn) = gate.acquire().await else { return };
-            if let Some(pixels) = download_image(&http, &url, size).await {
-                on_ui(move |library| then(library, pixels));
+            match download_image(&http, &cache, &url, size).await {
+                Ok(pixels) => on_ui(move |library| then(library, pixels)),
+                Err(why) => haven_core::diag::note(&format!(
+                    "picture not shown: {} ({why})",
+                    haven_core::diag::plain_address(&url)
+                )),
             }
         });
+    }
+
+    /// Says in Settings how much room the kept pictures take.
+    fn show_cache_size(&self) {
+        let cache = self.picture_cache.clone();
+        self.tasks.spawn(async move {
+            let (mut count, mut bytes) = (0u64, 0u64);
+            if let Ok(files) = std::fs::read_dir(cache.as_path()) {
+                for file in files.flatten() {
+                    if let Ok(about) = file.metadata() {
+                        count += 1;
+                        bytes += about.len();
+                    }
+                }
+            }
+            let text = if count == 0 {
+                "No pictures are kept on this computer yet.".to_owned()
+            } else {
+                format!("{count} pictures kept on this computer, {:.1} MB.", bytes as f64 / (1024.0 * 1024.0))
+            };
+            on_ui(move |library| {
+                if let Some(ui) = library.ui.upgrade() {
+                    ui.set_cache_status(text.into());
+                }
+            });
+        });
+    }
+
+    /// Deletes every kept picture. Pictures on screen stay; they are
+    /// fetched again the next time they are needed.
+    fn clear_cache(&self) {
+        if let Ok(files) = std::fs::read_dir(self.picture_cache.as_path()) {
+            for file in files.flatten() {
+                let _ = std::fs::remove_file(file.path());
+            }
+        }
+        self.show_cache_size();
     }
 
     // ---- Continue Watching ----------------------------------------------
@@ -1173,22 +1221,83 @@ fn episode_row(video: &Video) -> EpisodeRow {
     }
 }
 
-/// Downloads a picture and shrinks it to fit `size`. `None` on any failure.
-async fn download_image(http: &reqwest::Client, url: &str, size: (u32, u32)) -> Option<Pixels> {
-    let bytes = http::get_bytes(http, url, IMAGE_BYTES).await.ok()?;
+/// The file a picture is kept in: named after its address (without what
+/// follows `?`, so a new sign-in token does not make it a new picture)
+/// and the size asked for, which some addresses only carry after `?`.
+fn cached_picture(cache: &std::path::Path, url: &str, size: (u32, u32)) -> std::path::PathBuf {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    haven_core::diag::plain_address(url).hash(&mut hasher);
+    size.hash(&mut hasher);
+    cache.join(format!("{:016x}", hasher.finish()))
+}
+
+/// Shrinks a downloaded picture to fit `size`.
+fn read_picture(bytes: Vec<u8>, size: (u32, u32)) -> Result<Pixels, String> {
+    let length = bytes.len();
+    let start: Vec<String> = bytes.iter().take(8).map(|byte| format!("{byte:02x}")).collect();
+    let unreadable = |why: String| format!("{why}; {length} bytes starting {}", start.join(" "));
+    let mut reader = image::ImageReader::new(std::io::Cursor::new(bytes))
+        .with_guessed_format()
+        .map_err(|err| unreadable(err.to_string()))?;
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(8000);
+    limits.max_image_height = Some(8000);
+    reader.limits(limits);
+    let small =
+        reader.decode().map_err(|err| unreadable(err.to_string()))?.thumbnail(size.0, size.1).into_rgba8();
+    Ok(SharedPixelBuffer::clone_from_slice(small.as_raw(), small.width(), small.height()))
+}
+
+/// Gets a picture, from the pictures kept on this computer if it is
+/// there, else from the network (and then keeps it). On failure, says
+/// why in a few words (for the log).
+async fn download_image(
+    http: &reqwest::Client,
+    cache: &std::path::Path,
+    url: &str,
+    size: (u32, u32),
+) -> Result<Pixels, String> {
+    let kept = cached_picture(cache, url, size);
+    let from_disk = {
+        let kept = kept.clone();
+        tokio::task::spawn_blocking(move || {
+            let bytes = std::fs::read(&kept).ok()?;
+            let pixels = read_picture(bytes, size).ok();
+            if pixels.is_none() {
+                // A damaged file: fetch the picture again.
+                let _ = std::fs::remove_file(&kept);
+            }
+            pixels
+        })
+        .await
+        .ok()
+        .flatten()
+    };
+    if let Some(pixels) = from_disk {
+        return Ok(pixels);
+    }
+    let bytes = http::get_bytes(http, url, IMAGE_BYTES).await.map_err(|err| match err {
+        // The full error would repeat the address, token and all.
+        http::HttpError::Request(err) if err.is_timeout() => "the server took too long".to_owned(),
+        http::HttpError::Request(_) => "the server could not be reached".to_owned(),
+        other => other.to_string(),
+    })?;
     tokio::task::spawn_blocking(move || {
-        let mut reader = image::ImageReader::new(std::io::Cursor::new(bytes))
-            .with_guessed_format()
-            .ok()?;
-        let mut limits = image::Limits::default();
-        limits.max_image_width = Some(8000);
-        limits.max_image_height = Some(8000);
-        reader.limits(limits);
-        let small = reader.decode().ok()?.thumbnail(size.0, size.1).into_rgba8();
-        Some(SharedPixelBuffer::clone_from_slice(small.as_raw(), small.width(), small.height()))
+        let pixels = read_picture(bytes.clone(), size)?;
+        // Kept only once it is known to be a picture. Written under
+        // another name first so a half-written file is never read.
+        if let Some(folder) = kept.parent() {
+            let _ = std::fs::create_dir_all(folder);
+        }
+        let part = kept.with_extension("part");
+        if std::fs::write(&part, &bytes).is_ok() {
+            let _ = std::fs::rename(&part, &kept);
+        }
+        Ok(pixels)
     })
     .await
-    .ok()?
+    .map_err(|_| "the picture could not be read".to_owned())?
 }
 
 /// The id this copy of Haven gives media servers, made once and kept.
