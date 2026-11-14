@@ -147,3 +147,32 @@ fn reads_streams_and_tells_how_each_is_delivered() {
     assert_eq!(streams[1].details(), Some("Older add-ons put the text here"));
     assert!(parse_streams("{}").unwrap().is_empty());
 }
+
+#[test]
+fn repeats_of_a_title_are_dropped_and_the_clean_name_wins() {
+    use haven_addons::{MetaPreview, title_key, without_repeats};
+    let title = |id: &str, kind: &str, name: &str, year: Option<&str>| MetaPreview {
+        id: id.into(),
+        kind: kind.into(),
+        name: name.into(),
+        poster: None,
+        release_info: year.map(Into::into),
+    };
+    assert_eq!(
+        title_key("movie", "Dune Part Two (2024) [1080p] [WEBRip] 88", None),
+        title_key("movie", "Dune: Part Two", Some("2024"))
+    );
+    assert_ne!(title_key("movie", "Dune", Some("2021")), title_key("movie", "Dune", Some("1984")));
+    assert_ne!(title_key("movie", "Dune", Some("2021")), title_key("series", "Dune", Some("2021")));
+
+    let kept = without_repeats(vec![
+        title("a", "movie", "Dune Part Two (2024) [1080p] [WEBRip] 88", None),
+        title("b", "movie", "The Odyssey", Some("2026")),
+        title("c", "movie", "Dune: Part Two", Some("2024")),
+        title("d", "movie", "The Odyssey", Some("2026")),
+        title("e", "movie", "Dune", Some("2021")),
+        title("f", "series", "The Odyssey", Some("2026")),
+    ]);
+    let ids: Vec<&str> = kept.iter().map(|title| title.id.as_str()).collect();
+    assert_eq!(ids, ["c", "b", "e", "f"]);
+}

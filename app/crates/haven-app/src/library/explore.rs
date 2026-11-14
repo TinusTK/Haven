@@ -351,9 +351,19 @@ impl Library {
         };
         explore.next.set(next);
         let mut added = 0;
-        for title in titles {
-            // Pages can overlap when a list changes between two requests.
-            if explore.items.iter().any(|known| known.id == title.id.as_str() && known.kind == title.kind.as_str()) {
+        for title in haven_addons::without_repeats(titles) {
+            // Pages can overlap, and the same film can be listed again
+            // on a later page under another id.
+            let key = haven_addons::title_key(&title.kind, &title.name, title.release_info.as_deref());
+            let known = explore.items.iter().any(|known| {
+                (known.id == title.id.as_str() && known.kind == title.kind.as_str())
+                    || haven_addons::title_key(
+                        known.kind.as_str(),
+                        known.title.as_str(),
+                        Some(known.year.as_str()).filter(|year| !year.is_empty()),
+                    ) == key
+            });
+            if known {
                 continue;
             }
             let item = explore.items.row_count();

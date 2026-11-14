@@ -89,6 +89,50 @@ impl MetaDetail {
     }
 }
 
+/// Whether a name reads like a file's name ("Film (2024) [1080p] [WEBRip]")
+/// and not like a title.
+pub fn is_release_name(name: &str) -> bool {
+    name.contains('[') || name.contains('(')
+}
+
+/// What two listings of the same film or series have in common: the
+/// kind, the name without what follows a bracket and without marks or
+/// case, and the year. The year comes from `year` (its first four
+/// digits) or, failing that, from a "(2024)" in the name.
+pub fn title_key(kind: &str, name: &str, year: Option<&str>) -> String {
+    let head = name.split(['(', '[']).next().map(str::trim).filter(|head| !head.is_empty()).unwrap_or(name);
+    let plain: String =
+        head.chars().filter(|c| c.is_alphanumeric()).flat_map(char::to_lowercase).collect();
+    let four = |text: &str| {
+        text.get(..4).filter(|year| year.bytes().all(|b| b.is_ascii_digit())).map(str::to_owned)
+    };
+    let year = year.and_then(four).or_else(|| {
+        name.split(['(', '[']).skip(1).find_map(|part| {
+            four(part).filter(|year| year.starts_with("19") || year.starts_with("20"))
+        })
+    });
+    format!("{kind}|{plain}|{}", year.unwrap_or_default())
+}
+
+/// Drops repeats of the same film or series from a list, keeping each
+/// one's first place. Of two listings, the one named like a title wins
+/// over the one named like a file.
+pub fn without_repeats(titles: Vec<MetaPreview>) -> Vec<MetaPreview> {
+    let mut kept: Vec<(String, MetaPreview)> = Vec::new();
+    for title in titles {
+        let key = title_key(&title.kind, &title.name, title.release_info.as_deref());
+        match kept.iter_mut().find(|(known, _)| *known == key) {
+            Some((_, first)) => {
+                if is_release_name(&first.name) && !is_release_name(&title.name) {
+                    *first = title;
+                }
+            }
+            None => kept.push((key, title)),
+        }
+    }
+    kept.into_iter().map(|(_, title)| title).collect()
+}
+
 /// Reads a catalogue answer. Entries that are missing an id, type or name
 /// are left out instead of failing the whole catalogue.
 pub fn parse_catalog(json: &str) -> Result<Vec<MetaPreview>> {

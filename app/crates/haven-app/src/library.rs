@@ -722,7 +722,10 @@ impl Library {
             Ok(metas) => {
                 // A shelf shows the start of a list; Explore shows it all.
                 let length = if board == Board::Servers { SERVER_SHELF_LENGTH } else { SHELF_LENGTH };
-                let metas: Vec<MetaPreview> = metas.into_iter().take(length).collect();
+                // A server that gathers catalogues lists the same film
+                // more than once: show each once.
+                let metas: Vec<MetaPreview> =
+                    haven_addons::without_repeats(metas).into_iter().take(length).collect();
                 items.set_vec(
                     metas
                         .iter()
