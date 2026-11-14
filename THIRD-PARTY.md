@@ -12,8 +12,19 @@ components that keep their own licences:
   by the user. Only an LGPL build may be shipped with Haven; never a GPL
   build (Homebrew's and most distributions' default builds are GPL once
   combined with a GPL FFmpeg).
-- **FFmpeg** (inside libmpv), LGPL-2.1-or-later when configured without
-  `--enable-gpl` and `--enable-nonfree`.
+- **FFmpeg** (inside libmpv), LGPL when configured without
+  `--enable-gpl` and `--enable-nonfree`: version 2.1-or-later, or version
+  3-or-later when built with `--enable-version3`.
+- **The Windows `libmpv-2.dll`** shipped with Haven is the LGPL build
+  `mpv-dev-lgpl-x86_64-20261113-git-fe753a7824` from
+  https://github.com/zhongfly/mpv-winbuild (build scripts based on
+  https://github.com/shinchiro/mpv-winbuild-cmake): mpv commit
+  `fe753a7824` (https://github.com/mpv-player/mpv) built with
+  `-Dgpl=false`, with FFmpeg commit `88c46fce2`
+  (https://github.com/FFmpeg/FFmpeg) and the other libraries it uses
+  linked inside the DLL. FFmpeg there is built with `--enable-version3`,
+  so it is under LGPL version 3. The source code of each is at the
+  addresses above.
 - **libmpv2** (Rust bindings to libmpv), LGPL-2.1.
 - **SQLite** (public domain), and the Rust crates listed in
   `app/Cargo.lock`, each under its own permissive licence (MIT, Apache-2.0,

@@ -31,18 +31,16 @@ jobs:
           workspaces: app
       - name: Test
         run: cargo test --workspace
-      # The player is built in only when an LGPL libmpv has been put in
-      # packaging/windows/libmpv (see the README there).
-      - name: Build release
+      # The player needs an LGPL libmpv: the script downloads the checked
+      # copy kept as a release of this repository, verifies its checksum
+      # and makes mpv.lib (see packaging/windows/libmpv/README.md).
+      - name: Fetch libmpv
         shell: pwsh
-        run: |
-          if (Test-Path packaging/windows/libmpv/mpv.lib) {
-            Write-Host "libmpv found: building with the player"
-            cargo build --release -p haven-app --features player
-          } else {
-            Write-Host "::warning::No libmpv in packaging/windows/libmpv: building without the player"
-            cargo build --release -p haven-app
-          }
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./packaging/windows/fetch-libmpv.ps1
+      - name: Build release with the player
+        run: cargo build --release -p haven-app --features player
       - name: Build installer
         shell: pwsh
         run: |
