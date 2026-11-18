@@ -391,6 +391,7 @@ pub(crate) fn read_detail(server: &Server, detail: &Value, episodes: &Value) -> 
         }),
         description: text(detail, "Overview"),
         release_info: text(detail, "ProductionYear"),
+        released: text(detail, "PremiereDate"),
         runtime: number(detail, "RunTimeTicks")
             .map(|ticks| (ticks / TICKS_PER_SECOND / 60.0).round() as u64)
             .filter(|minutes| *minutes > 0)

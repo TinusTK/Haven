@@ -8,6 +8,7 @@ use std::{
     sync::{Arc, atomic::AtomicU64},
 };
 
+mod calendar;
 mod cast;
 mod explore;
 mod offers;
@@ -165,6 +166,35 @@ enum DetailImage {
     Background,
 }
 
+/// Holds back work that only Home needs while Home is not showing, so
+/// it does not load the line or the servers for nothing.
+#[derive(Default)]
+struct Pause {
+    held: std::sync::atomic::AtomicBool,
+    wake: tokio::sync::Notify,
+}
+
+impl Pause {
+    fn set(&self, held: bool) {
+        self.held.store(held, std::sync::atomic::Ordering::Relaxed);
+        if !held {
+            self.wake.notify_waiters();
+        }
+    }
+
+    /// Returns once the work may go on.
+    async fn pass(&self) {
+        loop {
+            let woken = self.wake.notified();
+            if !self.held.load(std::sync::atomic::Ordering::Relaxed) {
+                return;
+            }
+            // Checked again now and then, in case a wake was missed.
+            let _ = tokio::time::timeout(std::time::Duration::from_secs(2), woken).await;
+        }
+    }
+}
+
 /// A counter that says which list of places to watch is current. Work
 /// off the UI thread reads it to stop when its list is no longer wanted.
 #[derive(Default)]
@@ -195,6 +225,9 @@ pub struct Library {
     search: ShelfSet,
     image_gate: Arc<Semaphore>,
     server_gate: Arc<Semaphore>,
+    calendar: calendar::Calendar,
+    /// Held while Home is not the page showing.
+    home_pause: Arc<Pause>,
     /// Where downloaded pictures are kept between runs.
     picture_cache: Arc<std::path::PathBuf>,
 
@@ -296,6 +329,8 @@ impl Library {
             search: ShelfSet::default(),
             image_gate: Arc::new(Semaphore::new(IMAGES_AT_ONCE)),
             server_gate: Arc::new(Semaphore::new(SERVER_SHELVES_AT_ONCE)),
+            home_pause: Arc::default(),
+            calendar: calendar::Calendar::default(),
             picture_cache: Arc::new(picture_cache),
             open: RefCell::default(),
             detail_generation: Cell::new(0),
@@ -378,12 +413,14 @@ impl Library {
         connect!(on_episode_selected, |id| |l: &Rc<Self>| l.open_episode(id.as_str()));
         connect!(on_filter_episodes, |words| |l: &Rc<Self>| l.filter_episodes(words.as_str()));
         connect!(on_play_stream, |row| |l: &Rc<Self>| l.play_stream(row));
+        connect!(on_home_showing_changed, |showing| |l: &Rc<Self>| l.home_pause.set(!showing));
         connect!(on_show_more_streams, |group| |l: &Rc<Self>| l.show_more_streams(group.as_str()));
         connect!(on_toggle_watchlist, | | |l: &Rc<Self>| l.toggle_watchlist());
         connect!(on_clear_cache, | | |l: &Rc<Self>| l.clear_cache());
         connect!(on_remove_continue, |poster| |l: &Rc<Self>| l.remove_continue(&poster));
         library.show_cache_size();
 
+        library.home_pause.set(!ui.get_home_showing());
         library.load_installed();
         library.install_free_catalogue();
         library.reload_home();
@@ -392,6 +429,7 @@ impl Library {
         library.start_tracking(ui);
         library.start_explore(ui);
         library.start_offers(ui);
+        library.start_calendar(ui);
         library.start_servers(ui);
         library.start_casting(ui);
         library.reload_catalog();
@@ -721,8 +759,13 @@ impl Library {
                 (self.addons.clone(), self.server_client.clone(), search.clone());
             let tmdb = self.tmdb();
             let gate = self.server_gate.clone();
+            // Home's shelves wait while another page is showing.
+            let pause = (board != Board::Search).then(|| self.home_pause.clone());
             self.tasks.spawn(async move {
                 let no_key = || "there is no TMDB key".to_owned();
+                if let Some(pause) = &pause {
+                    pause.pass().await;
+                }
                 // A media server's shelves take turns.
                 let _turn = match &plan.from {
                     ShelfFrom::Server { .. } => gate.acquire_owned().await.ok(),
@@ -806,7 +849,8 @@ impl Library {
                 );
                 for (item, meta) in metas.into_iter().enumerate() {
                     let Some(url) = meta.poster else { continue };
-                    self.fetch_image(url, POSTER_SIZE, move |library, pixels| {
+                    let pause = (board != Board::Search).then(|| self.home_pause.clone());
+                    self.fetch_image_for(pause, url, POSTER_SIZE, move |library, pixels| {
                         library.poster_loaded(board, generation, shelf, item, pixels);
                     });
                 }
@@ -839,9 +883,23 @@ impl Library {
         size: (u32, u32),
         then: impl FnOnce(&Rc<Library>, Pixels) + Send + 'static,
     ) {
+        self.fetch_image_for(None, url, size, then)
+    }
+
+    /// As `fetch_image`, waiting while `pause` is held.
+    fn fetch_image_for(
+        &self,
+        pause: Option<Arc<Pause>>,
+        url: String,
+        size: (u32, u32),
+        then: impl FnOnce(&Rc<Library>, Pixels) + Send + 'static,
+    ) {
         let (http, gate, cache) =
             (self.http.clone(), self.image_gate.clone(), self.picture_cache.clone());
         self.tasks.spawn(async move {
+            if let Some(pause) = &pause {
+                pause.pass().await;
+            }
             let Ok(_turn) = gate.acquire().await else { return };
             match download_image(&http, &cache, &url, size).await {
                 Ok(pixels) => on_ui(move |library| then(library, pixels)),
@@ -992,6 +1050,7 @@ impl Library {
             })
             .collect();
         self.watchlist.set_vec(rows);
+        self.refresh_calendar();
         for (item, url) in wanted {
             self.fetch_image(url, POSTER_SIZE, move |library, pixels| {
                 if generation != library.watchlist_generation.get() {

@@ -43,6 +43,9 @@ pub struct MetaDetail {
     pub cast: Vec<String>,
     #[serde(default, deserialize_with = "lenient::texts")]
     pub director: Vec<String>,
+    /// When the title itself first came out, as an ISO date.
+    #[serde(default, deserialize_with = "lenient::text_or_number")]
+    pub released: Option<String>,
     /// Episodes of a series (or the videos of a channel). Empty for films.
     #[serde(default)]
     pub videos: Vec<Video>,

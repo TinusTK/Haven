@@ -328,6 +328,7 @@ pub(crate) fn read_detail(server: &Server, detail: &Value, episodes: &Value) -> 
         background: text(item, "art").map(|art| image(server, &art)),
         description: text(item, "summary"),
         release_info: text(item, "year"),
+        released: text(item, "originallyAvailableAt"),
         // Plex counts in milliseconds.
         runtime: number(item, "duration")
             .map(|ms| (ms / 60_000.0).round() as u64)

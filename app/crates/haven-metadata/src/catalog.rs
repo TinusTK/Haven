@@ -307,6 +307,7 @@ pub(crate) fn read_title(record: &Value, series: bool, number: u64, images: &str
         background: image("backdrop_path", "w1280"),
         description: details.overview,
         release_info: year(text(record, "release_date").or_else(|| text(record, "first_air_date"))),
+        released: text(record, "release_date").or_else(|| text(record, "first_air_date")),
         runtime: details.runtime_minutes.map(|minutes| format!("{minutes} min")),
         rating: details.rating.map(|rating| format!("{rating:.1}")),
         genres: details.genres,
