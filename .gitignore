@@ -16,3 +16,6 @@ CLAUDE.md
 /app/packaging/windows/libmpv/*.lib
 /app/packaging/windows/libmpv/*.def
 /app/packaging/windows/libmpv/*.txt
+
+# libmpv for the Mac build is fetched, not kept in git
+/app/packaging/macos/libmpv/

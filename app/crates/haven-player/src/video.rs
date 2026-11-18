@@ -354,13 +354,16 @@ impl Video {
                 // Don't let mpv's renderer sleep on the UI thread.
                 init.set_property("video-timing-offset", "0")?;
                 // Addresses are opened as they are: no helper programs.
-                init.set_property("ytdl", "no")?;
-                init.set_property("sub-auto", "no")?;
-                init.set_property("audio-display", "no")?;
-                init.set_property("network-timeout", "30")?;
+                // A libmpv built without scripting (the one shipped on
+                // macOS) has no such option, which comes to the same;
+                // the rest are niceties an older libmpv may not know.
+                let _ = init.set_property("ytdl", "no");
+                let _ = init.set_property("sub-auto", "no");
+                let _ = init.set_property("audio-display", "no");
+                let _ = init.set_property("network-timeout", "30");
                 if cfg!(debug_assertions) {
-                    init.set_property("terminal", "yes")?;
-                    init.set_property("msg-level", "all=warn")?;
+                    let _ = init.set_property("terminal", "yes");
+                    let _ = init.set_property("msg-level", "all=warn");
                 }
                 Ok(())
             })

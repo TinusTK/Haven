@@ -25,6 +25,17 @@ components that keep their own licences:
   linked inside the DLL. FFmpeg there is built with `--enable-version3`,
   so it is under LGPL version 3. The source code of each is at the
   addresses above.
+- **mpv and FFmpeg on macOS** (`libmpv.dylib` and the libraries beside
+  it in `Haven.app/Contents/Frameworks`), from
+  `libmpv-libs_v0.7.3_macos-universal-video-full.tar.gz` of
+  https://github.com/media-kit/libmpv-darwin-build: mpv 0.36.0 built
+  with `-Dgpl=false` (LGPL-2.1 or later) and FFmpeg 6.0 built with
+  `--enable-version3` and without `--enable-gpl` (LGPL version 3).
+  With them, each a separate library under its own licence: libass
+  (ISC), FreeType (FreeType Licence), HarfBuzz (MIT), FriBidi
+  (LGPL-2.1), dav1d (BSD 2-Clause), Mbed TLS (Apache-2.0), libxml2
+  (MIT), libpng (libpng licence) and uchardet (MPL-1.1). The source of
+  each is with that project.
 - **Vulkan loader** (`vulkan-1.dll`, Windows only), from the official
   Vulkan Runtime 1.4.363.0 components published by LunarG
   (https://vulkan.lunarg.com). Copyright The Khronos Group Inc., LunarG,

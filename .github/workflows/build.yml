@@ -118,3 +118,45 @@ jobs:
           name: haven-linux-x64-deb
           path: app/target/debian/*.deb
           if-no-files-found: error
+
+  macos:
+    name: macOS
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin, x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app
+      - name: Test
+        run: cargo test --workspace
+      # The player needs an LGPL libmpv: the script downloads the checked
+      # copy kept as a release of this repository and verifies its
+      # checksum. It ships inside Haven.app beside the program.
+      - name: Fetch libmpv
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./packaging/macos/fetch-libmpv.sh
+      # Builds for Intel and Apple silicon, joins the two, and makes
+      # Haven.app and the disk image. Fails if the program is linked
+      # against a libmpv outside the app.
+      - name: Build Haven.app and the disk image
+        run: ./packaging/macos/bundle.sh universal
+      - name: Check Haven starts with its own libmpv
+        run: |
+          mkdir -p "$RUNNER_TEMP/home"
+          HOME="$RUNNER_TEMP/home" DYLD_PRINT_LIBRARIES=1 target/macos/Haven.app/Contents/MacOS/haven > "$RUNNER_TEMP/run.txt" 2>&1 &
+          sleep 15
+          kill $! 2>/dev/null || true
+          grep "Haven.app/Contents/Frameworks/libmpv.dylib" "$RUNNER_TEMP/run.txt" \
+            || { tail -30 "$RUNNER_TEMP/run.txt"; echo "Haven did not load its own libmpv"; exit 1; }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: haven-macos-dmg
+          path: app/target/macos/*.dmg
+          if-no-files-found: error
