@@ -622,7 +622,7 @@ component SourceCard inherits Rectangle {
                 border-radius: 19px;
                 background: touch.has-hover || focus.has-focus ? Theme.accent : Theme.selected;
                 Text {
-                    text: "▶";
+                    text: "▶\u{FE0E}";
                     color: touch.has-hover || focus.has-focus ? (Theme.dark ? #171a22 : #ffffff) : Theme.accent;
                     font-size: 14px;
                     horizontal-alignment: center;
@@ -1616,7 +1616,7 @@ component ChannelItem inherits Rectangle {
             vertical-alignment: center;
         }
         if root.can-play: Text {
-            text: "▶";
+            text: "▶\u{FE0E}";
             color: Theme.accent;
             font-size: 12px;
             vertical-alignment: center;
