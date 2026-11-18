@@ -160,3 +160,46 @@ jobs:
           name: haven-macos-dmg
           path: app/target/macos/*.dmg
           if-no-files-found: error
+
+  android:
+    name: Android
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app
+          key: android
+      - name: Install cargo-apk
+        run: cargo install cargo-apk --locked
+      # The APK is signed with Haven's own key, kept in the repository's
+      # secrets, so that a newer one installs over an older one. The
+      # build machine already has the Android SDK and NDK.
+      - name: Build the signed APK
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          CARGO_APK_RELEASE_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          if [ -z "$ANDROID_KEYSTORE_BASE64" ]; then echo "The signing key is not available to this run."; exit 1; fi
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/haven-release.jks"
+          export CARGO_APK_RELEASE_KEYSTORE="$RUNNER_TEMP/haven-release.jks"
+          cargo apk build -p haven-app --lib --release
+          rm -f "$RUNNER_TEMP/haven-release.jks"
+          version="$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json,sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"]=="haven-app"))')"
+          mkdir -p target/android
+          cp target/release/apk/haven_app.apk "target/android/Haven-$version-android.apk"
+      - name: Check the APK's signature
+        run: |
+          tools="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)"
+          "$tools/apksigner" verify --print-certs target/android/*.apk | grep "CN=Haven"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: haven-android-apk
+          path: app/target/android/*.apk
+          if-no-files-found: error
