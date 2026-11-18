@@ -1,4 +1,14 @@
 import { Button, ComboBox, LineEdit, ListView, Palette, ScrollView, Switch } from "std-widgets.slint";
+// Haven's own type: Figtree for text and Pixelify Sans for headings
+// (both SIL Open Font License). The files have the digits taken out of
+// their character maps, so numbers keep the system's own font.
+import "../../../assets/fonts/Figtree-Regular.ttf";
+import "../../../assets/fonts/Figtree-Medium.ttf";
+import "../../../assets/fonts/Figtree-SemiBold.ttf";
+import "../../../assets/fonts/Figtree-Bold.ttf";
+import "../../../assets/fonts/Figtree-ExtraBold.ttf";
+import "../../../assets/fonts/PixelifySans-Medium.ttf";
+import "../../../assets/fonts/PixelifySans-Bold.ttf";
 
 // One title in a shelf. `has-image` is false until its poster has loaded.
 export struct Poster {
@@ -222,6 +232,8 @@ export global Theme {
     out property <color> text: dark ? #eef0f6 : #171a22;
     out property <color> text-dim: dark ? #9aa1b3 : #5d6475;
     out property <color> accent: dark ? #f2c66d : #b9851a;
+    // The type headings are set in.
+    out property <string> heading-font: "Pixelify Sans";
 }
 
 component NavItem inherits Rectangle {
@@ -290,6 +302,7 @@ component EmptyPage inherits VerticalLayout {
 }
 
 component PageTitle inherits Text {
+    font-family: Theme.heading-font;
     color: Theme.text;
     font-size: 26px;
     font-weight: 700;
@@ -407,6 +420,7 @@ component ShelfRow inherits VerticalLayout {
         alignment: start;
         Text {
             text: root.shelf.title;
+            font-family: Theme.heading-font;
             color: Theme.text;
             font-size: 18px;
             font-weight: 600;
@@ -451,6 +465,7 @@ component ShelfRow inherits VerticalLayout {
 }
 
 component SectionTitle inherits Text {
+    font-family: Theme.heading-font;
     color: Theme.text;
     font-size: 18px;
     font-weight: 600;
@@ -2095,6 +2110,7 @@ export component AppWindow inherits Window {
     min-height: 520px;
     background: Theme.background;
     default-font-size: 14px;
+    default-font-family: "Figtree";
 
     init => {
         Palette.color-scheme = root.dark ? ColorScheme.dark : ColorScheme.light;
@@ -2131,6 +2147,7 @@ export component AppWindow inherits Window {
                     }
                     Text {
                         text: "Haven";
+                        font-family: Theme.heading-font;
                         color: Theme.text;
                         font-size: 26px;
                         font-weight: 700;
@@ -2218,6 +2235,7 @@ export component AppWindow inherits Window {
                     }
                     Text {
                         text: root.detail.title;
+                        font-family: Theme.heading-font;
                         color: Theme.text;
                         font-size: 36px;
                         font-weight: 800;
@@ -2354,6 +2372,7 @@ export component AppWindow inherits Window {
                             Text {
                                 horizontal-stretch: 1;
                                 text: detail-view.is-series && root.episode-label != "" ? root.episode-label : "Play from your sources";
+                                font-family: Theme.heading-font;
                                 color: Theme.text;
                                 font-size: 16px;
                                 font-weight: 700;
@@ -2613,6 +2632,7 @@ export component AppWindow inherits Window {
                     Text {
                         width: 170px;
                         text: root.calendar-title;
+                        font-family: Theme.heading-font;
                         color: Theme.text;
                         font-size: 18px;
                         font-weight: 700;
@@ -2714,6 +2734,7 @@ export component AppWindow inherits Window {
                             spacing: 8px;
                             Text {
                                 text: "This month";
+                                font-family: Theme.heading-font;
                                 color: Theme.text;
                                 font-size: 16px;
                                 font-weight: 700;

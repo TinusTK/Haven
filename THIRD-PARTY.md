@@ -30,6 +30,15 @@ components that keep their own licences:
   (https://vulkan.lunarg.com). Copyright The Khronos Group Inc., LunarG,
   Inc. and Valve Corporation; Apache-2.0 and MIT. Its licence file is
   installed beside it as `VulkanRT-License.txt`. libmpv needs it to load.
+- **Figtree** (Copyright 2022 The Figtree Project Authors,
+  https://github.com/erikdkennedy/figtree) and **Pixelify Sans**
+  (Copyright 2021 The Pixelify Sans Project Authors,
+  https://github.com/eifetx/Pixelify-Sans), the fonts built into Haven,
+  both under the SIL Open Font License 1.1. The copies in
+  `app/assets/fonts/` are modified: the digits 0 to 9 are taken out of
+  their character maps (with `strip_digits.py` there), so numbers show
+  in the system's font. Neither font declares a Reserved Font Name. The
+  licence texts are `OFL-Figtree.txt` and `OFL-PixelifySans.txt`.
 - **libmpv2** (Rust bindings to libmpv), LGPL-2.1.
 - **SQLite** (public domain), and the Rust crates listed in
   `app/Cargo.lock`, each under its own permissive licence (MIT, Apache-2.0,
@@ -38,7 +47,8 @@ components that keep their own licences:
 The Windows installer puts the licence texts in the `licenses` folder
 beside `haven.exe`: `LGPL-2.1.txt` (mpv), `LGPL-3.0.txt` with
 `GPL-3.0.txt`, which it refers to (FFmpeg as built here), and
-`VulkanRT-License.txt` beside `vulkan-1.dll`. `GPL-3.0.txt` is there only
+`VulkanRT-License.txt` beside `vulkan-1.dll`, and the two `OFL-…txt`
+files (the fonts). `GPL-3.0.txt` is there only
 because the LGPL version 3 text builds on it: nothing shipped with Haven
 is under the GPL.
 
