@@ -14,8 +14,22 @@ pub struct Latest {
     /// The release's page.
     pub page: String,
     /// The download for this kind of computer, if the release has one.
-    pub download: Option<String>,
+    pub download: Option<Download>,
 }
+
+/// A file of a release that installs Haven on this kind of computer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Download {
+    /// Its file name, such as "Haven-0.1.9-windows-x64-setup.exe".
+    pub name: String,
+    pub address: String,
+    /// Its SHA-256 in hex as GitHub states it, to check the copy by.
+    pub sha256: Option<String>,
+    pub size: u64,
+}
+
+/// Only files of Haven's own releases are ever fetched and run.
+const DOWNLOADS: &str = "https://github.com/TinusTK/Haven/releases/download/";
 
 /// The numbers of a version such as "v0.1.10" or "0.1.10-beta".
 fn numbers(version: &str) -> Vec<u64> {
@@ -60,11 +74,28 @@ pub fn parse_latest(answer: &Value, os: &str) -> Option<Latest> {
     }
     let download = ending(os).and_then(|ending| {
         answer.get("assets")?.as_array()?.iter().find_map(|asset| {
-            asset
-                .get("name")?
-                .as_str()
-                .filter(|name| name.to_lowercase().ends_with(ending))
-                .and_then(|_| web(asset.get("browser_download_url")?))
+            let name = asset.get("name")?.as_str()?;
+            // A plain file name: it becomes a file on this computer.
+            let plain = !name.is_empty()
+                && name.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'))
+                && !name.starts_with('.');
+            if !plain || !name.to_lowercase().ends_with(ending) {
+                return None;
+            }
+            let address = web(asset.get("browser_download_url")?)
+                .filter(|address| address.starts_with(DOWNLOADS))?;
+            let sha256 = asset
+                .get("digest")
+                .and_then(Value::as_str)
+                .and_then(|digest| digest.strip_prefix("sha256:"))
+                .filter(|hex| hex.len() == 64 && hex.chars().all(|c| c.is_ascii_hexdigit()))
+                .map(str::to_lowercase);
+            Some(Download {
+                name: name.to_owned(),
+                address,
+                sha256,
+                size: asset.get("size").and_then(Value::as_u64).unwrap_or(0),
+            })
         })
     });
     Some(Latest { version, page: web(answer.get("html_url")?)?, download })
@@ -89,23 +120,36 @@ mod tests {
 
     #[test]
     fn the_latest_release_is_read_with_the_download_for_this_computer() {
+        let base = "https://github.com/TinusTK/Haven/releases/download/v0.1.9/";
+        let sum = "9a6b8b49a8a3374019d73eab255bdb7cd489fbd1536a7f43d63cb81e675688d0";
         let answer = json!({
             "tag_name": "v0.1.9",
             "html_url": "https://github.com/TinusTK/Haven/releases/tag/v0.1.9",
             "assets": [
-                {"name": "Haven-0.1.9-windows-x64-setup.exe", "browser_download_url": "https://github.com/x/setup.exe"},
-                {"name": "haven_0.1.9-1_amd64.deb", "browser_download_url": "https://github.com/x/haven.deb"},
-                {"name": "odd", "browser_download_url": "file:///x"}
+                {"name": "Haven-0.1.9-windows-x64-setup.exe", "size": 44652553,
+                 "digest": format!("sha256:{sum}"),
+                 "browser_download_url": format!("{base}Haven-0.1.9-windows-x64-setup.exe")},
+                {"name": "haven_0.1.9-1_amd64.deb", "browser_download_url": format!("{base}haven_0.1.9-1_amd64.deb")},
+                {"name": "Haven-0.1.9.dmg", "browser_download_url": "https://elsewhere.example/Haven-0.1.9.dmg"}
             ]
         });
         let windows = parse_latest(&answer, "windows").unwrap();
         assert_eq!(windows.version, "0.1.9");
-        assert_eq!(windows.download.as_deref(), Some("https://github.com/x/setup.exe"));
-        assert_eq!(parse_latest(&answer, "linux").unwrap().download.as_deref(), Some("https://github.com/x/haven.deb"));
-        // No Mac download in this release: the page is still known.
+        let download = windows.download.unwrap();
+        assert_eq!(download.name, "Haven-0.1.9-windows-x64-setup.exe");
+        assert_eq!(download.sha256.as_deref(), Some(sum));
+        assert_eq!(download.size, 44652553);
+        let linux = parse_latest(&answer, "linux").unwrap().download.unwrap();
+        assert_eq!(linux.address, format!("{base}haven_0.1.9-1_amd64.deb"));
+        assert_eq!(linux.sha256, None);
+        // A file kept anywhere but Haven's own releases is not taken.
         let mac = parse_latest(&answer, "macos").unwrap();
         assert_eq!(mac.download, None);
         assert_eq!(mac.page, "https://github.com/TinusTK/Haven/releases/tag/v0.1.9");
+        // Nor one whose name is not a plain file name.
+        let odd = json!({"tag_name": "v0.1.9", "html_url": "https://github.com/x", "assets": [
+            {"name": "../evil-setup.exe", "browser_download_url": format!("{base}evil-setup.exe")}]});
+        assert_eq!(parse_latest(&odd, "windows").unwrap().download, None);
         assert_eq!(parse_latest(&json!({"message": "Not Found"}), "windows"), None);
         assert_eq!(parse_latest(&json!({"tag_name": "libmpv-win", "html_url": "https://x"}), "linux"), None);
     }

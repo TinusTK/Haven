@@ -19,6 +19,7 @@ path = "src/main.rs"
 player = ["haven-player/mpv"]
 
 [dependencies]
+ring = "0.17"
 serde_json.workspace = true
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 haven-addons.workspace = true

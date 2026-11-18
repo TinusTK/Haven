@@ -227,6 +227,7 @@ pub struct Library {
     image_gate: Arc<Semaphore>,
     server_gate: Arc<Semaphore>,
     calendar: calendar::Calendar,
+    updates: updates::Updates,
     /// Held while Home is not the page showing.
     home_pause: Arc<Pause>,
     /// Where downloaded pictures are kept between runs.
@@ -332,6 +333,7 @@ impl Library {
             server_gate: Arc::new(Semaphore::new(SERVER_SHELVES_AT_ONCE)),
             home_pause: Arc::default(),
             calendar: calendar::Calendar::default(),
+            updates: updates::Updates::default(),
             picture_cache: Arc::new(picture_cache),
             open: RefCell::default(),
             detail_generation: Cell::new(0),

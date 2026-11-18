@@ -304,6 +304,13 @@ fn act(ui: &AppWindow, action: &str) {
             ui.get_player_info().replace('\n', " / "),
         ),
         "clearcache" => ui.invoke_clear_cache(),
+        "installupdate" => ui.invoke_install_update(),
+        "updatestate" => eprintln!(
+            "haven-update: version=\"{}\" busy={} status=\"{}\"",
+            ui.get_update_version(),
+            ui.get_update_busy(),
+            ui.get_update_status()
+        ),
         "uncontinue" => {
             if let Some(card) = ui.get_continue_shelf().items.row_data(number as usize) {
                 ui.invoke_remove_continue(card);

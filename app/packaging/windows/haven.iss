@@ -48,4 +48,6 @@ Name: "{group}\Haven"; Filename: "{app}\haven.exe"
 Name: "{autodesktop}\Haven"; Filename: "{app}\haven.exe"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\haven.exe"; Description: "{cm:LaunchProgram,Haven}"; Flags: nowait postinstall skipifsilent
+; Not skipped in a silent install: that is how Haven starts again after
+; it has updated itself (it runs this installer with /SILENT).
+Filename: "{app}\haven.exe"; Description: "{cm:LaunchProgram,Haven}"; Flags: nowait postinstall

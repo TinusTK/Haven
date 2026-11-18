@@ -2067,10 +2067,13 @@ export component AppWindow inherits Window {
     // A newer Haven: its version ("" if none is known), where to get
     // it, and what the last look found, in words.
     in property <string> update-version;
-    in property <string> update-link;
+    // A download or installation is under way.
+    in-out property <bool> update-busy;
     in property <string> update-status;
     in-out property <bool> update-check-at-start: true;
     callback check-updates();
+    // Download the newer Haven and install it.
+    callback install-update();
     callback set-update-check(bool);
     in property <string> calendar-title;
     in property <[CalendarDay]> calendar-days;
@@ -2184,13 +2187,14 @@ export component AppWindow inherits Window {
                         border-width: 1px;
                         border-color: Theme.accent;
                         accessible-role: button;
-                        accessible-label: "Get Haven " + root.update-version;
+                        accessible-label: "Install Haven " + root.update-version;
                         update-touch := TouchArea {
                             mouse-cursor: pointer;
-                            clicked => { root.open-link(root.update-link); }
+                            enabled: !root.update-busy;
+                            clicked => { root.install-update(); }
                         }
                         Text {
-                            text: "Update ready  ·  " + root.update-version;
+                            text: root.update-busy ? "Updating…" : "Install update  ·  " + root.update-version;
                             color: update-touch.has-hover ? (Theme.dark ? #171a22 : #ffffff) : Theme.accent;
                             font-size: 13px;
                             font-weight: 600;
@@ -3648,12 +3652,14 @@ export component AppWindow inherits Window {
                                 HorizontalLayout {
                                     spacing: 8px;
                                     if root.update-version != "": Button {
-                                        text: "Get Haven " + root.update-version;
+                                        text: "Install Haven " + root.update-version;
                                         primary: true;
-                                        clicked => { root.open-link(root.update-link); }
+                                        enabled: !root.update-busy;
+                                        clicked => { root.install-update(); }
                                     }
                                     Button {
                                         text: "Check for updates";
+                                        enabled: !root.update-busy;
                                         clicked => { root.check-updates(); }
                                     }
                                 }
