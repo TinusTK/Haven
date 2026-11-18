@@ -5,7 +5,7 @@ edition.workspace = true
 publish.workspace = true
 
 description = "Haven: a media player for Jellyfin, Plex, Emby and IPTV, and a film and TV show tracker"
-license-file = "../../../LICENSE"
+license = "GPL-3.0-only"
 authors = ["TinusTK"]
 
 [[bin]]
@@ -55,7 +55,7 @@ winresource = "0.1"
 [package.metadata.deb]
 name = "haven"
 maintainer = "TinusTK"
-copyright = "2026, TinusTK. All rights reserved."
+copyright = "2026, TinusTK. Licensed under the GNU GPL version 3."
 extended-description = """\
 A media player for your own Jellyfin, Emby and Plex servers and for IPTV \
 (live TV and radio from M3U playlists and Xtream Codes accounts), and a \

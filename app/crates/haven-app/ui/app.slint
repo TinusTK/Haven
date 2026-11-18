@@ -1975,6 +1975,8 @@ export component AppWindow inherits Window {
     in property <string> cast-status;
 
     in-out property <string> keys-tmdb;
+    // This copy of Haven has its own TMDB key, so one of yours is optional.
+    in property <bool> tmdb-built-in;
     in-out property <string> keys-trakt-id;
     in-out property <string> keys-trakt-secret;
     in-out property <string> keys-simkl-id;
@@ -3778,7 +3780,10 @@ export component AppWindow inherits Window {
                     Rectangle { height: 8px; }
                     SectionTitle { text: "Keys"; }
                     Text {
-                        text: "Your own keys for outside services. A TMDB key turns on the built-in catalogue (shelves on Home, the TMDB source in Explore, posters and pictures) and fills in missing details. It is free from themoviedb.org: either the API key or the API read access token works. Trakt and Simkl keys let you connect those accounts under Tracking.";
+                        text: (root.tmdb-built-in
+                            ? "Your own keys for outside services. Haven comes with its own TMDB key for the catalogue (shelves on Home, the TMDB source in Explore, posters and pictures), so you can leave the TMDB box empty, or put your own key in to use that instead. A key is free from themoviedb.org: either the API key or the API read access token works."
+                            : "Your own keys for outside services. A TMDB key turns on the built-in catalogue (shelves on Home, the TMDB source in Explore, posters and pictures) and fills in missing details. It is free from themoviedb.org: either the API key or the API read access token works.")
+                            + " Trakt and Simkl keys let you connect those accounts under Tracking.";
                         color: Theme.text-dim;
                         wrap: word-wrap;
                     }
@@ -3948,7 +3953,7 @@ export component AppWindow inherits Window {
                         }
                     }
                     Text {
-                        text: "Haven © 2026 TinusTK. All rights reserved.\nMade with Slint. Video playback by mpv (libmpv, LGPL).\nThis product uses the TMDB API but is not endorsed or certified by TMDB.";
+                        text: "Haven © 2026 TinusTK. Free software under the GNU GPL version 3.\nMade with Slint. Video playback by mpv (libmpv, LGPL).\nThis product uses the TMDB API but is not endorsed or certified by TMDB.";
                         color: Theme.text-dim;
                         font-size: 12px;
                         wrap: word-wrap;

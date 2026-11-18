@@ -16,3 +16,16 @@ Windows, macOS, Linux, Android and iOS.
 
 Each platform's folder has a README saying how that version is built.
 Downloads are on the Releases page.
+
+## Licence
+
+Copyright © 2026 TinusTK.
+
+Haven is free software: you can redistribute it and/or modify it under the
+terms of the GNU General Public License version 3, as published by the Free
+Software Foundation. It is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See `LICENSE` for the
+full text, and `THIRD-PARTY.md` for the components Haven is built with.
+
+This product uses the TMDB API but is not endorsed or certified by TMDB.

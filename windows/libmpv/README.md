@@ -31,7 +31,8 @@ is built with `--enable-version3`, so it is LGPL version 3). That project
 keeps releases for 30 days only, which is why a copy is kept as a release
 of Haven's repository.
 
-Haven is proprietary, so a GPL build must never be shipped with it. Most
+Haven ships only LGPL builds of libmpv, so the library stays replaceable
+and the licence notes in `THIRD-PARTY.md` stay true. Most
 ready-made Windows builds of mpv are GPL (the archives without `lgpl` in
 the name are): only ever use an LGPL one.
 

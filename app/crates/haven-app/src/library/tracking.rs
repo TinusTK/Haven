@@ -30,6 +30,7 @@ impl Library {
     pub(super) fn start_tracking(self: &Rc<Self>, ui: &AppWindow) {
         let keys = Keys::load(&self.store).unwrap_or_default();
         ui.set_keys_tmdb(keys.tmdb.as_str().into());
+        ui.set_tmdb_built_in(option_env!("HAVEN_TMDB_API_KEY").is_some_and(|key| !key.trim().is_empty()));
         ui.set_keys_trakt_id(keys.trakt_id.as_str().into());
         ui.set_keys_trakt_secret(keys.trakt_secret.as_str().into());
         ui.set_keys_simkl_id(keys.simkl_id.as_str().into());

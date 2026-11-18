@@ -1,6 +1,7 @@
 # Third-party components
 
-Haven is proprietary (see LICENSE). It is built with, and ships beside,
+Haven is free software, copyright © 2026 TinusTK, licensed under the GNU
+General Public License version 3 (see LICENSE). It is built with, and ships beside,
 components that keep their own licences:
 
 - **Slint** (user interface), used under the Slint Royalty-free Desktop,
