@@ -405,7 +405,11 @@ fn act(ui: &AppWindow, action: &str) {
                         if row.playable { "▶ " } else { "" },
                         row.name,
                         row.source,
-                        row.detail,
+                        [row.detail.as_str(), row.detail2.as_str()]
+                            .into_iter()
+                            .filter(|part| !part.is_empty())
+                            .collect::<Vec<_>>()
+                            .join(" · "),
                         row.kind
                     ))
                     .collect::<Vec<_>>()

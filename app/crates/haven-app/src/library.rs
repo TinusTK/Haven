@@ -206,6 +206,8 @@ pub struct Library {
     streams: Rc<VecModel<StreamRow>>,
     /// Goes up whenever streams are asked for again.
     stream_generation: Epoch,
+    /// How many places to watch show per provider, where more than ten.
+    stream_limits: RefCell<std::collections::HashMap<String, i32>>,
     /// Add-ons that have not answered the current stream request yet.
     streams_pending: Cell<usize>,
     /// What is behind each row of `streams`.
@@ -301,6 +303,7 @@ impl Library {
             episodes: Rc::default(),
             streams: Rc::default(),
             stream_generation: Epoch::default(),
+            stream_limits: RefCell::default(),
             streams_pending: Cell::new(0),
             stream_sources: RefCell::default(),
             server_rows: Cell::new(0),
@@ -375,6 +378,7 @@ impl Library {
         connect!(on_episode_selected, |id| |l: &Rc<Self>| l.open_episode(id.as_str()));
         connect!(on_filter_episodes, |words| |l: &Rc<Self>| l.filter_episodes(words.as_str()));
         connect!(on_play_stream, |row| |l: &Rc<Self>| l.play_stream(row));
+        connect!(on_show_more_streams, |group| |l: &Rc<Self>| l.show_more_streams(group.as_str()));
         connect!(on_toggle_watchlist, | | |l: &Rc<Self>| l.toggle_watchlist());
         connect!(on_clear_cache, | | |l: &Rc<Self>| l.clear_cache());
         connect!(on_remove_continue, |poster| |l: &Rc<Self>| l.remove_continue(&poster));

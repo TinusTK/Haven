@@ -16,7 +16,7 @@ use crate::StreamRow;
 /// The heading over the list.
 pub(super) const HEADING: &str = "Play from your sources";
 
-/// Places to watch shown at first, and added by "Show more".
+/// Places to watch shown per provider at first, and added by "Show more".
 const STREAMS_SHOWN: i32 = 10;
 
 /// What is behind one row of the list.
@@ -203,9 +203,6 @@ impl Library {
             // Its provider: the add-on a server got it from, if the
             // server says; else the server or add-on that answered.
             row.group = stream.provider.as_deref().unwrap_or(source).into();
-            // Its place among its provider's rows: the list shows a
-            // few at a time.
-            row.group_at = self.streams.iter().filter(|known| known.group == row.group).count() as i32;
             // Only plain web addresses reach the player.
             let address = stream
                 .url
@@ -215,21 +212,63 @@ impl Library {
                 .map(str::to_owned);
             row.playable = address.is_some();
             let source = StreamSource { address, server_item: server_item.clone() };
+            // Your own servers stay above the add-ons, and each
+            // provider's rows stay together under its heading.
+            let servers = self.server_rows.get();
+            let (from, to) =
+                if server_item.is_some() { (0, servers) } else { (servers, self.streams.row_count()) };
+            let at = (from..to)
+                .rev()
+                .find(|&at| self.streams.row_data(at).is_some_and(|known| known.group == row.group))
+                .map_or(to, |last| last + 1);
+            self.stream_sources.borrow_mut().insert(at, source);
+            self.streams.insert(at, row);
             if server_item.is_some() {
-                // Your own servers stay above the add-ons.
-                let at = self.server_rows.get();
-                self.stream_sources.borrow_mut().insert(at, source);
-                self.streams.insert(at, row);
-                self.server_rows.set(at + 1);
-            } else {
-                self.stream_sources.borrow_mut().push(source);
-                self.streams.push(row);
+                self.server_rows.set(servers + 1);
             }
         }
+        self.mark_stream_rows();
         self.show_stream_groups();
         // The next episode plays from the same place as the last, as
         // soon as the row of the same name shows.
         self.autoplay_from(source, false);
+    }
+
+    /// Works out, for every row, its place under its provider's
+    /// heading: which rows show (ten per provider, more on asking),
+    /// which carries the heading and which the "Show more".
+    fn mark_stream_rows(&self) {
+        let mut counts: std::collections::HashMap<slint::SharedString, i32> = Default::default();
+        for row in self.streams.iter() {
+            *counts.entry(row.group).or_default() += 1;
+        }
+        let limits = self.stream_limits.borrow();
+        let mut places: std::collections::HashMap<slint::SharedString, i32> = Default::default();
+        for at in 0..self.streams.row_count() {
+            let Some(mut row) = self.streams.row_data(at) else { continue };
+            let place = places.entry(row.group.clone()).or_default();
+            let count = counts.get(&row.group).copied().unwrap_or(0);
+            let limit = limits.get(row.group.as_str()).copied().unwrap_or(STREAMS_SHOWN);
+            let marked = StreamRow {
+                group_at: *place,
+                shown: *place < limit,
+                heading: if *place == 0 { format!("{}  ·  {count}", row.group).into() } else { "".into() },
+                more: if *place == limit - 1 && count > limit { count - limit } else { 0 },
+                ..row.clone()
+            };
+            *place += 1;
+            if marked != row {
+                row = marked;
+                self.streams.set_row_data(at, row);
+            }
+        }
+    }
+
+    /// Shows ten more of a provider's places to watch.
+    pub(super) fn show_more_streams(&self, group: &str) {
+        *self.stream_limits.borrow_mut().entry(group.to_owned()).or_insert(STREAMS_SHOWN) +=
+            STREAMS_SHOWN;
+        self.mark_stream_rows();
     }
 
     /// Plays the next episode from `source` if that is where the last
@@ -303,7 +342,7 @@ impl Library {
                 ui.set_stream_group("".into());
             }
             if self.streams.row_count() == 0 {
-                ui.set_stream_limit(STREAMS_SHOWN);
+                self.stream_limits.borrow_mut().clear();
             }
             ui.set_stream_groups(slint::ModelRc::new(slint::VecModel::from(groups)));
         }
@@ -432,13 +471,33 @@ fn stream_row(source: &str, stream: &Stream) -> Option<StreamRow> {
     };
     // Add-ons often spread these over several lines; a row has one.
     let one_line = |text: &str| text.split_whitespace().collect::<Vec<_>>().join(" ");
+    // The detail goes on two lines: the release's name, then its facts.
+    let detail = one_line(stream.details().unwrap_or_default());
+    let parts: Vec<&str> = detail.split(" · ").collect();
+    let mut first = String::new();
+    let mut used = 0;
+    for part in &parts {
+        if used > 0 && first.chars().count() + part.chars().count() > 46 {
+            break;
+        }
+        if used > 0 {
+            first.push_str(" · ");
+        }
+        first.push_str(part);
+        used += 1;
+    }
+    let rest = parts[used..].join(" · ");
     Some(StreamRow {
         source: source.into(),
         name: one_line(stream.name.as_deref().unwrap_or("Stream")).into(),
-        detail: one_line(stream.details().unwrap_or_default()).into(),
+        detail: first.into(),
+        detail2: rest.into(),
         kind: kind.into(),
         playable: false,
         group: source.into(),
         group_at: 0,
+        shown: true,
+        heading: "".into(),
+        more: 0,
     })
 }
