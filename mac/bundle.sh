@@ -14,9 +14,11 @@
 #       the answer to it. The profile is made once with
 #       `xcrun notarytool store-credentials <name> --apple-id <Apple ID>
 #       --team-id <team>`, which asks for an app-specific password.
+#   HAVEN_NOTARY_KEY=<AuthKey .p8 file>, HAVEN_NOTARY_KEY_ID, HAVEN_NOTARY_ISSUER
+#       the same with an App Store Connect API key instead of a stored
+#       profile (how the CI build does it, from the repository's secrets).
 #   HAVEN_NOTARY_APPLE_ID, HAVEN_NOTARY_PASSWORD, HAVEN_NOTARY_TEAM_ID
-#       the same without a stored profile (how the CI build is given
-#       them, from the repository's secrets).
+#       or with an Apple ID and an app-specific password.
 # Without them the app is signed "ad hoc": macOS warns the first time it
 # is opened, and the user allows it with right-click > Open.
 set -euo pipefail
@@ -88,6 +90,10 @@ if [ -n "${HAVEN_SIGN_IDENTITY:-}" ]; then
   codesign --force --timestamp --sign "$HAVEN_SIGN_IDENTITY" "$dmg"
   if [ -n "${HAVEN_NOTARY_PROFILE:-}" ]; then
     xcrun notarytool submit "$dmg" --keychain-profile "$HAVEN_NOTARY_PROFILE" --wait
+    xcrun stapler staple "$dmg"
+  elif [ -n "${HAVEN_NOTARY_KEY:-}" ] && [ -n "${HAVEN_NOTARY_KEY_ID:-}" ]; then
+    xcrun notarytool submit "$dmg" --key "$HAVEN_NOTARY_KEY" --key-id "$HAVEN_NOTARY_KEY_ID" \
+      --issuer "${HAVEN_NOTARY_ISSUER:-}" --wait
     xcrun stapler staple "$dmg"
   elif [ -n "${HAVEN_NOTARY_APPLE_ID:-}" ] && [ -n "${HAVEN_NOTARY_PASSWORD:-}" ]; then
     xcrun notarytool submit "$dmg" --apple-id "$HAVEN_NOTARY_APPLE_ID" \

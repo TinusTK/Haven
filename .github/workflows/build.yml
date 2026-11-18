@@ -147,8 +147,11 @@ jobs:
       # signed "ad hoc" and macOS warns the first time it is opened.
       - name: Set up signing
         env:
-          MACOS_CERT_P12_BASE64: ${{ secrets.MACOS_CERT_P12_BASE64 }}
-          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+          # The same names, and the same values, as the developer's
+          # other Mac app uses: a Developer ID certificate belongs to
+          # the developer, not to one app.
+          MACOS_CERT_P12_BASE64: ${{ secrets.APPLE_CERTIFICATE }}
+          MACOS_CERT_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
         run: |
           if [ -z "$MACOS_CERT_P12_BASE64" ]; then
             echo "No certificate in the secrets: this build is signed ad hoc."
@@ -172,10 +175,17 @@ jobs:
       # against a libmpv outside the app.
       - name: Build Haven.app and the disk image
         env:
-          HAVEN_NOTARY_APPLE_ID: ${{ secrets.MACOS_NOTARY_APPLE_ID }}
-          HAVEN_NOTARY_PASSWORD: ${{ secrets.MACOS_NOTARY_PASSWORD }}
-          HAVEN_NOTARY_TEAM_ID: ${{ secrets.MACOS_NOTARY_TEAM_ID }}
-        run: ../mac/bundle.sh universal
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+          HAVEN_NOTARY_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          HAVEN_NOTARY_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: |
+          # The App Store Connect key Apple notarises with, as a file.
+          if [ -n "$APPLE_API_KEY_P8" ]; then
+            printf '%s\n' "$APPLE_API_KEY_P8" > "$RUNNER_TEMP/notary-key.p8"
+            export HAVEN_NOTARY_KEY="$RUNNER_TEMP/notary-key.p8"
+          fi
+          ../mac/bundle.sh universal
+          rm -f "$RUNNER_TEMP/notary-key.p8"
       # lsof, not DYLD_PRINT_LIBRARIES: a signed app ignores that.
       - name: Check Haven starts with its own libmpv
         run: |
