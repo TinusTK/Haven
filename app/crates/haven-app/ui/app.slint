@@ -271,9 +271,10 @@ component NavItem inherits Rectangle {
         x: 16px;
         width: parent.width - 28px;
         text: root.label;
+        font-family: Theme.heading-font;
         color: selected ? Theme.text : Theme.text-dim;
-        font-size: 14px;
-        font-weight: selected ? 600 : 400;
+        font-size: 15px;
+        font-weight: selected ? 700 : 500;
         vertical-alignment: center;
         overflow: elide;
     }

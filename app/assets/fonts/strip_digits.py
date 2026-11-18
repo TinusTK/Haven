@@ -1,5 +1,8 @@
 """Takes the digits 0-9 out of a TrueType font's character map, so text
-set in it shows numbers in the fallback font. Usage: strip_digits.py in.ttf out.ttf"""
+set in it shows numbers in the fallback font. With --no-liga it also
+switches off the font's joined letters (Pixelify Sans joins "fi" into a
+shape that reads as another letter).
+Usage: strip_digits.py in.ttf out.ttf [--no-liga]"""
 import struct, sys
 
 def checksum(data):
@@ -99,6 +102,9 @@ def main(src, dst):
                 chars.pop(cp, None)
             table[1] = write_cmap(chars)
             assert read_cmap(table[1]) == chars
+        if table[0] == b"GSUB" and "--no-liga" in sys.argv:
+            # A feature no program asks for is never applied.
+            table[1] = table[1].replace(b"liga", b"zzzz")
         if table[0] == b"head":
             table[1] = table[1][:8] + b"\0\0\0\0" + table[1][12:]
     n = len(tables)
