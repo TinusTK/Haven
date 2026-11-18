@@ -179,6 +179,39 @@ pub(crate) fn best_match<'a>(wanted: &Wanted, candidates: &'a [Candidate]) -> Op
     })
 }
 
+/// A server that gathers titles from add-ons (Trellis) names an item by
+/// what the add-on calls it: its id spells `<m or s>|<the add-on's id>|
+/// <type>` in hex. Its parts, if `item` is such an id.
+fn gathered_parts(item: &str) -> Option<(String, String, String)> {
+    if item.len() % 2 != 0 || !item.is_ascii() {
+        return None;
+    }
+    let bytes: Option<Vec<u8>> =
+        (0..item.len()).step_by(2).map(|at| u8::from_str_radix(&item[at..at + 2], 16).ok()).collect();
+    let spelt = String::from_utf8(bytes?).ok()?;
+    let mut parts = spelt.split('|');
+    let (kind, id, form) = (parts.next()?, parts.next()?, parts.next()?);
+    (matches!(kind, "m" | "s") && !id.is_empty() && parts.next().is_none())
+        .then(|| (kind.to_owned(), id.to_owned(), form.to_owned()))
+}
+
+/// True for a gathered title that is not named by its IMDb id (a TMDB
+/// or Kitsu number, say). Add-ons that find streams go by IMDb ids, so
+/// asked for under that name such a title has no sources.
+pub fn wants_imdb(item: &str) -> bool {
+    gathered_parts(item).is_some_and(|(_, id, _)| !id.starts_with("tt"))
+}
+
+/// The same gathered title named by its IMDb id; `None` if `item` is
+/// not a gathered title's id or already goes by one.
+pub fn by_imdb(item: &str, imdb: &str) -> Option<String> {
+    let (kind, id, form) = gathered_parts(item)?;
+    if id.starts_with("tt") || !imdb.starts_with("tt") {
+        return None;
+    }
+    Some(format!("{kind}|{imdb}|{form}").bytes().map(|byte| format!("{byte:02x}")).collect())
+}
+
 /// The id Haven uses for an item on a server.
 pub fn title_id(server: i64, item: &str) -> String {
     format!("srv:{server}:{item}")

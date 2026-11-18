@@ -253,10 +253,17 @@ pub async fn find(client: &Client, server: &Server, wanted: &Wanted) -> Result<O
     );
     let candidates = read_candidates(&get(client, server, &path).await?);
     let Some(found) = best_match(wanted, &candidates) else { return Ok(None) };
+    // A gathered title listed under another number (TMDB, say) is asked
+    // for under its IMDb id, which is what finds its streams.
+    let found = wanted
+        .imdb
+        .as_deref()
+        .and_then(|imdb| crate::by_imdb(&found.id, imdb))
+        .unwrap_or_else(|| found.id.clone());
     let Some((season, episode)) = wanted.episode else {
-        return Ok((!wanted.series).then(|| found.id.clone()));
+        return Ok((!wanted.series).then_some(found));
     };
-    let path = format!("/Shows/{}/Episodes?UserId={}", query(&found.id), server.user_id);
+    let path = format!("/Shows/{}/Episodes?UserId={}", query(&found), server.user_id);
     Ok(read_episode(&get(client, server, &path).await?, season, episode))
 }
 
@@ -423,6 +430,10 @@ const MOST_SOURCES: usize = 3000;
 /// How long a list of sources may take in all, and between two parts.
 const LIST_WAIT: std::time::Duration = std::time::Duration::from_secs(900);
 const PART_WAIT: std::time::Duration = std::time::Duration::from_secs(45);
+/// How often an empty list of sources is asked for again, and how
+/// long is waited before each.
+const EMPTY_RETRIES: u32 = 2;
+const EMPTY_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// Every way the server offers to play the film or episode: each version
 /// of the file it holds, and, on servers that gather streams from
@@ -481,7 +492,15 @@ pub async fn streams_live(
     });
     let mut listed = 0usize;
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-    let asked: Result<()> = async {
+    let mut asked: Result<()> = Ok(());
+    // A server that gathers streams from elsewhere answers with what it
+    // has so far, which can be nothing; asked again a little later it
+    // has more. So an empty list is asked for again, twice at most.
+    for attempt in 0..=EMPTY_RETRIES {
+        if attempt > 0 {
+            tokio::time::sleep(EMPTY_WAIT).await;
+        }
+        asked = async {
         let mut request = client
             .http
             .post(haven_core::http::web_url(&url).map_err(|_| Error::InvalidAddress(url.clone()))?)
@@ -528,16 +547,20 @@ pub async fn streams_live(
             let _ = found(read_sources(server, item, &waiting, listed > 1));
         }
         Ok(())
-    }
-    .await;
-    haven_core::diag::note(&format!(
-        "{} sources: playback information {}",
-        server.name,
-        match &asked {
-            Ok(()) => format!("lists {listed}"),
-            Err(err) => format!("lists {listed}, then failed ({err})"),
         }
-    ));
+        .await;
+        haven_core::diag::note(&format!(
+            "{} sources: playback information {}",
+            server.name,
+            match &asked {
+                Ok(()) => format!("lists {listed}"),
+                Err(err) => format!("lists {listed}, then failed ({err})"),
+            }
+        ));
+        if listed > 0 || asked.is_err() {
+            break;
+        }
+    }
     if listed > 0 {
         return Ok(());
     }
@@ -556,6 +579,12 @@ pub async fn streams_live(
                 server.name,
                 describe_sources(&detail)
             ));
+            // An item that says outright it has no sources has none
+            // (a gathering server found nothing): only a server that
+            // does not speak of sources at all gets its file offered.
+            if detail.get("MediaSources").is_some() && list(&detail, "MediaSources").is_empty() {
+                return Ok(());
+            }
             let _ = found(read_streams(server, item, &detail));
             Ok(())
         }
@@ -891,6 +920,21 @@ mod tests {
         let cut = answer.find("\"Id\":\"b\"").unwrap();
         assert_eq!(ids(&early.feed(&answer.as_bytes()[..cut])), ["a"]);
         assert!(!early.done);
+    }
+
+    #[test]
+    fn a_gathered_title_can_be_named_by_its_imdb_id() {
+        let hex = |text: &str| text.bytes().map(|b| format!("{b:02x}")).collect::<String>();
+        let by_tmdb = hex("m|tmdb:603|movie");
+        assert!(crate::wants_imdb(&by_tmdb));
+        assert_eq!(crate::by_imdb(&by_tmdb, "tt0133093"), Some(hex("m|tt0133093|movie")));
+        assert_eq!(crate::by_imdb(&hex("s|kitsu:12|series"), "tt0944947"), Some(hex("s|tt0944947|series")));
+        // Already by its IMDb id, or not a gathered title at all.
+        assert!(!crate::wants_imdb(&hex("m|tt0133093|movie")));
+        assert_eq!(crate::by_imdb(&hex("m|tt0133093|movie"), "tt0133093"), None);
+        assert!(!crate::wants_imdb("f27caa37e5142225cceded48f6553502"));
+        assert_eq!(crate::by_imdb("f27caa37e5142225cceded48f6553502", "tt0133093"), None);
+        assert_eq!(crate::by_imdb(&by_tmdb, "603"), None);
     }
 
     #[test]

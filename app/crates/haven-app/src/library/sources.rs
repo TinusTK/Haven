@@ -88,6 +88,30 @@ impl Library {
         // A series can only be matched down to an episode.
         let can_match = !wanted.name.trim().is_empty() && (!wanted.series || wanted.episode.is_some());
         let origin = self.server_item(video_id);
+        // A title a server gathered under a TMDB or other number has no
+        // sources under that name: it is looked up again, by its IMDb id.
+        let renamed = self
+            .open
+            .borrow()
+            .as_ref()
+            .and_then(|open| split_id(&open.id).map(|(_, item)| haven_servers::wants_imdb(item)))
+            .unwrap_or(false);
+        // Where an IMDb id can be looked up by name when none is known:
+        // the catalogues of this kind that can be searched.
+        let lookups: Vec<(String, haven_addons::Catalog)> = self
+            .installed
+            .borrow()
+            .iter()
+            .flat_map(|addon| {
+                addon
+                    .manifest
+                    .catalogs
+                    .iter()
+                    .filter(|catalog| catalog.kind == kind && catalog.searchable())
+                    .map(|catalog| (addon.url.clone(), catalog.clone()))
+                    .collect::<Vec<_>>()
+            })
+            .collect();
         let mut pending = 0;
 
         for server in self.servers.borrow().iter().cloned() {
@@ -95,21 +119,27 @@ impl Library {
             // the others are asked whether they have the same title.
             let own = origin
                 .as_ref()
-                .filter(|(from, _)| from.id == server.id)
+                .filter(|(from, _)| from.id == server.id && !renamed)
                 .map(|(_, item)| item.clone());
             let offline = self.server_states.borrow().get(&server.id) == Some(&2);
             if own.is_none() && (!can_match || offline) {
                 continue;
             }
             pending += 1;
-            let (client, wanted) = (self.server_client.clone(), wanted.clone());
+            let (client, mut wanted) = (self.server_client.clone(), wanted.clone());
+            let (addons, lookups) = (self.addons.clone(), lookups.clone());
             let current = self.stream_generation.shared();
             self.tasks.spawn(async move {
                 let source = format!("{} ({})", server.name, server.kind.label());
                 let found = async {
                     let item = match own {
                         Some(item) => Some(item),
-                        None => client.find(&server, &wanted).await?,
+                        None => {
+                            if wanted.imdb.is_none() {
+                                wanted.imdb = imdb_by_name(&addons, &lookups, &wanted).await;
+                            }
+                            client.find(&server, &wanted).await?
+                        }
                     };
                     let Some(item) = item else { return Ok(None) };
                     let id = title_id(server.id, &item);
@@ -508,4 +538,38 @@ fn stream_row(source: &str, stream: &Stream) -> Option<StreamRow> {
         heading: "".into(),
         more: 0,
     })
+}
+
+/// Looks a title's IMDb id up by its name and year in the catalogues
+/// that can be searched (the built-in free one, for a start).
+async fn imdb_by_name(
+    addons: &haven_addons::Client,
+    lookups: &[(String, haven_addons::Catalog)],
+    wanted: &Wanted,
+) -> Option<String> {
+    let plain = |name: &str| {
+        name.chars().filter(|c| c.is_alphanumeric()).flat_map(char::to_lowercase).collect::<String>()
+    };
+    let year = |text: &Option<String>| {
+        text.as_deref().and_then(|text| text.get(..4)).and_then(|year| year.parse::<u32>().ok())
+    };
+    let name = plain(&wanted.name);
+    if name.is_empty() {
+        return None;
+    }
+    for (url, catalog) in lookups {
+        let Ok(found) = addons.catalog(url, catalog, Some(wanted.name.trim())).await else { continue };
+        let hit = found.iter().find(|title| {
+            is_imdb_id(&title.id)
+                && plain(&title.name) == name
+                && match (year(&wanted.year), year(&title.release_info)) {
+                    (Some(a), Some(b)) => a == b,
+                    _ => true,
+                }
+        });
+        if let Some(hit) = hit {
+            return Some(hit.id.clone());
+        }
+    }
+    None
 }
