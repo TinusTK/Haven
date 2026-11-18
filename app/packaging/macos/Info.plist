@@ -4,7 +4,7 @@
 <dict>
     <key>CFBundleName</key><string>Haven</string>
     <key>CFBundleDisplayName</key><string>Haven</string>
-    <key>CFBundleIdentifier</key><string>io.github.tinustk.haven</string>
+    <key>CFBundleIdentifier</key><string>net.haven.app</string>
     <key>CFBundleExecutable</key><string>haven</string>
     <key>CFBundleIconFile</key><string>haven</string>
     <key>CFBundlePackageType</key><string>APPL</string>
