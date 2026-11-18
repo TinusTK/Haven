@@ -142,18 +142,50 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: ../mac/fetch-libmpv.sh
+      # With a Developer ID certificate in the repository's secrets the
+      # app is signed with it and notarised by Apple; without, it is
+      # signed "ad hoc" and macOS warns the first time it is opened.
+      - name: Set up signing
+        env:
+          MACOS_CERT_P12_BASE64: ${{ secrets.MACOS_CERT_P12_BASE64 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+        run: |
+          if [ -z "$MACOS_CERT_P12_BASE64" ]; then
+            echo "No certificate in the secrets: this build is signed ad hoc."
+            exit 0
+          fi
+          keychain="$RUNNER_TEMP/haven-signing.keychain-db"
+          lock="$(uuidgen)"
+          security create-keychain -p "$lock" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$lock" "$keychain"
+          echo "$MACOS_CERT_P12_BASE64" | base64 -d > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -P "$MACOS_CERT_PASSWORD" -A -t cert -f pkcs12 -k "$keychain"
+          rm -f "$RUNNER_TEMP/cert.p12"
+          security set-key-partition-list -S apple-tool:,apple: -k "$lock" "$keychain" > /dev/null
+          security list-keychain -d user -s "$keychain" login.keychain-db
+          identity="$(security find-identity -v -p codesigning "$keychain" | grep "Developer ID Application" | head -1 | sed -E 's/.*"(.*)"/\1/')"
+          [ -n "$identity" ] || { echo "The certificate in the secrets is not a Developer ID Application one."; exit 1; }
+          echo "HAVEN_SIGN_IDENTITY=$identity" >> "$GITHUB_ENV"
       # Builds for Intel and Apple silicon, joins the two, and makes
       # Haven.app and the disk image. Fails if the program is linked
       # against a libmpv outside the app.
       - name: Build Haven.app and the disk image
+        env:
+          HAVEN_NOTARY_APPLE_ID: ${{ secrets.MACOS_NOTARY_APPLE_ID }}
+          HAVEN_NOTARY_PASSWORD: ${{ secrets.MACOS_NOTARY_PASSWORD }}
+          HAVEN_NOTARY_TEAM_ID: ${{ secrets.MACOS_NOTARY_TEAM_ID }}
         run: ../mac/bundle.sh universal
+      # lsof, not DYLD_PRINT_LIBRARIES: a signed app ignores that.
       - name: Check Haven starts with its own libmpv
         run: |
           mkdir -p "$RUNNER_TEMP/home"
-          HOME="$RUNNER_TEMP/home" DYLD_PRINT_LIBRARIES=1 target/macos/Haven.app/Contents/MacOS/haven > "$RUNNER_TEMP/run.txt" 2>&1 &
+          HOME="$RUNNER_TEMP/home" target/macos/Haven.app/Contents/MacOS/haven > "$RUNNER_TEMP/run.txt" 2>&1 &
+          app=$!
           sleep 15
-          kill $! 2>/dev/null || true
-          grep "Haven.app/Contents/Frameworks/libmpv.dylib" "$RUNNER_TEMP/run.txt" \
+          lsof -p "$app" > "$RUNNER_TEMP/open.txt" 2>/dev/null || true
+          kill "$app" 2>/dev/null || true
+          grep "Haven.app/Contents/Frameworks/libmpv.dylib" "$RUNNER_TEMP/open.txt" \
             || { tail -30 "$RUNNER_TEMP/run.txt"; echo "Haven did not load its own libmpv"; exit 1; }
       - uses: actions/upload-artifact@v4
         with:

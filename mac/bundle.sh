@@ -14,6 +14,9 @@
 #       the answer to it. The profile is made once with
 #       `xcrun notarytool store-credentials <name> --apple-id <Apple ID>
 #       --team-id <team>`, which asks for an app-specific password.
+#   HAVEN_NOTARY_APPLE_ID, HAVEN_NOTARY_PASSWORD, HAVEN_NOTARY_TEAM_ID
+#       the same without a stored profile (how the CI build is given
+#       them, from the repository's secrets).
 # Without them the app is signed "ad hoc": macOS warns the first time it
 # is opened, and the user allows it with right-click > Open.
 set -euo pipefail
@@ -85,6 +88,10 @@ if [ -n "${HAVEN_SIGN_IDENTITY:-}" ]; then
   codesign --force --timestamp --sign "$HAVEN_SIGN_IDENTITY" "$dmg"
   if [ -n "${HAVEN_NOTARY_PROFILE:-}" ]; then
     xcrun notarytool submit "$dmg" --keychain-profile "$HAVEN_NOTARY_PROFILE" --wait
+    xcrun stapler staple "$dmg"
+  elif [ -n "${HAVEN_NOTARY_APPLE_ID:-}" ] && [ -n "${HAVEN_NOTARY_PASSWORD:-}" ]; then
+    xcrun notarytool submit "$dmg" --apple-id "$HAVEN_NOTARY_APPLE_ID" \
+      --password "$HAVEN_NOTARY_PASSWORD" --team-id "${HAVEN_NOTARY_TEAM_ID:-}" --wait
     xcrun stapler staple "$dmg"
   else
     echo "Signed, not notarised: set HAVEN_NOTARY_PROFILE to have Apple check it."
