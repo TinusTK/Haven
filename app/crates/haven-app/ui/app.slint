@@ -25,6 +25,14 @@ export struct Poster {
     progress: float,
 }
 
+// One line of a release's notes: a bullet point (maybe under another)
+// or a plain line of text; an empty line leaves a gap.
+export struct NoteLine {
+    bullet: bool,
+    deep: bool,
+    text: string,
+}
+
 // One catalogue from an add-on, shown as a row of posters on Home.
 export struct Shelf {
     title: string,
@@ -234,6 +242,8 @@ export global Theme {
     out property <color> text: dark ? #eef0f6 : #171a22;
     out property <color> text-dim: dark ? #9aa1b3 : #5d6475;
     out property <color> accent: dark ? #f2c66d : #b9851a;
+    // Stands out on purpose: the "Report an issue" pill.
+    out property <color> alert: dark ? #e5484d : #d13438;
     // The type headings are set in.
     out property <string> heading-font: "Pixelify Sans";
 }
@@ -2189,6 +2199,13 @@ export component AppWindow inherits Window {
     in property <string> update-status;
     in-out property <bool> update-check-at-start: true;
     callback check-updates();
+    // What is new in the latest release, and its version.
+    in property <[NoteLine]> update-notes;
+    in property <string> update-notes-version;
+    // Opens GitHub's page for a new issue.
+    callback report-issue();
+    // How far the Settings page is scrolled (for checking it in snapshots).
+    in-out property <length> settings-scroll;
     // Download the newer Haven and install it.
     callback install-update();
     callback set-update-check(bool);
@@ -3339,6 +3356,7 @@ export component AppWindow inherits Window {
             }
 
             if !root.detail-open && root.page == root.settings-page: settings-view := ScrollView {
+                content-y <=> root.settings-scroll;
                 content-width: self.visible-width;
                 content-height: settings-content.preferred-height;
 
@@ -3927,6 +3945,37 @@ export component AppWindow inherits Window {
                             }
                         }
                     }
+                    if !root.mobile && root.update-notes.length > 0: Rectangle {
+                        border-radius: 10px;
+                        background: Theme.surface;
+                        border-width: 1px;
+                        border-color: Theme.border;
+                        VerticalLayout {
+                            padding: 16px;
+                            spacing: 8px;
+                            Text {
+                                text: "What's new in Haven " + root.update-notes-version;
+                                color: Theme.text;
+                                font-weight: 600;
+                            }
+                            for line in root.update-notes: HorizontalLayout {
+                                padding-left: line.deep ? 20px : 0px;
+                                spacing: 8px;
+                                if line.bullet: Text {
+                                    text: "•";
+                                    color: Theme.accent;
+                                    font-size: 13px;
+                                }
+                                Text {
+                                    horizontal-stretch: 1;
+                                    text: line.text == "" ? " " : line.text;
+                                    color: Theme.text-dim;
+                                    font-size: 13px;
+                                    wrap: word-wrap;
+                                }
+                            }
+                        }
+                    }
                     if !root.mobile: Rectangle {
                         height: 52px;
                         border-radius: 10px;
@@ -3948,6 +3997,47 @@ export component AppWindow inherits Window {
                                 Switch {
                                     checked <=> root.update-check-at-start;
                                     toggled => { root.set-update-check(self.checked); }
+                                }
+                            }
+                        }
+                    }
+                    Rectangle {
+                        height: 52px;
+                        border-radius: 10px;
+                        background: Theme.surface;
+                        border-width: 1px;
+                        border-color: Theme.border;
+                        HorizontalLayout {
+                            padding-left: 16px;
+                            padding-right: 16px;
+                            spacing: 12px;
+                            Text {
+                                horizontal-stretch: 1;
+                                text: "Something not working? Tell us on GitHub.";
+                                color: Theme.text;
+                                vertical-alignment: center;
+                                wrap: word-wrap;
+                            }
+                            VerticalLayout {
+                                alignment: center;
+                                Rectangle {
+                                    height: 34px;
+                                    width: report-label.preferred-width + 32px;
+                                    border-radius: 17px;
+                                    background: report-touch.pressed ? Theme.alert.darker(0.2) : report-touch.has-hover ? Theme.alert.brighter(0.12) : Theme.alert;
+                                    accessible-role: button;
+                                    accessible-label: "Report an issue";
+                                    accessible-action-default => { root.report-issue(); }
+                                    report-touch := TouchArea {
+                                        mouse-cursor: pointer;
+                                        clicked => { root.report-issue(); }
+                                    }
+                                    report-label := Text {
+                                        text: "Report an issue";
+                                        color: #ffffff;
+                                        font-weight: 700;
+                                        font-size: 13px;
+                                    }
                                 }
                             }
                         }

@@ -23,7 +23,7 @@
 //!   `checkservers`, `xtream <server> <user> <password>`,
 //!   `explore <source> <kind> <genre>` (genre -1 for all), `more`,
 //!   `explorestate`, `shelves` (print Home's shelves), `sources` (print
-//!   the places to watch), `snap <file.png>`, `state` (print the
+//!   the places to watch), `snap <file.png>`, `wheel <x> <y> <dy>`, `settingsy <y>`, `state` (print the
 //!   player's state).
 //! - `HAVEN_TMDB_API=<address>` with `HAVEN_TMDB_IMAGES=<address>`: ask a
 //!   stand-in for TMDB (read in `library.rs`).
@@ -272,6 +272,20 @@ fn act(ui: &AppWindow, action: &str) {
                 window.dispatch_event(WindowEvent::PointerReleased { position, button });
             }
         }
+        // wheel <x> <y> <dy>: turns the mouse wheel there (negative dy
+        // scrolls down), in logical pixels.
+        "wheel" => {
+            let mut parts = rest.split_whitespace().filter_map(|part| part.parse::<f32>().ok());
+            if let (Some(x), Some(y), Some(delta_y)) = (parts.next(), parts.next(), parts.next()) {
+                use slint::platform::WindowEvent;
+                let position = slint::LogicalPosition::new(x, y);
+                let window = ui.window();
+                window.dispatch_event(WindowEvent::PointerMoved { position });
+                window.dispatch_event(WindowEvent::PointerScrolled { position, delta_x: 0.0, delta_y });
+            }
+        }
+        // settingsy <y>: scrolls the Settings page down that far.
+        "settingsy" => ui.set_settings_scroll(-number),
         "streamgroup" => ui.set_stream_group(rest.trim().into()),
         "volume" => ui.invoke_player_set_volume(number),
         "mute" => ui.invoke_player_toggle_mute(),

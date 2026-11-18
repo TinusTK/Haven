@@ -12,6 +12,8 @@ use super::{Library, on_ui};
 
 /// The setting: look for a newer Haven at start. On unless set off.
 const AT_START: &str = "update_check_at_start";
+/// Where an issue is reported: GitHub's form for a new one.
+const NEW_ISSUE: &str = "https://github.com/TinusTK/Haven/issues/new";
 /// The largest download taken for an update.
 const MOST_BYTES: u64 = 600 * 1024 * 1024;
 
@@ -78,6 +80,26 @@ async fn fetch(
     let file = folder.join(&download.name);
     std::fs::write(&file, &bytes).map_err(|err| err.to_string())?;
     Ok(file)
+}
+
+/// A release's notes (as `update::plain_notes` gives them) as lines
+/// for Settings: bullets and the ones under them told apart.
+fn note_lines(notes: &str) -> slint::ModelRc<crate::NoteLine> {
+    let lines: Vec<crate::NoteLine> = notes
+        .lines()
+        .map(|line| {
+            let (deep, line) = match line.strip_prefix("    ") {
+                Some(rest) => (true, rest),
+                None => (false, line),
+            };
+            let (bullet, text) = match line.strip_prefix("•  ") {
+                Some(rest) => (true, rest),
+                None => (false, line),
+            };
+            crate::NoteLine { bullet, deep, text: text.into() }
+        })
+        .collect();
+    std::rc::Rc::new(slint::VecModel::from(lines)).into()
 }
 
 /// What became of the downloaded installer.
@@ -156,6 +178,7 @@ impl Library {
             let library = self.clone();
             move || library.install_update()
         });
+        ui.on_report_issue(|| super::servers::open_in_browser(NEW_ISSUE));
         ui.on_set_update_check({
             let library = self.clone();
             move |on| {
@@ -205,6 +228,10 @@ impl Library {
             };
             on_ui(move |library| {
                 let Some(ui) = library.ui.upgrade() else { return };
+                if let Ok(latest) = &found {
+                    ui.set_update_notes(note_lines(&latest.notes));
+                    ui.set_update_notes_version(latest.version.as_str().into());
+                }
                 match found {
                     Ok(latest) if update::newer(current, &latest.version) => {
                         ui.set_update_version(latest.version.as_str().into());

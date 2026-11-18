@@ -15,6 +15,8 @@ pub struct Latest {
     pub page: String,
     /// The download for this kind of computer, if the release has one.
     pub download: Option<Download>,
+    /// What is new in it: the release's notes as plain text.
+    pub notes: String,
 }
 
 /// A file of a release that installs Haven on this kind of computer.
@@ -98,13 +100,77 @@ pub fn parse_latest(answer: &Value, os: &str) -> Option<Latest> {
             })
         })
     });
-    Some(Latest { version, page: web(answer.get("html_url")?)?, download })
+    let notes = answer.get("body").and_then(Value::as_str).map(plain_notes).unwrap_or_default();
+    Some(Latest { version, page: web(answer.get("html_url")?)?, download, notes })
+}
+
+/// The longest release notes shown; the rest is on the release's page.
+const MOST_NOTES: usize = 4000;
+
+/// A release's notes (Markdown) as plain text: list marks become
+/// bullets, heading marks, bold and code marks go, and a link keeps
+/// only its words.
+pub fn plain_notes(markdown: &str) -> String {
+    let mut lines: Vec<String> = Vec::new();
+    for line in markdown.replace("\r\n", "\n").lines() {
+        let trimmed = line.trim_end();
+        let indent = trimmed.len() - trimmed.trim_start().len();
+        let mut text = trimmed.trim_start();
+        let mut bullet = false;
+        if let Some(rest) = text.strip_prefix("- ").or_else(|| text.strip_prefix("* ")).or_else(|| text.strip_prefix("+ ")) {
+            text = rest;
+            bullet = true;
+        }
+        let text = text.trim_start_matches('#').trim_start();
+        let mut out = String::new();
+        let mut rest = text;
+        // [words](address) keeps the words.
+        while let Some(open) = rest.find('[') {
+            let after = &rest[open + 1..];
+            match after.find("](").and_then(|close| after[close + 2..].find(')').map(|end| (close, close + 2 + end))) {
+                Some((close, end)) => {
+                    out.push_str(&rest[..open]);
+                    out.push_str(&after[..close]);
+                    rest = &after[end + 1..];
+                }
+                None => break,
+            }
+        }
+        out.push_str(rest);
+        let out = out.replace("**", "").replace("__", "").replace('`', "");
+        if out.is_empty() {
+            if lines.last().is_some_and(|last| !last.is_empty()) {
+                lines.push(String::new());
+            }
+            continue;
+        }
+        let pad = if indent >= 2 { "    " } else { "" };
+        lines.push(if bullet { format!("{pad}•  {out}") } else { format!("{pad}{out}") });
+    }
+    while lines.last().is_some_and(String::is_empty) {
+        lines.pop();
+    }
+    let mut notes = lines.join("\n");
+    if notes.chars().count() > MOST_NOTES {
+        notes = notes.chars().take(MOST_NOTES).collect::<String>().trim_end().to_owned() + "…";
+    }
+    notes
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn release_notes_read_as_plain_text() {
+        let notes = plain_notes(
+            "## What's new\r\n\r\n- **Calendar**: dates in `local` time.\n  * See [the guide](https://example.com/x).\n\n\n\nThanks!\n",
+        );
+        assert_eq!(notes, "What's new\n\n•  Calendar: dates in local time.\n    •  See the guide.\n\nThanks!");
+        assert_eq!(plain_notes("[broken link"), "[broken link");
+        assert_eq!(plain_notes(""), "");
+    }
 
     #[test]
     fn versions_compare_by_their_numbers() {
