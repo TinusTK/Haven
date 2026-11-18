@@ -14,6 +14,7 @@ use slint::{ComponentHandle, Model};
 
 #[cfg(debug_assertions)]
 mod devtools;
+mod external;
 mod library;
 mod livetv;
 #[cfg(feature = "player")]
@@ -31,8 +32,9 @@ pub fn desktop_paths() -> Result<AppPaths, Box<dyn Error>> {
     Ok(AppPaths::discover()?)
 }
 
-/// Opens Haven's window and runs until it is closed.
-pub fn run(paths: AppPaths) -> Result<(), Box<dyn Error>> {
+/// Opens Haven's window and runs until it is closed. `phone` lays the
+/// pages out for a phone's screen.
+pub fn run(paths: AppPaths, phone: bool) -> Result<(), Box<dyn Error>> {
     haven_core::diag::start(&paths.data_dir().join("haven.log"));
     let store = Rc::new(Store::open(&paths.database())?);
     let settings = Rc::new(RefCell::new(Settings::load(&store)?));
@@ -46,12 +48,17 @@ pub fn run(paths: AppPaths) -> Result<(), Box<dyn Error>> {
     }
 
     let ui = AppWindow::new()?;
+    // A phone or tablet: no Add-ons page, and updates come as new APKs.
+    ui.set_mobile(cfg!(any(target_os = "android", target_os = "ios")));
+    ui.set_compact(phone);
     ui.set_version(env!("CARGO_PKG_VERSION").into());
     ui.set_data_path(paths.data_dir().display().to_string().into());
     ui.set_log_path(paths.data_dir().join("haven.log").display().to_string().into());
     ui.set_dark(settings.borrow().theme == ThemeChoice::Dark);
     let page_count = ui.get_pages().row_count() as u32;
-    ui.set_page(settings.borrow().last_page.min(page_count.saturating_sub(1)) as i32);
+    let last = settings.borrow().last_page.min(page_count.saturating_sub(1)) as i32;
+    // A phone build has no Add-ons page to come back to.
+    ui.set_page(if library::MOBILE && ui.get_pages().row_data(last as usize).is_some_and(|name| name == "Add-ons") { 0 } else { last });
 
     ui.on_dark_toggled({
         let (store, settings) = (store.clone(), settings.clone());
@@ -99,12 +106,29 @@ pub fn run(paths: AppPaths) -> Result<(), Box<dyn Error>> {
             None
         }
     };
+    // Videos play in Haven's own player, or in another program if the
+    // user prefers one (Settings > Player) or Haven's own cannot run.
+    #[cfg(feature = "player")]
+    let own: Option<Rc<dyn Fn(library::PlayRequest)>> = player.clone().map(|playing| {
+        Rc::new(move |request| playing.play(request)) as Rc<dyn Fn(library::PlayRequest)>
+    });
+    #[cfg(not(feature = "player"))]
+    let own: Option<Rc<dyn Fn(library::PlayRequest)>> = None;
+    let external = external::External::start(&ui, store.clone(), own.is_some());
+    let play = {
+        let (external, own) = (external.clone(), own.clone());
+        move |request: library::PlayRequest| match &own {
+            Some(own) if !external.wanted() => {
+                external.clear();
+                own(request)
+            }
+            _ => external.play(&request),
+        }
+    };
+    library.set_player(play.clone());
+    live.set_player(play);
     #[cfg(feature = "player")]
     if let Some(player) = &player {
-        let playing = player.clone();
-        library.set_player(move |request| playing.play(request));
-        let playing = player.clone();
-        live.set_player(move |request| playing.play(request));
         let playing = player.clone();
         library.set_player_dismiss(move || playing.dismiss());
         let next = std::rc::Rc::downgrade(&library);
@@ -153,11 +177,19 @@ fn save(settings: &Settings, store: &Store) {
     }
 }
 
+/// Android's handle on the running app, for asking the system things.
+#[cfg(target_os = "android")]
+static ANDROID: std::sync::OnceLock<slint::android::AndroidApp> = std::sync::OnceLock::new();
+
 /// Android starts Haven here.
 #[cfg(target_os = "android")]
 #[unsafe(no_mangle)]
 fn android_main(app: slint::android::AndroidApp) {
     let data = app.internal_data_path();
+    let _ = ANDROID.set(app.clone());
+    // Under 600 dp across its short side a screen is a phone's; a
+    // tablet has room for the layout a computer gets.
+    let phone = app.config().smallest_screen_width_dp().is_none_or(|across| across < 600);
     if let Err(err) = slint::android::init(app) {
         eprintln!("haven: could not start on Android: {err}");
         return;
@@ -166,7 +198,7 @@ fn android_main(app: slint::android::AndroidApp) {
         Some(Ok(paths)) => paths,
         _ => return eprintln!("haven: Android gave no folder for Haven's data"),
     };
-    if let Err(err) = run(paths) {
+    if let Err(err) = run(paths, phone) {
         eprintln!("haven: {err}");
     }
 }

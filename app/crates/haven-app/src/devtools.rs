@@ -305,6 +305,12 @@ fn act(ui: &AppWindow, action: &str) {
         ),
         "clearcache" => ui.invoke_clear_cache(),
         "installupdate" => ui.invoke_install_update(),
+        "playerchoice" => {
+            let (kind, program) = rest.trim().split_once(' ').unwrap_or((rest.trim(), ""));
+            ui.invoke_set_player_program(program.into());
+            ui.invoke_set_player_choice(kind.parse().unwrap_or(0));
+        }
+        "playnote" => eprintln!("haven-playnote: \"{}\" player-open={}", ui.get_play_note(), ui.get_player_open()),
         "updatestate" => eprintln!(
             "haven-update: version=\"{}\" busy={} status=\"{}\"",
             ui.get_update_version(),

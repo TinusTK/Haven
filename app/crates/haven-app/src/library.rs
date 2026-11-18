@@ -196,6 +196,14 @@ impl Pause {
     }
 }
 
+/// A phone or tablet build: it has no Add-ons page and never speaks
+/// of add-ons.
+/// Said when nothing knows the title that was opened.
+const NO_DETAILS: &str =
+    if MOBILE { "There are no details for this title." } else { "None of your add-ons has details for this title." };
+
+pub(crate) const MOBILE: bool = cfg!(any(target_os = "android", target_os = "ios"));
+
 /// A counter that says which list of places to watch is current. Work
 /// off the UI thread reads it to stop when its list is no longer wanted.
 #[derive(Default)]
@@ -524,6 +532,14 @@ impl Library {
     fn install_free_catalogue(&self) {
         const DONE: &str = "free_catalogue_installed";
         const CINEMETA: &str = "https://v3-cinemeta.strem.io/manifest.json";
+        // A phone build has no Add-ons page to put it back from: there
+        // it is Haven's built-in catalogue, made sure of at every start.
+        if MOBILE {
+            if !self.addon_urls.borrow().iter().any(|url| url == CINEMETA) {
+                self.install(CINEMETA);
+            }
+            return;
+        }
         if self.store.get::<bool>(DONE).ok().flatten() == Some(true) {
             return;
         }
@@ -728,9 +744,13 @@ impl Library {
             }
         }
         let note = if self.installed.borrow().is_empty() && plans.is_empty() {
-            "Add a media server or a TMDB key in Settings, or install an add-on: search looks through those."
+            if MOBILE {
+                "Add a media server or a TMDB key in Settings: search looks through those."
+            } else {
+                "Add a media server or a TMDB key in Settings, or install an add-on: search looks through those."
+            }
         } else if plans.is_empty() {
-            "None of your add-ons can be searched."
+            if MOBILE { "Nothing you have added can be searched." } else { "None of your add-ons can be searched." }
         } else {
             ""
         };
@@ -1159,6 +1179,7 @@ impl Library {
             ..Detail::default()
         });
         ui.set_episode_open(false);
+        ui.set_play_note("".into());
         ui.set_episode_label("".into());
         ui.set_episode_filter("".into());
         ui.set_detail_open(true);
@@ -1202,13 +1223,13 @@ impl Library {
         if sources.is_empty() {
             return self.detail_loaded(
                 generation,
-                Err("None of your add-ons has details for this title.".into()),
+                Err(NO_DETAILS.into()),
             );
         }
         let addons = self.addons.clone();
         self.tasks.spawn(async move {
             // The first add-on that knows the title wins.
-            let mut found = Err("None of your add-ons has details for this title.".to_owned());
+            let mut found = Err(NO_DETAILS.to_owned());
             for url in sources {
                 match addons.meta(&url, &kind, &id).await {
                     Ok(meta) => {

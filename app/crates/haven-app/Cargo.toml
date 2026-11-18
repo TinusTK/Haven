@@ -78,6 +78,7 @@ assets = [
 # Android: Slint's own Android backend, and what the APK is called.
 [target.'cfg(target_os = "android")'.dependencies]
 slint = { workspace = true, features = ["backend-android-activity-06"] }
+jni = "0.21"
 
 [package.metadata.android]
 package = "net.haven.app"

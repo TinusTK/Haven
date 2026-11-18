@@ -177,7 +177,11 @@ impl Library {
             return self.set_streams_state(
                 Some(heading),
                 false,
-                "Nothing you have added can play this. Add a media server or an Xtream Codes account in Settings, or install an add-on that offers streams.",
+                if super::MOBILE {
+                    "Nothing you have added can play this. Add a media server or an Xtream Codes account in Settings."
+                } else {
+                    "Nothing you have added can play this. Add a media server or an Xtream Codes account in Settings, or install an add-on that offers streams."
+                },
             );
         }
         self.set_streams_state(Some(heading), true, "");
@@ -318,7 +322,11 @@ impl Library {
         if pending == 0 {
             self.give_up_autoplay();
             let note = if self.streams.row_count() == 0 {
-                "None of your media servers, accounts or add-ons has this."
+                if super::MOBILE {
+                    "None of your media servers or accounts has this."
+                } else {
+                    "None of your media servers, accounts or add-ons has this."
+                }
             } else {
                 ""
             };
