@@ -1915,6 +1915,7 @@ dependencies = [
  "png",
  "reqwest",
  "serde",
+ "serde_json",
  "slint",
  "slint-build",
  "tokio",

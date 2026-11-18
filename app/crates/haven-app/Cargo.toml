@@ -65,3 +65,6 @@ assets = [
     ["../../../LICENSE", "usr/share/doc/haven/LICENSE", "644"],
     ["../../../THIRD-PARTY.md", "usr/share/doc/haven/THIRD-PARTY.md", "644"],
 ]
+
+[dev-dependencies]
+serde_json.workspace = true
