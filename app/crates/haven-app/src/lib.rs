@@ -29,7 +29,28 @@ pub fn desktop_paths() -> Result<AppPaths, Box<dyn Error>> {
     if let Some(folder) = std::env::var_os("HAVEN_DATA_DIR") {
         return Ok(AppPaths::at(folder)?);
     }
+    // iOS: inside the app's own container, which the system names HOME.
+    #[cfg(target_os = "ios")]
+    if let Some(home) = std::env::var_os("HOME") {
+        let folder = std::path::Path::new(&home).join("Library/Application Support/Haven");
+        return Ok(AppPaths::at(folder)?);
+    }
     Ok(AppPaths::discover()?)
+}
+
+/// True on an iPhone (or iPod touch): its pages are laid out for a
+/// narrow screen. An iPad gets the layout a computer gets.
+#[cfg(target_os = "ios")]
+pub fn is_phone() -> bool {
+    // The simulator says which device it plays through this variable;
+    // a real device through the machine name ("iPhone16,1", "iPad14,3").
+    let model = std::env::var("SIMULATOR_MODEL_IDENTIFIER").ok().or_else(|| {
+        let mut name: libc::utsname = unsafe { std::mem::zeroed() };
+        (unsafe { libc::uname(&mut name) } == 0).then(|| {
+            unsafe { std::ffi::CStr::from_ptr(name.machine.as_ptr()) }.to_string_lossy().into_owned()
+        })
+    });
+    !model.is_some_and(|model| model.starts_with("iPad"))
 }
 
 /// Opens Haven's window and runs until it is closed. `phone` lays the
@@ -51,6 +72,7 @@ pub fn run(paths: AppPaths, phone: bool) -> Result<(), Box<dyn Error>> {
     // A phone or tablet: no Add-ons page, and updates come as new APKs.
     ui.set_mobile(cfg!(any(target_os = "android", target_os = "ios")));
     ui.set_compact(phone);
+    ui.set_ios(cfg!(target_os = "ios"));
     ui.set_version(env!("CARGO_PKG_VERSION").into());
     ui.set_data_path(paths.data_dir().display().to_string().into());
     ui.set_log_path(paths.data_dir().join("haven.log").display().to_string().into());

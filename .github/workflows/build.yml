@@ -235,3 +235,28 @@ jobs:
           name: haven-android-apk
           path: app/target/android/*.apk
           if-no-files-found: error
+
+  ios:
+    name: iOS
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app
+          key: ios
+      # An IPA that is not signed: whoever installs it signs it with
+      # their own Apple ID (AltStore, Sideloadly and the like).
+      - name: Build the unsigned IPA
+        run: ../ios/bundle.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: haven-ios-ipa
+          path: app/target/ios/*.ipa
+          if-no-files-found: error

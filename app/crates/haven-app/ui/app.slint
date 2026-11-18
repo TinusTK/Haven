@@ -2095,6 +2095,8 @@ export component AppWindow inherits Window {
     // where the pages are laid out for one column and the side list
     // gives way to tabs. Both are set when Haven starts.
     in property <bool> mobile;
+    // An iPhone or iPad.
+    in property <bool> ios;
     in property <bool> compact;
     in-out property <bool> more-open;
     // On a phone: Explore shows its list of sources, not the titles.
@@ -3689,10 +3691,23 @@ export component AppWindow inherits Window {
                         accessible-label: "The program to play videos with";
                         edited(text) => { root.set-player-program(text); }
                     }
-                    if root.mobile: Text {
+                    if root.mobile && !root.ios: Text {
                         text: "Videos open in a player app on this device, such as VLC or mpv. Android asks which one the first time.";
                         color: Theme.text-dim;
                         wrap: word-wrap;
+                    }
+                    if root.ios: SettingsRow {
+                        label: "Play videos with";
+                        detail: "Videos open in this app, which has to be installed.";
+                        ComboBox {
+                            width: 150px;
+                            model: ["VLC", "Infuse", "Outplayer"];
+                            current-index: max(0, root.player-choice - 1);
+                            selected => {
+                                root.player-choice = self.current-index + 1;
+                                root.set-player-choice(self.current-index + 1);
+                            }
+                        }
                     }
                     SettingsRow {
                         label: "Send surround sound to a receiver untouched";
@@ -3862,7 +3877,7 @@ export component AppWindow inherits Window {
                         label: "Version";
                         detail: root.version;
                     }
-                    Rectangle {
+                    if !root.mobile: Rectangle {
                         height: 64px;
                         border-radius: 10px;
                         background: Theme.surface;
@@ -3907,7 +3922,7 @@ export component AppWindow inherits Window {
                             }
                         }
                     }
-                    Rectangle {
+                    if !root.mobile: Rectangle {
                         height: 52px;
                         border-radius: 10px;
                         background: Theme.surface;

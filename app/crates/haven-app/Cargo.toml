@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 publish.workspace = true
 
-description = "Haven: films, series, live TV and your own media servers in one place"
+description = "Haven: a media player for Jellyfin, Plex, Emby and IPTV, and a film and TV show tracker"
 license-file = "../../../LICENSE"
 authors = ["TinusTK"]
 
@@ -57,9 +57,10 @@ name = "haven"
 maintainer = "TinusTK"
 copyright = "2026, TinusTK. All rights reserved."
 extended-description = """\
-A media hub: add-on catalogues, your own Jellyfin, Emby and Plex servers, \
-live TV and radio from M3U playlists, a watchlist, Trakt and Simkl tracking \
-and Chromecast casting."""
+A media player for your own Jellyfin, Emby and Plex servers and for IPTV \
+(live TV and radio from M3U playlists and Xtream Codes accounts), and a \
+film and TV show tracker: a watchlist, a calendar of what comes out when, \
+Trakt and Simkl, and Chromecast casting."""
 section = "video"
 priority = "optional"
 depends = "$auto"
@@ -98,3 +99,9 @@ name = "android.permission.INTERNET"
 
 [package.metadata.android.application.activity]
 config_changes = "orientation|screenSize|screenLayout|keyboardHidden|keyboard|uiMode"
+
+# iOS: opening a web address or another app (a video player) goes
+# through the system; there are no programs to start.
+[target.'cfg(target_os = "ios")'.dependencies]
+webbrowser = "1"
+libc = "0.2"

@@ -164,6 +164,10 @@ impl Library {
                 }
             }
         });
+        // A phone's app is updated by installing the newer APK or IPA.
+        if super::MOBILE {
+            return;
+        }
         let at_start = self.store.get::<bool>(AT_START).ok().flatten() != Some(false);
         ui.set_update_check_at_start(at_start);
         if at_start {

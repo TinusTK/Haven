@@ -499,6 +499,22 @@ pub fn open_in_browser(link: &str) {
     if haven_core::http::web_url(link).is_err() {
         return;
     }
+    // A phone has no programs to start: the system opens the address.
+    #[cfg(target_os = "ios")]
+    {
+        if let Err(err) = webbrowser::open(link) {
+            eprintln!("haven: could not open the web browser: {err}");
+        }
+        return;
+    }
+    #[cfg(target_os = "android")]
+    {
+        if let Err(why) = crate::external::view(link, None) {
+            eprintln!("haven: could not open the web browser: {why}");
+        }
+        return;
+    }
+    #[allow(unreachable_code)]
     let mut command = if cfg!(target_os = "macos") {
         std::process::Command::new("open")
     } else if cfg!(windows) {

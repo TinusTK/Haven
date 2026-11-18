@@ -1949,6 +1949,7 @@ dependencies = [
  "haven-tracking",
  "image",
  "jni 0.21.1",
+ "libc",
  "png",
  "reqwest",
  "ring",
@@ -1957,6 +1958,7 @@ dependencies = [
  "slint",
  "slint-build",
  "tokio",
+ "webbrowser",
  "winresource",
 ]
 
