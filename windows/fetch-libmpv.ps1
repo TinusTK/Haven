@@ -1,12 +1,12 @@
-# Puts what the Windows player needs into packaging\windows\libmpv:
+# Puts what the Windows player needs into windows\libmpv:
 # libmpv-2.dll (the LGPL libmpv, shipped beside haven.exe), mpv.lib (what
 # the build links against) and vulkan-1.dll with its licence (the Vulkan
 # loader, which libmpv-2.dll cannot load without and which PCs without
 # full graphics drivers lack). Run from anywhere; CI runs it before the
 # release build.
 #
-#   pwsh packaging\windows\fetch-libmpv.ps1                 # download (needs gh, signed in)
-#   pwsh packaging\windows\fetch-libmpv.ps1 -Archive x.7z   # use a libmpv archive already here
+#   pwsh windows\fetch-libmpv.ps1                 # download (needs gh, signed in)
+#   pwsh windows\fetch-libmpv.ps1 -Archive x.7z   # use a libmpv archive already here
 #
 # The archive is the LGPL build from https://github.com/zhongfly/mpv-winbuild
 # (mpv built with -Dgpl=false, FFmpeg without --enable-gpl). That project

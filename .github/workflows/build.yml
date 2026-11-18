@@ -33,12 +33,12 @@ jobs:
         run: cargo test --workspace
       # The player needs an LGPL libmpv: the script downloads the checked
       # copy kept as a release of this repository, verifies its checksum
-      # and makes mpv.lib (see packaging/windows/libmpv/README.md).
+      # and makes mpv.lib (see windows/libmpv/README.md).
       - name: Fetch libmpv
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-        run: ./packaging/windows/fetch-libmpv.ps1
+        run: ../windows/fetch-libmpv.ps1
       - name: Build release with the player
         run: cargo build --release -p haven-app --features player
       # Starts haven.exe from a folder laid out like an installed copy.
@@ -51,7 +51,7 @@ jobs:
           $dir = Join-Path $env:RUNNER_TEMP "haven-start"
           New-Item $dir -ItemType Directory | Out-Null
           Copy-Item target/release/haven.exe $dir
-          Copy-Item packaging/windows/libmpv/*.dll $dir
+          Copy-Item ../windows/libmpv/*.dll $dir
           $said = Join-Path $dir "stderr.txt"
           $p = Start-Process (Join-Path $dir "haven.exe") -PassThru -RedirectStandardError $said
           if ($p.WaitForExit(15000)) {
@@ -72,7 +72,7 @@ jobs:
         run: |
           $version = (cargo metadata --no-deps --format-version 1 | ConvertFrom-Json).packages |
             Where-Object { $_.name -eq "haven-app" } | Select-Object -ExpandProperty version
-          iscc "/DAppVersion=$version" packaging\windows\haven.iss
+          iscc "/DAppVersion=$version" ..\windows\haven.iss
       - uses: actions/upload-artifact@v4
         with:
           name: haven-windows-x64
@@ -141,12 +141,12 @@ jobs:
       - name: Fetch libmpv
         env:
           GH_TOKEN: ${{ github.token }}
-        run: ./packaging/macos/fetch-libmpv.sh
+        run: ../mac/fetch-libmpv.sh
       # Builds for Intel and Apple silicon, joins the two, and makes
       # Haven.app and the disk image. Fails if the program is linked
       # against a libmpv outside the app.
       - name: Build Haven.app and the disk image
-        run: ./packaging/macos/bundle.sh universal
+        run: ../mac/bundle.sh universal
       - name: Check Haven starts with its own libmpv
         run: |
           mkdir -p "$RUNNER_TEMP/home"

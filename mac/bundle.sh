@@ -1,18 +1,18 @@
 #!/bin/bash
-# Makes Haven.app and Haven-<version>-macos.dmg in target/macos from the
-# release builds. Run from app/ after fetch-libmpv.sh:
+# Makes Haven.app and Haven-<version>-macos.dmg in app/target/macos from
+# the release builds. Run after fetch-libmpv.sh, from anywhere:
 #
-#   packaging/macos/bundle.sh            # this Mac's kind of processor only
-#   packaging/macos/bundle.sh universal  # Intel and Apple silicon in one
+#   mac/bundle.sh            # this Mac's kind of processor only
+#   mac/bundle.sh universal  # Intel and Apple silicon in one
 #
 # The app is signed "ad hoc" (no Apple Developer ID): macOS warns the
 # first time it is opened, and the user allows it in System Settings >
 # Privacy & Security, or with right-click > Open.
 set -euo pipefail
 
-cd "$(dirname "$0")/../.."
-libs="packaging/macos/libmpv"
-[ -f "$libs/libmpv.dylib" ] || { echo "Run packaging/macos/fetch-libmpv.sh first." >&2; exit 1; }
+cd "$(dirname "$0")/../app"
+libs="../mac/libmpv"
+[ -f "$libs/libmpv.dylib" ] || { echo "Run mac/fetch-libmpv.sh first." >&2; exit 1; }
 version="$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json,sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"]=="haven-app"))')"
 
 out="target/macos"
@@ -33,10 +33,10 @@ fi
 # The video engine and its libraries, beside the program (LGPL: they
 # stay separate files that can be replaced).
 cp "$libs"/*.dylib "$app/Contents/Frameworks/"
-sed "s/@VERSION@/$version/g" packaging/macos/Info.plist > "$app/Contents/Info.plist"
+sed "s/@VERSION@/$version/g" ../mac/Info.plist > "$app/Contents/Info.plist"
 cp ../LICENSE "$app/Contents/Resources/LICENSE.txt"
 cp ../THIRD-PARTY.md "$app/Contents/Resources/"
-cp packaging/licenses/*.txt "$app/Contents/Resources/licenses/"
+cp ../licenses/*.txt "$app/Contents/Resources/licenses/"
 
 # The icon, from the halo on its dark tile.
 set="$out/haven.iconset"

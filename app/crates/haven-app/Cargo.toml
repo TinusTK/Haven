@@ -65,7 +65,7 @@ priority = "optional"
 depends = "$auto"
 assets = [
     ["target/release/haven", "usr/bin/haven", "755"],
-    ["../../packaging/linux/haven.desktop", "usr/share/applications/haven.desktop", "644"],
+    ["../../../linux/haven.desktop", "usr/share/applications/haven.desktop", "644"],
     ["../../assets/icon/haven-48.png", "usr/share/icons/hicolor/48x48/apps/haven.png", "644"],
     ["../../assets/icon/haven-64.png", "usr/share/icons/hicolor/64x64/apps/haven.png", "644"],
     ["../../assets/icon/haven-128.png", "usr/share/icons/hicolor/128x128/apps/haven.png", "644"],
@@ -83,7 +83,7 @@ jni = "0.21"
 [package.metadata.android]
 package = "net.haven.app"
 build_targets = ["aarch64-linux-android"]
-resources = "../../packaging/android/res"
+resources = "../../../android/res"
 
 [package.metadata.android.sdk]
 min_sdk_version = 26

@@ -12,10 +12,10 @@ CLAUDE.md
 /app/target/
 
 # libmpv for the Windows build is supplied, not kept in git
-/app/packaging/windows/libmpv/*.dll
-/app/packaging/windows/libmpv/*.lib
-/app/packaging/windows/libmpv/*.def
-/app/packaging/windows/libmpv/*.txt
+/windows/libmpv/*.dll
+/windows/libmpv/*.lib
+/windows/libmpv/*.def
+/windows/libmpv/*.txt
 
 # libmpv for the Mac build is fetched, not kept in git
-/app/packaging/macos/libmpv/
+/mac/libmpv/

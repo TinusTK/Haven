@@ -1,7 +1,7 @@
 ; Haven installer for Windows (Inno Setup 6).
-; Built by CI: iscc /DAppVersion=<version> packaging\windows\haven.iss
-; Expects haven.exe in target\release, and, when the player was built in,
-; libmpv-2.dll (an LGPL build) in packaging\windows\libmpv.
+; Built by CI: iscc /DAppVersion=<version> windows\haven.iss
+; Expects haven.exe in app\target\release, and, when the player was built in,
+; libmpv-2.dll (an LGPL build) in windows\libmpv.
 
 #ifndef AppVersion
   #define AppVersion "0.1.8"
@@ -17,10 +17,10 @@ AppCopyright=Copyright (c) 2026 TinusTK. All rights reserved.
 DefaultDirName={autopf}\Haven
 DefaultGroupName=Haven
 DisableProgramGroupPage=yes
-LicenseFile=..\..\..\LICENSE
-SetupIconFile=..\..\assets\icon\haven.ico
+LicenseFile=..\LICENSE
+SetupIconFile=..\app\assets\icon\haven.ico
 UninstallDisplayIcon={app}\haven.exe
-OutputDir=..\..\target\installer
+OutputDir=..\app\target\installer
 OutputBaseFilename=Haven-{#AppVersion}-windows-x64-setup
 Compression=lzma2
 SolidCompression=yes
@@ -34,12 +34,12 @@ WizardStyle=modern
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
 [Files]
-Source: "..\..\target\release\haven.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\app\target\release\haven.exe"; DestDir: "{app}"; Flags: ignoreversion
 ; The video engine and whatever it needs beside it; absent in a build without the player.
 Source: "libmpv\*.dll"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "libmpv\VulkanRT-License.txt"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
-Source: "..\..\..\LICENSE"; DestDir: "{app}"; DestName: "LICENSE.txt"; Flags: ignoreversion
-Source: "..\..\..\THIRD-PARTY.md"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\LICENSE"; DestDir: "{app}"; DestName: "LICENSE.txt"; Flags: ignoreversion
+Source: "..\THIRD-PARTY.md"; DestDir: "{app}"; Flags: ignoreversion
 ; Licence texts of the libraries shipped beside haven.exe (see THIRD-PARTY.md).
 Source: "..\licenses\*.txt"; DestDir: "{app}\licenses"; Flags: ignoreversion
 

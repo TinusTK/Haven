@@ -1,11 +1,11 @@
 #!/bin/bash
-# Puts what the Mac player needs into packaging/macos/libmpv: libmpv.dylib
+# Puts what the Mac player needs into mac/libmpv: libmpv.dylib
 # and the libraries it loads (FFmpeg, libass and so on), an LGPL build for
 # Intel and Apple silicon Macs. They are shipped inside Haven.app beside
 # the program, never built into it.
 #
-#   packaging/macos/fetch-libmpv.sh                 # download (needs gh, signed in)
-#   packaging/macos/fetch-libmpv.sh archive.tar.gz  # use an archive already here
+#   mac/fetch-libmpv.sh                 # download (needs gh, signed in)
+#   mac/fetch-libmpv.sh archive.tar.gz  # use an archive already here
 #
 # The archive is libmpv-libs_v0.7.3_macos-universal-video-full.tar.gz from
 # https://github.com/media-kit/libmpv-darwin-build (mpv 0.36.0 built with
