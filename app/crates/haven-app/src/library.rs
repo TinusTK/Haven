@@ -16,6 +16,7 @@ mod ondemand;
 mod servers;
 mod sources;
 mod tracking;
+mod updates;
 
 use haven_addons::{
     Catalog, Client, Manifest, MetaDetail, MetaPreview, Video, manifest_url, parse_manifest,
@@ -430,6 +431,7 @@ impl Library {
         library.start_explore(ui);
         library.start_offers(ui);
         library.start_calendar(ui);
+        library.start_updates(ui);
         library.start_servers(ui);
         library.start_casting(ui);
         library.reload_catalog();

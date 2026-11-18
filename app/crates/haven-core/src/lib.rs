@@ -8,5 +8,6 @@ pub mod paths;
 pub mod secrets;
 pub mod settings;
 pub mod storage;
+pub mod update;
 
 pub use error::{Error, Result};

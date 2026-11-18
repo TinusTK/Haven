@@ -2064,6 +2064,14 @@ export component AppWindow inherits Window {
     callback play-channel(bool, int);
     // The row of the stream list to play.
     callback play-stream(int);
+    // A newer Haven: its version ("" if none is known), where to get
+    // it, and what the last look found, in words.
+    in property <string> update-version;
+    in property <string> update-link;
+    in property <string> update-status;
+    in-out property <bool> update-check-at-start: true;
+    callback check-updates();
+    callback set-update-check(bool);
     in property <string> calendar-title;
     in property <[CalendarDay]> calendar-days;
     in property <[AgendaRow]> calendar-agenda;
@@ -2162,6 +2170,33 @@ export component AppWindow inherits Window {
                         root.close-detail();
                         root.page = index;
                         root.page-selected(index);
+                    }
+                }
+                if root.update-version != "": Rectangle {
+                    height: 54px;
+                    Rectangle {
+                        x: 12px;
+                        y: 10px;
+                        width: parent.width - 24px;
+                        height: 40px;
+                        border-radius: 10px;
+                        background: update-touch.has-hover ? Theme.accent : Theme.accent.with-alpha(0.16);
+                        border-width: 1px;
+                        border-color: Theme.accent;
+                        accessible-role: button;
+                        accessible-label: "Get Haven " + root.update-version;
+                        update-touch := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => { root.open-link(root.update-link); }
+                        }
+                        Text {
+                            text: "Update ready  ·  " + root.update-version;
+                            color: update-touch.has-hover ? (Theme.dark ? #171a22 : #ffffff) : Theme.accent;
+                            font-size: 13px;
+                            font-weight: 600;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
                     }
                 }
             }
@@ -3581,6 +3616,74 @@ export component AppWindow inherits Window {
                     SettingsRow {
                         label: "Version";
                         detail: root.version;
+                    }
+                    Rectangle {
+                        height: 64px;
+                        border-radius: 10px;
+                        background: Theme.surface;
+                        border-width: 1px;
+                        border-color: root.update-version != "" ? Theme.accent : Theme.border;
+                        HorizontalLayout {
+                            padding-left: 16px;
+                            padding-right: 16px;
+                            spacing: 12px;
+                            VerticalLayout {
+                                horizontal-stretch: 1;
+                                alignment: center;
+                                spacing: 2px;
+                                Text {
+                                    text: "Updates";
+                                    color: Theme.text;
+                                    font-weight: 600;
+                                }
+                                Text {
+                                    text: root.update-status != "" ? root.update-status : "Haven looks for a newer version when it starts.";
+                                    color: root.update-version != "" ? Theme.accent : Theme.text-dim;
+                                    font-size: 12px;
+                                    overflow: elide;
+                                }
+                            }
+                            VerticalLayout {
+                                alignment: center;
+                                HorizontalLayout {
+                                    spacing: 8px;
+                                    if root.update-version != "": Button {
+                                        text: "Get Haven " + root.update-version;
+                                        primary: true;
+                                        clicked => { root.open-link(root.update-link); }
+                                    }
+                                    Button {
+                                        text: "Check for updates";
+                                        clicked => { root.check-updates(); }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Rectangle {
+                        height: 52px;
+                        border-radius: 10px;
+                        background: Theme.surface;
+                        border-width: 1px;
+                        border-color: Theme.border;
+                        HorizontalLayout {
+                            padding-left: 16px;
+                            padding-right: 16px;
+                            spacing: 12px;
+                            Text {
+                                horizontal-stretch: 1;
+                                text: "Look for a newer Haven when it starts";
+                                color: Theme.text;
+                                vertical-alignment: center;
+                            }
+                            VerticalLayout {
+                                alignment: center;
+                                Switch {
+                                    checked <=> root.update-check-at-start;
+                                    toggled => { root.set-update-check(self.checked); }
+                                }
+                            }
+                        }
                     }
                     Text {
                         text: "Haven © 2026 TinusTK. All rights reserved.\nMade with Slint. Video playback by mpv (libmpv, LGPL).\nThis product uses the TMDB API but is not endorsed or certified by TMDB.";
