@@ -5,9 +5,17 @@
 #   mac/bundle.sh            # this Mac's kind of processor only
 #   mac/bundle.sh universal  # Intel and Apple silicon in one
 #
-# The app is signed "ad hoc" (no Apple Developer ID): macOS warns the
-# first time it is opened, and the user allows it in System Settings >
-# Privacy & Security, or with right-click > Open.
+# Signing:
+#   HAVEN_SIGN_IDENTITY="Developer ID Application: <name> (<team>)"
+#       signs the app with that certificate from the keychain (the first
+#       time, macOS asks to let codesign use the key: choose Always Allow).
+#   HAVEN_NOTARY_PROFILE=<name>
+#       also sends the disk image to Apple to be notarised and staples
+#       the answer to it. The profile is made once with
+#       `xcrun notarytool store-credentials <name> --apple-id <Apple ID>
+#       --team-id <team>`, which asks for an app-specific password.
+# Without them the app is signed "ad hoc": macOS warns the first time it
+# is opened, and the user allows it with right-click > Open.
 set -euo pipefail
 
 cd "$(dirname "$0")/../app"
@@ -56,12 +64,30 @@ if otool -L "$app/Contents/MacOS/haven" | grep -q "/opt/homebrew\|/usr/local"; t
   echo "haven is linked against a libmpv outside the app (Homebrew's?)." >&2
   exit 1
 fi
-codesign --force --sign - "$app/Contents/Frameworks/"*.dylib
-codesign --force --sign - "$app"
+if [ -n "${HAVEN_SIGN_IDENTITY:-}" ]; then
+  # Apple only notarises code signed with the hardened runtime and a
+  # secure timestamp; the libraries get the same signature, so the
+  # program may load them.
+  codesign --force --options runtime --timestamp --sign "$HAVEN_SIGN_IDENTITY" "$app/Contents/Frameworks/"*.dylib
+  codesign --force --options runtime --timestamp --sign "$HAVEN_SIGN_IDENTITY" "$app"
+  codesign --verify --deep --strict "$app"
+else
+  codesign --force --sign - "$app/Contents/Frameworks/"*.dylib
+  codesign --force --sign - "$app"
+fi
 
 dmg="$out/Haven-$version-macos.dmg"
 stage="$out/dmg"
 mkdir -p "$stage" && cp -R "$app" "$stage/" && ln -s /Applications "$stage/Applications"
 hdiutil create -quiet -volname "Haven $version" -srcfolder "$stage" -format UDZO "$dmg"
 rm -rf "$stage"
+if [ -n "${HAVEN_SIGN_IDENTITY:-}" ]; then
+  codesign --force --timestamp --sign "$HAVEN_SIGN_IDENTITY" "$dmg"
+  if [ -n "${HAVEN_NOTARY_PROFILE:-}" ]; then
+    xcrun notarytool submit "$dmg" --keychain-profile "$HAVEN_NOTARY_PROFILE" --wait
+    xcrun stapler staple "$dmg"
+  else
+    echo "Signed, not notarised: set HAVEN_NOTARY_PROFILE to have Apple check it."
+  fi
+fi
 echo "Made $app and $dmg"
