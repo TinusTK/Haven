@@ -15,6 +15,10 @@ env:
   # One of the libraries (Chromecast support) brings in aws-lc, which
   # otherwise wants the NASM assembler installed on Windows.
   AWS_LC_SYS_PREBUILT_NASM: 1
+  # Haven's own TMDB key, built into every copy so the catalogue works
+  # without one of your own. Empty where secrets are not shared (pull
+  # requests from forks): Haven then asks for a key in Settings.
+  HAVEN_TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
 
 jobs:
   windows:
@@ -221,22 +225,36 @@ jobs:
       - name: Install cargo-apk
         run: cargo install cargo-apk --locked
       # The APK is signed with Haven's own key, kept in the repository's
-      # secrets, so that a newer one installs over an older one. The
-      # build machine already has the Android SDK and NDK.
-      - name: Build the signed APK
+      # secrets, so that a newer one installs over an older one. Pull
+      # requests from forks get no secrets: their APK is signed with a
+      # throwaway key made here, fine for testing but it cannot update
+      # a real Haven. The build machine already has the Android SDK and NDK.
+      - name: Build the APK
+        id: apk
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           CARGO_APK_RELEASE_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
         run: |
-          if [ -z "$ANDROID_KEYSTORE_BASE64" ]; then echo "The signing key is not available to this run."; exit 1; fi
-          echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/haven-release.jks"
-          export CARGO_APK_RELEASE_KEYSTORE="$RUNNER_TEMP/haven-release.jks"
+          keystore="$RUNNER_TEMP/haven-release.jks"
+          if [ -n "$ANDROID_KEYSTORE_BASE64" ]; then
+            echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$keystore"
+            suffix=android
+            echo "signed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No signing key in this run (a pull request from a fork): signing with a throwaway key."
+            export CARGO_APK_RELEASE_KEYSTORE_PASSWORD="throwaway"
+            keytool -genkeypair -keystore "$keystore" -storepass throwaway -keypass throwaway \
+              -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 1 -dname "CN=Haven test build"
+            suffix=android-test
+          fi
+          export CARGO_APK_RELEASE_KEYSTORE="$keystore"
           cargo apk build -p haven-app --lib --release
-          rm -f "$RUNNER_TEMP/haven-release.jks"
+          rm -f "$keystore"
           version="$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json,sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"]=="haven-app"))')"
           mkdir -p target/android
-          cp target/release/apk/haven_app.apk "target/android/Haven-$version-android.apk"
+          cp target/release/apk/haven_app.apk "target/android/Haven-$version-$suffix.apk"
       - name: Check the APK's signature
+        if: steps.apk.outputs.signed == 'true'
         run: |
           tools="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)"
           "$tools/apksigner" verify --print-certs target/android/*.apk | grep "CN=Haven"
