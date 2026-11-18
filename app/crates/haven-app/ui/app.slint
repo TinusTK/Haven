@@ -61,6 +61,8 @@ export struct StreamRow {
     // Who provided it: an add-on's name, or for a media server the
     // add-on it got the stream from (else the server itself).
     group: string,
+    // Its place among the rows of its provider.
+    group-at: int,
 }
 
 // A provider of places to watch, with how many it gave.
@@ -1771,6 +1773,8 @@ export component AppWindow inherits Window {
     // one ("" for all).
     in property <[StreamGroup]> stream-groups;
     in-out property <string> stream-group;
+    // How many places to watch are shown; "Show more" adds ten.
+    in-out property <int> stream-limit: 10;
     // Where the open film or episode would resume, in words; often empty.
     in property <string> resume-note;
     // Titles saved to watch later, newest first.
@@ -2268,27 +2272,45 @@ export component AppWindow inherits Window {
                                         Chip {
                                             label: "All  " + root.streams.length;
                                             selected: root.stream-group == "";
-                                            clicked => { root.stream-group = ""; }
+                                            clicked => { root.stream-group = ""; root.stream-limit = 10; }
                                         }
                                         for group in root.stream-groups: Chip {
                                             label: group.name + "  " + group.count;
                                             selected: root.stream-group == group.name;
-                                            clicked => { root.stream-group = group.name; }
+                                            clicked => { root.stream-group = group.name; root.stream-limit = 10; }
                                         }
                                     }
                                 }
                             }
                             // Rows of other providers take up no room.
                             VerticalLayout {
-                                for stream[index] in root.streams: Rectangle {
-                                    private property <bool> shown: root.stream-group == "" || stream.group == root.stream-group;
+                                for stream[index] in root.streams: stream-slot := Rectangle {
+                                    // A few at a time: the rest wait for "Show more".
+                                    private property <bool> shown: root.stream-group == ""
+                                        ? index < root.stream-limit
+                                        : stream.group == root.stream-group && stream.group-at < root.stream-limit;
                                     height: self.shown ? 68px : 0px;
-                                    visible: self.shown;
-                                    StreamItem {
+                                    if stream-slot.shown: StreamItem {
                                         y: 0;
                                         height: 58px;
                                         stream: stream;
                                         play => { root.play-stream(index); }
+                                    }
+                                }
+                                if root.stream-group == "" && root.streams.length > root.stream-limit: HorizontalLayout {
+                                    alignment: start;
+                                    Chip {
+                                        label: "Show more  (" + (root.streams.length - root.stream-limit) + " left)";
+                                        clicked => { root.stream-limit += 10; }
+                                    }
+                                }
+                                for group in root.stream-groups: more-slot := Rectangle {
+                                    private property <bool> more: root.stream-group == group.name && group.count > root.stream-limit;
+                                    height: self.more ? 30px : 0px;
+                                    if more-slot.more: Chip {
+                                        x: 0;
+                                        label: "Show more  (" + (group.count - root.stream-limit) + " left)";
+                                        clicked => { root.stream-limit += 10; }
                                     }
                                 }
                             }

@@ -16,6 +16,9 @@ use crate::StreamRow;
 /// The heading over the list.
 pub(super) const HEADING: &str = "Play from your sources";
 
+/// Places to watch shown at first, and added by "Show more".
+const STREAMS_SHOWN: i32 = 10;
+
 /// What is behind one row of the list.
 pub(super) struct StreamSource {
     /// The address the player opens; `None` if Haven cannot play the row.
@@ -101,24 +104,29 @@ impl Library {
             pending += 1;
             let (client, wanted) = (self.server_client.clone(), wanted.clone());
             self.tasks.spawn(async move {
+                let source = format!("{} ({})", server.name, server.kind.label());
                 let found = async {
                     let item = match own {
                         Some(item) => Some(item),
                         None => client.find(&server, &wanted).await?,
                     };
-                    match item {
-                        Some(item) => {
-                            let streams = client.streams(&server, &item).await?;
-                            Ok((Some(title_id(server.id, &item)), streams))
-                        }
-                        None => Ok((None, Vec::new())),
-                    }
+                    let Some(item) = item else { return Ok(None) };
+                    let id = title_id(server.id, &item);
+                    // A long list shows as it arrives, a few at a time.
+                    client
+                        .streams_live(&server, &item, |some| {
+                            let (source, id) = (source.clone(), id.clone());
+                            on_ui(move |library| {
+                                library.streams_arrived(generation, &source, Some(id), &some)
+                            });
+                        })
+                        .await?;
+                    Ok(Some(id))
                 }
                 .await
                 .map_err(|err: haven_servers::Error| err.to_string());
-                let source = format!("{} ({})", server.name, server.kind.label());
                 on_ui(move |library| match found {
-                    Ok((item, streams)) => library.streams_loaded(generation, &source, item, Ok(streams)),
+                    Ok(item) => library.streams_loaded(generation, &source, item, Ok(Vec::new())),
                     Err(err) => library.streams_loaded(generation, &source, None, Err(err)),
                 });
             });
@@ -172,8 +180,81 @@ impl Library {
         self.set_streams_state(Some(heading), true, "");
     }
 
-    /// One media server or add-on has answered. `server_item` is the
-    /// item the streams play when they come from a media server.
+    /// Some places to watch have come in from a media server or add-on
+    /// (which may send more). `server_item` is the item they play when
+    /// they come from a media server.
+    pub(super) fn streams_arrived(
+        &self,
+        generation: u64,
+        source: &str,
+        server_item: Option<String>,
+        streams: &[Stream],
+    ) {
+        if generation != self.stream_generation.get() {
+            return;
+        }
+        // Playable here with the player, or on a Chromecast.
+        let can_play = self.player.borrow().is_some() || !self.cast_devices.borrow().is_empty();
+        for stream in streams {
+            let Some(mut row) = stream_row(source, stream) else { continue };
+            // Its provider: the add-on a server got it from, if the
+            // server says; else the server or add-on that answered.
+            row.group = stream.provider.as_deref().unwrap_or(source).into();
+            // Its place among its provider's rows: the list shows a
+            // few at a time.
+            row.group_at = self.streams.iter().filter(|known| known.group == row.group).count() as i32;
+            // Only plain web addresses reach the player.
+            let address = stream
+                .url
+                .as_deref()
+                .filter(|_| can_play && stream.kind() == Some(StreamKind::Direct))
+                .and_then(web_address)
+                .map(str::to_owned);
+            row.playable = address.is_some();
+            let source = StreamSource { address, server_item: server_item.clone() };
+            if server_item.is_some() {
+                // Your own servers stay above the add-ons.
+                let at = self.server_rows.get();
+                self.stream_sources.borrow_mut().insert(at, source);
+                self.streams.insert(at, row);
+                self.server_rows.set(at + 1);
+            } else {
+                self.stream_sources.borrow_mut().push(source);
+                self.streams.push(row);
+            }
+        }
+        self.show_stream_groups();
+        // The next episode plays from the same place as the last, as
+        // soon as the row of the same name shows.
+        self.autoplay_from(source, false);
+    }
+
+    /// Plays the next episode from `source` if that is where the last
+    /// one played from: the row of the same name, or, once the source
+    /// has `finished` answering, its first playable row.
+    fn autoplay_from(&self, source: &str, finished: bool) {
+        let wanted = self.autoplay.borrow().clone();
+        let Some((wanted_source, wanted_name)) = wanted.filter(|(wanted, _)| wanted == source) else {
+            return;
+        };
+        let rows: Vec<(usize, StreamRow)> = self
+            .streams
+            .iter()
+            .enumerate()
+            .filter(|(_, row)| row.playable && row.source == wanted_source.as_str())
+            .collect();
+        let pick = rows
+            .iter()
+            .find(|(_, row)| row.name == wanted_name.as_str())
+            .or_else(|| rows.first().filter(|_| finished))
+            .map(|(at, _)| *at);
+        if let Some(at) = pick {
+            *self.autoplay.borrow_mut() = None;
+            self.play_stream(at as i32);
+        }
+    }
+
+    /// One media server or add-on has finished answering.
     pub(super) fn streams_loaded(
         &self,
         generation: u64,
@@ -185,58 +266,10 @@ impl Library {
             return;
         }
         match streams {
-            Ok(streams) => {
-                // Playable here with the player, or on a Chromecast.
-                let can_play =
-                    self.player.borrow().is_some() || !self.cast_devices.borrow().is_empty();
-                for stream in &streams {
-                    let Some(mut row) = stream_row(source, stream) else { continue };
-                    // Its provider: the add-on a server got it from, if the
-                    // server says; else the server or add-on that answered.
-                    row.group = stream.provider.as_deref().unwrap_or(source).into();
-                    // Only plain web addresses reach the player.
-                    let address = stream
-                        .url
-                        .as_deref()
-                        .filter(|_| can_play && stream.kind() == Some(StreamKind::Direct))
-                        .and_then(web_address)
-                        .map(str::to_owned);
-                    row.playable = address.is_some();
-                    let source = StreamSource { address, server_item: server_item.clone() };
-                    if server_item.is_some() {
-                        // Your own servers stay above the add-ons.
-                        let at = self.server_rows.get();
-                        self.stream_sources.borrow_mut().insert(at, source);
-                        self.streams.insert(at, row);
-                        self.server_rows.set(at + 1);
-                    } else {
-                        self.stream_sources.borrow_mut().push(source);
-                        self.streams.push(row);
-                    }
-                }
-            }
+            Ok(streams) => self.streams_arrived(generation, source, server_item, &streams),
             Err(err) => haven_core::diag::note(&format!("{source} gave no places to watch: {err}")),
         }
-        // The next episode plays from the same place as the last, as soon
-        // as that place has answered.
-        let wanted = self.autoplay.borrow().clone();
-        if let Some((wanted_source, wanted_name)) = wanted.filter(|(wanted, _)| wanted == source) {
-            let rows: Vec<(usize, StreamRow)> = self
-                .streams
-                .iter()
-                .enumerate()
-                .filter(|(_, row)| row.playable && row.source == wanted_source.as_str())
-                .collect();
-            let pick = rows
-                .iter()
-                .find(|(_, row)| row.name == wanted_name.as_str())
-                .or_else(|| rows.first())
-                .map(|(at, _)| *at);
-            if let Some(at) = pick {
-                *self.autoplay.borrow_mut() = None;
-                self.play_stream(at as i32);
-            }
-        }
+        self.autoplay_from(source, true);
         self.show_stream_groups();
         let pending = self.streams_pending.get().saturating_sub(1);
         self.streams_pending.set(pending);
@@ -265,6 +298,9 @@ impl Library {
             // A chosen provider that is gone falls back to all.
             if !groups.iter().any(|group| group.name == ui.get_stream_group()) {
                 ui.set_stream_group("".into());
+            }
+            if self.streams.row_count() == 0 {
+                ui.set_stream_limit(STREAMS_SHOWN);
             }
             ui.set_stream_groups(slint::ModelRc::new(slint::VecModel::from(groups)));
         }
@@ -400,5 +436,6 @@ fn stream_row(source: &str, stream: &Stream) -> Option<StreamRow> {
         kind: kind.into(),
         playable: false,
         group: source.into(),
+        group_at: 0,
     })
 }

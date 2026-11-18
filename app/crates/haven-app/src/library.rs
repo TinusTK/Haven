@@ -41,6 +41,11 @@ const IMAGE_BYTES: usize = 6 * 1024 * 1024;
 const POSTER_SIZE: (u32, u32) = (300, 450);
 const BACKGROUND_SIZE: (u32, u32) = (1600, 900);
 const IMAGES_AT_ONCE: usize = 6;
+/// Shelves asked of media servers at the same time. A server that
+/// gathers add-on catalogues passes every ask on to the add-on, and an
+/// add-on asked for dozens of lists at once refuses them all (and then
+/// refuses the streams too).
+const SERVER_SHELVES_AT_ONCE: usize = 2;
 const CAST_SHOWN: usize = 6;
 const CONTINUE_LENGTH: u32 = 20;
 
@@ -172,6 +177,7 @@ pub struct Library {
     home: ShelfSet,
     search: ShelfSet,
     image_gate: Arc<Semaphore>,
+    server_gate: Arc<Semaphore>,
     /// Where downloaded pictures are kept between runs.
     picture_cache: Arc<std::path::PathBuf>,
 
@@ -270,6 +276,7 @@ impl Library {
             home: ShelfSet::default(),
             search: ShelfSet::default(),
             image_gate: Arc::new(Semaphore::new(IMAGES_AT_ONCE)),
+            server_gate: Arc::new(Semaphore::new(SERVER_SHELVES_AT_ONCE)),
             picture_cache: Arc::new(picture_cache),
             open: RefCell::default(),
             detail_generation: Cell::new(0),
@@ -691,8 +698,14 @@ impl Library {
             let (addons, servers, search) =
                 (self.addons.clone(), self.server_client.clone(), search.clone());
             let tmdb = self.tmdb();
+            let gate = self.server_gate.clone();
             self.tasks.spawn(async move {
                 let no_key = || "there is no TMDB key".to_owned();
+                // A media server's shelves take turns.
+                let _turn = match &plan.from {
+                    ShelfFrom::Server { .. } => gate.acquire_owned().await.ok(),
+                    _ => None,
+                };
                 let metas = match &plan.from {
                     ShelfFrom::Addon { url, catalog } => addons
                         .catalog(url, catalog, search.as_deref())

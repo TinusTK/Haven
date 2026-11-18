@@ -403,6 +403,23 @@ impl Client {
         }
     }
 
+    /// As [`Client::streams`], handing the ways to `found` a few at a
+    /// time while a long list is still arriving.
+    pub async fn streams_live(
+        &self,
+        server: &Server,
+        item: &str,
+        mut found: impl FnMut(Vec<Stream>) + Send,
+    ) -> Result<()> {
+        match server.kind {
+            Kind::Plex => {
+                found(plex::streams(self, server, item).await?);
+                Ok(())
+            }
+            _ => emby::streams_live(self, server, item, found).await,
+        }
+    }
+
     /// Tells the server how far a film or episode was watched, in seconds.
     pub async fn report(
         &self,

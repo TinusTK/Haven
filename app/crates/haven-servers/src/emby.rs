@@ -309,6 +309,9 @@ pub(crate) fn read_previews(server: &Server, items: &[Value]) -> Vec<MetaPreview
             _ => continue,
         };
         let (Some(id), Some(name)) = (id, name) else { continue };
+        if is_error_entry(&id) {
+            continue;
+        }
         let full = title_id(server.id, &id);
         if previews.iter().any(|known| known.id == full) {
             continue;
@@ -322,6 +325,21 @@ pub(crate) fn read_previews(server: &Server, items: &[Value]) -> Vec<MetaPreview
         });
     }
     previews
+}
+
+/// A server that gathers add-on catalogues passes on an add-on's error
+/// (such as "Rate Limit Exceeded") as if it were a film. Its id spells
+/// `<kind>|<add-on id>|<type>` in hex, and the add-on id says it is an error.
+pub(crate) fn is_error_entry(id: &str) -> bool {
+    if id.len() % 2 != 0 || !id.is_ascii() {
+        return false;
+    }
+    let bytes: Option<Vec<u8>> =
+        (0..id.len()).step_by(2).map(|at| u8::from_str_radix(&id[at..at + 2], 16).ok()).collect();
+    bytes
+        .and_then(|bytes| String::from_utf8(bytes).ok())
+        .and_then(|spelt| spelt.split('|').nth(1).map(|addon_id| addon_id.contains("streamserror.")))
+        .unwrap_or(false)
 }
 
 pub async fn meta(client: &Client, server: &Server, item: &str) -> Result<MetaDetail> {
@@ -397,11 +415,34 @@ fn file_address(server: &Server, item: &str, version: Option<&str>) -> String {
     address
 }
 
+/// Sources handed on at a time while a long list is still arriving.
+const BATCH: usize = 10;
+/// The most sources read from one answer.
+const MOST_SOURCES: usize = 3000;
+/// How long a list of sources may take in all, and between two parts.
+const LIST_WAIT: std::time::Duration = std::time::Duration::from_secs(900);
+const PART_WAIT: std::time::Duration = std::time::Duration::from_secs(45);
+
 /// Every way the server offers to play the film or episode: each version
 /// of the file it holds, and, on servers that gather streams from
 /// elsewhere, each of those streams. The token goes in the address
 /// because the player, not Haven's own HTTP client, opens it.
 pub async fn streams(client: &Client, server: &Server, item: &str) -> Result<Vec<Stream>> {
+    let mut all = Vec::new();
+    streams_live(client, server, item, |some| all.extend(some)).await?;
+    Ok(all)
+}
+
+/// As [`streams`], but hands the sources to `found` a few at a time as
+/// the server's answer arrives. A server that gathers streams can list
+/// hundreds in an answer of many megabytes; waiting for the whole of it
+/// would show nothing for minutes on a slow line.
+pub async fn streams_live(
+    client: &Client,
+    server: &Server,
+    item: &str,
+    mut found: impl FnMut(Vec<Stream>) + Send,
+) -> Result<()> {
     // The playback information is what the server's own apps list their
     // sources from; some servers only work them out when asked this way.
     // The request is shaped like those apps': a profile that says this
@@ -432,47 +473,166 @@ pub async fn streams(client: &Client, server: &Server, item: &str) -> Result<Vec
             "SubtitleProfiles": []
         }
     });
-    let asked =
-        client.call(&url, &headers(client, server.kind, Some(&server.token)), Some(body)).await;
-    // The item itself may list its versions too, and some servers list
-    // more there than in the playback information: both are used.
+    let mut listed = 0usize;
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let asked: Result<()> = async {
+        let mut request = client
+            .http
+            .post(haven_core::http::web_url(&url).map_err(|_| Error::InvalidAddress(url.clone()))?)
+            .timeout(LIST_WAIT)
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json")
+            .body(body.to_string());
+        for (name, value) in headers(client, server.kind, Some(&server.token)) {
+            request = request.header(name, value);
+        }
+        let mut response = request.send().await.map_err(reqwest::Error::without_url)?;
+        match response.status().as_u16() {
+            200..=299 => {}
+            401 | 403 => return Err(Error::SignInRefused),
+            other => return Err(Error::Status(other)),
+        }
+        let mut scanner = SourceScanner::default();
+        let mut waiting: Vec<Value> = Vec::new();
+        loop {
+            let part = match tokio::time::timeout(PART_WAIT, response.chunk()).await {
+                Ok(part) => part.map_err(reqwest::Error::without_url)?,
+                Err(_) => break,
+            };
+            let Some(part) = part else { break };
+            for source in scanner.feed(&part) {
+                if text(&source, "Id").is_some_and(|id| !seen.insert(id)) {
+                    continue;
+                }
+                listed += 1;
+                waiting.push(source);
+            }
+            if waiting.len() >= BATCH {
+                found(read_sources(server, item, &waiting, listed > 1));
+                waiting.clear();
+            }
+            if scanner.done || listed >= MOST_SOURCES {
+                break;
+            }
+        }
+        if !waiting.is_empty() {
+            found(read_sources(server, item, &waiting, listed > 1));
+        }
+        Ok(())
+    }
+    .await;
+    haven_core::diag::note(&format!(
+        "{} sources: playback information {}",
+        server.name,
+        match &asked {
+            Ok(()) => format!("lists {listed}"),
+            Err(err) => format!("lists {listed}, then failed ({err})"),
+        }
+    ));
+    if listed > 0 {
+        return Ok(());
+    }
+    // Older servers, or one that listed nothing: the item itself may
+    // list its files.
     let detail = get(
         client,
         server,
         &format!("/Users/{}/Items/{}?Fields=MediaSources,MediaStreams", server.user_id, query(item)),
     )
     .await;
-    let shape = |answer: &std::result::Result<Value, crate::Error>| match answer {
-        Ok(answer) => describe_sources(answer),
-        Err(err) => format!("failed ({err})"),
-    };
-    haven_core::diag::note(&format!(
-        "{} sources: playback information {}; the item {}",
-        server.name,
-        shape(&asked),
-        shape(&detail)
-    ));
-    let mut sources: Vec<Value> = Vec::new();
-    for answer in [&asked, &detail].into_iter().flatten() {
-        for source in list(answer, "MediaSources") {
-            // The same source in both answers has the same id; only
-            // one without an id is told by where it plays from.
-            let known = |seen: &Value| match (text(seen, "Id"), text(source, "Id")) {
-                (Some(seen), Some(new)) => seen == new,
-                _ => text(seen, "Path").is_some() && text(seen, "Path") == text(source, "Path"),
-            };
-            if !sources.iter().any(known) {
-                sources.push(source.clone());
+    match (asked, detail) {
+        (_, Ok(detail)) => {
+            haven_core::diag::note(&format!(
+                "{} sources: the item {}",
+                server.name,
+                describe_sources(&detail)
+            ));
+            found(read_streams(server, item, &detail));
+            Ok(())
+        }
+        (Err(_), Err(err)) => Err(err),
+        (Ok(()), Err(_)) => {
+            found(read_streams(server, item, &json!({})));
+            Ok(())
+        }
+    }
+}
+
+/// Picks the entries of `MediaSources` out of an answer while it is
+/// still arriving, each as soon as its last byte is in.
+#[derive(Default)]
+pub(crate) struct SourceScanner {
+    depth: usize,
+    in_string: bool,
+    escape: bool,
+    /// The last string seen at the top level: the key before a value.
+    key: Vec<u8>,
+    in_list: bool,
+    /// The entry being gathered, if inside one.
+    entry: Option<Vec<u8>>,
+    /// The list has ended.
+    pub(crate) done: bool,
+}
+
+impl SourceScanner {
+    /// The most one entry may take (one with more is skipped).
+    const ENTRY_BYTES: usize = 4 * 1024 * 1024;
+
+    pub(crate) fn feed(&mut self, part: &[u8]) -> Vec<Value> {
+        let mut entries = Vec::new();
+        for &byte in part {
+            if self.done {
+                break;
+            }
+            if let Some(entry) = &mut self.entry {
+                if entry.len() < Self::ENTRY_BYTES {
+                    entry.push(byte);
+                }
+            }
+            let top = self.depth == 1 && !self.in_list;
+            if self.in_string {
+                if self.escape {
+                    self.escape = false;
+                } else if byte == b'\\' {
+                    self.escape = true;
+                } else if byte == b'"' {
+                    self.in_string = false;
+                } else if top {
+                    self.key.push(byte);
+                }
+                continue;
+            }
+            match byte {
+                b'"' => {
+                    self.in_string = true;
+                    if top {
+                        self.key.clear();
+                    }
+                }
+                b'{' | b'[' => {
+                    if byte == b'[' && top && self.key == b"MediaSources" {
+                        self.in_list = true;
+                    } else if byte == b'{' && self.in_list && self.depth == 2 {
+                        self.entry = Some(vec![byte]);
+                    }
+                    self.depth += 1;
+                }
+                b'}' | b']' => {
+                    self.depth = self.depth.saturating_sub(1);
+                    if self.in_list && self.depth == 2 {
+                        if let Some(entry) = self.entry.take() {
+                            entries.extend(serde_json::from_slice::<Value>(&entry).ok());
+                        }
+                    } else if self.in_list && self.depth == 1 {
+                        self.in_list = false;
+                        self.done = true;
+                    }
+                }
+                _ => {}
             }
         }
+        entries
     }
-    if sources.is_empty() {
-        // Nothing listed anywhere: only fail if the server gave no answer at all.
-        if let (Err(_), Err(err)) = (asked, detail) {
-            return Err(err);
-        }
-    }
-    Ok(read_streams(server, item, &json!({ "MediaSources": sources })))
 }
 
 /// What an answer's `MediaSources` look like, for the log: how many,
@@ -508,7 +668,27 @@ pub(crate) fn describe_sources(answer: &Value) -> String {
 /// item answer.
 pub(crate) fn read_streams(server: &Server, item: &str, answer: &Value) -> Vec<Stream> {
     let versions = list(answer, "MediaSources");
-    let streams: Vec<Stream> = versions
+    let streams = read_sources(server, item, versions, versions.len() > 1);
+    if !streams.is_empty() {
+        return streams;
+    }
+    // The server listed no versions: the file itself still plays.
+    vec![Stream {
+        name: Some("Direct".to_owned()),
+        description: Some(format!("The file as stored on {}", server.name)),
+        url: Some(file_address(server, item, None)),
+        ..Stream::default()
+    }]
+}
+
+/// One stream per source; `several` says the film has more than one.
+pub(crate) fn read_sources(
+    server: &Server,
+    item: &str,
+    versions: &[Value],
+    several: bool,
+) -> Vec<Stream> {
+    versions
         .iter()
         .filter_map(|version| {
             let id = text(version, "Id");
@@ -554,7 +734,7 @@ pub(crate) fn read_streams(server: &Server, item: &str, answer: &Value) -> Vec<S
             let mut heading = quality.clone();
             if let Some(name) = text(version, "Name") {
                 if quality.is_some() {
-                    if versions.len() > 1 {
+                    if several {
                         facts.push(name);
                     }
                 } else {
@@ -587,17 +767,7 @@ pub(crate) fn read_streams(server: &Server, item: &str, answer: &Value) -> Vec<S
                 ..Stream::default()
             })
         })
-        .collect();
-    if !streams.is_empty() {
-        return streams;
-    }
-    // The server listed no versions: the file itself still plays.
-    vec![Stream {
-        name: Some("Direct".to_owned()),
-        description: Some(format!("The file as stored on {}", server.name)),
-        url: Some(file_address(server, item, None)),
-        ..Stream::default()
-    }]
+        .collect()
 }
 
 pub async fn report(
@@ -681,6 +851,51 @@ mod tests {
         assert_eq!(addons.iter().map(|a| a.name.as_str()).collect::<Vec<_>>(), ["One", "Second"]);
         assert!(!format!("{:?}", addons[0]).contains("key123"));
         assert!(read_shared_addons(&json!({})).is_empty());
+    }
+
+    #[test]
+    fn sources_are_picked_out_as_the_answer_arrives() {
+        let answer = json!({
+            "Note": "MediaSources",
+            "Other": [{"Id": "no"}],
+            "MediaSources": [
+                {"Id": "a", "Name": "One \"quoted\" } ]", "MediaStreams": [{"Type": "Subtitle"}]},
+                {"Id": "b", "Nested": {"MediaSources": [{"Id": "inner"}]}}
+            ],
+            "PlaySessionId": "x"
+        })
+        .to_string();
+        let ids = |entries: &[Value]| entries.iter().filter_map(|e| text(e, "Id")).collect::<Vec<_>>();
+        // Whole, and a few bytes at a time: the same two entries.
+        let mut whole = SourceScanner::default();
+        assert_eq!(ids(&whole.feed(answer.as_bytes())), ["a", "b"]);
+        assert!(whole.done);
+        let mut slow = SourceScanner::default();
+        let mut entries = Vec::new();
+        for part in answer.as_bytes().chunks(7) {
+            entries.extend(slow.feed(part));
+        }
+        assert_eq!(ids(&entries), ["a", "b"]);
+        assert_eq!(text(&entries[0], "Name").as_deref(), Some("One \"quoted\" } ]"));
+        // The first is there before the answer is complete.
+        let mut early = SourceScanner::default();
+        let cut = answer.find("\"Id\":\"b\"").unwrap();
+        assert_eq!(ids(&early.feed(&answer.as_bytes()[..cut])), ["a"]);
+        assert!(!early.done);
+    }
+
+    #[test]
+    fn an_addons_error_is_not_a_film() {
+        let hex = |text: &str| text.bytes().map(|b| format!("{b:02x}")).collect::<String>();
+        let error = hex("m|aiostreamserror.%7B%22errorDescription%22%3A%22Rate%20Limit%22%7D|movie");
+        assert!(is_error_entry(&error));
+        assert!(!is_error_entry(&hex("m|tt0111161|movie")));
+        assert!(!is_error_entry("f27caa37e5142225cceded48f6553502"));
+        let items = json!([
+            {"Type": "Movie", "Id": error, "Name": "Rate Limit Exceeded"},
+            {"Type": "Movie", "Id": hex("m|tt0111161|movie"), "Name": "A Film"}
+        ]);
+        assert_eq!(read_previews(&server(), items.as_array().unwrap()).len(), 1);
     }
 
     #[test]
