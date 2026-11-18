@@ -12,6 +12,13 @@ authors = ["TinusTK"]
 name = "haven"
 path = "src/main.rs"
 
+# The app itself is a library: the desktop program above starts it, and
+# on Android it is loaded as a shared library by the system.
+[lib]
+name = "haven_app"
+path = "src/lib.rs"
+crate-type = ["lib", "cdylib"]
+
 # The player needs libmpv on the machine, so it is opt-in for now:
 # `cargo run -p haven-app --features player`. Without it Haven builds
 # everywhere and lists streams without playing them.
@@ -67,3 +74,26 @@ assets = [
     ["../../../LICENSE", "usr/share/doc/haven/LICENSE", "644"],
     ["../../../THIRD-PARTY.md", "usr/share/doc/haven/THIRD-PARTY.md", "644"],
 ]
+
+# Android: Slint's own Android backend, and what the APK is called.
+[target.'cfg(target_os = "android")'.dependencies]
+slint = { workspace = true, features = ["backend-android-activity-06"] }
+
+[package.metadata.android]
+package = "net.haven.app"
+build_targets = ["aarch64-linux-android"]
+resources = "../../packaging/android/res"
+
+[package.metadata.android.sdk]
+min_sdk_version = 26
+target_sdk_version = 35
+
+[package.metadata.android.application]
+label = "Haven"
+icon = "@mipmap/ic_launcher"
+
+[[package.metadata.android.uses_permission]]
+name = "android.permission.INTERNET"
+
+[package.metadata.android.application.activity]
+config_changes = "orientation|screenSize|screenLayout|keyboardHidden|keyboard|uiMode"

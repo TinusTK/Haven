@@ -86,6 +86,7 @@ enum Installed {
     #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
     Closing,
     /// Done or handed on; the words say what the user does next.
+    #[cfg_attr(not(any(target_os = "linux", target_os = "macos")), allow(dead_code))]
     Say(String),
 }
 
