@@ -103,6 +103,7 @@ impl Library {
             }
             pending += 1;
             let (client, wanted) = (self.server_client.clone(), wanted.clone());
+            let current = self.stream_generation.shared();
             self.tasks.spawn(async move {
                 let source = format!("{} ({})", server.name, server.kind.label());
                 let found = async {
@@ -119,6 +120,8 @@ impl Library {
                             on_ui(move |library| {
                                 library.streams_arrived(generation, &source, Some(id), &some)
                             });
+                            // Stop reading once another title is open.
+                            current.load(std::sync::atomic::Ordering::Relaxed) == generation
                         })
                         .await?;
                     Ok(Some(id))

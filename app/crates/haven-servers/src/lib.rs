@@ -404,16 +404,17 @@ impl Client {
     }
 
     /// As [`Client::streams`], handing the ways to `found` a few at a
-    /// time while a long list is still arriving.
+    /// time while a long list is still arriving. `found` answers
+    /// whether more are wanted; on no, the rest is not read.
     pub async fn streams_live(
         &self,
         server: &Server,
         item: &str,
-        mut found: impl FnMut(Vec<Stream>) + Send,
+        mut found: impl FnMut(Vec<Stream>) -> bool + Send,
     ) -> Result<()> {
         match server.kind {
             Kind::Plex => {
-                found(plex::streams(self, server, item).await?);
+                let _ = found(plex::streams(self, server, item).await?);
                 Ok(())
             }
             _ => emby::streams_live(self, server, item, found).await,

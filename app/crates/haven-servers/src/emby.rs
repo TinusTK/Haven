@@ -429,19 +429,24 @@ const PART_WAIT: std::time::Duration = std::time::Duration::from_secs(45);
 /// because the player, not Haven's own HTTP client, opens it.
 pub async fn streams(client: &Client, server: &Server, item: &str) -> Result<Vec<Stream>> {
     let mut all = Vec::new();
-    streams_live(client, server, item, |some| all.extend(some)).await?;
+    streams_live(client, server, item, |some| {
+        all.extend(some);
+        true
+    })
+    .await?;
     Ok(all)
 }
 
 /// As [`streams`], but hands the sources to `found` a few at a time as
 /// the server's answer arrives. A server that gathers streams can list
 /// hundreds in an answer of many megabytes; waiting for the whole of it
-/// would show nothing for minutes on a slow line.
+/// would show nothing for minutes on a slow line. `found` answers
+/// whether more are wanted; on no, the rest is not read.
 pub async fn streams_live(
     client: &Client,
     server: &Server,
     item: &str,
-    mut found: impl FnMut(Vec<Stream>) + Send,
+    mut found: impl FnMut(Vec<Stream>) -> bool + Send,
 ) -> Result<()> {
     // The playback information is what the server's own apps list their
     // sources from; some servers only work them out when asked this way.
@@ -508,15 +513,18 @@ pub async fn streams_live(
                 waiting.push(source);
             }
             if waiting.len() >= BATCH {
-                found(read_sources(server, item, &waiting, listed > 1));
+                let wanted = found(read_sources(server, item, &waiting, listed > 1));
                 waiting.clear();
+                if !wanted {
+                    break;
+                }
             }
             if scanner.done || listed >= MOST_SOURCES {
                 break;
             }
         }
         if !waiting.is_empty() {
-            found(read_sources(server, item, &waiting, listed > 1));
+            let _ = found(read_sources(server, item, &waiting, listed > 1));
         }
         Ok(())
     }
@@ -547,12 +555,12 @@ pub async fn streams_live(
                 server.name,
                 describe_sources(&detail)
             ));
-            found(read_streams(server, item, &detail));
+            let _ = found(read_streams(server, item, &detail));
             Ok(())
         }
         (Err(_), Err(err)) => Err(err),
         (Ok(()), Err(_)) => {
-            found(read_streams(server, item, &json!({})));
+            let _ = found(read_streams(server, item, &json!({})));
             Ok(())
         }
     }

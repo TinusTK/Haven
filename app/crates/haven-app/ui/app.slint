@@ -492,15 +492,17 @@ component EpisodeItem inherits Rectangle {
     }
 }
 
-component StreamItem inherits Rectangle {
+// A place to watch, as a card in the title page's panel.
+component SourceCard inherits Rectangle {
     in property <StreamRow> stream;
     callback play();
 
-    height: 58px;
-    border-radius: 8px;
-    background: stream.playable && (touch.has-hover || focus.has-focus) ? Theme.hover : Theme.surface;
+    height: 88px;
+    border-radius: 12px;
+    background: stream.playable && (touch.has-hover || focus.has-focus) ? Theme.hover : Theme.background.with-alpha(0.55);
     border-width: 1px;
     border-color: stream.playable && (touch.has-hover || focus.has-focus) ? Theme.accent : Theme.border;
+    clip: true;
     accessible-role: button;
     accessible-label: (stream.playable ? "Play " : "") + stream.name + ", " + stream.kind + ", from " + stream.source;
     accessible-action-default => {
@@ -527,31 +529,56 @@ component StreamItem inherits Rectangle {
 
     HorizontalLayout {
         padding-left: 14px;
-        padding-right: 14px;
-        spacing: 14px;
+        padding-right: 12px;
+        spacing: 12px;
         VerticalLayout {
             horizontal-stretch: 1;
             alignment: center;
-            spacing: 2px;
+            spacing: 3px;
             Text {
-                text: root.stream.name + "  ·  " + root.stream.source;
+                text: root.stream.name;
                 color: Theme.text;
-                font-weight: 600;
+                font-size: 14px;
+                font-weight: 700;
                 overflow: elide;
             }
             Text {
+                // Two lines, cut short with "…".
+                height: 30px;
                 text: root.stream.detail;
                 color: Theme.text-dim;
                 font-size: 12px;
+                vertical-alignment: top;
+                wrap: word-wrap;
+                overflow: elide;
+            }
+            Text {
+                text: root.stream.group == root.stream.source ? root.stream.source : root.stream.group + "  ·  " + root.stream.source;
+                color: Theme.text-dim;
+                font-size: 11px;
                 overflow: elide;
             }
         }
-        Text {
-            text: root.stream.playable ? "▶  Play" : root.stream.kind;
-            color: root.stream.playable ? Theme.accent : Theme.text-dim;
-            font-size: root.stream.playable ? 13px : 12px;
-            font-weight: root.stream.playable ? 600 : 400;
-            vertical-alignment: center;
+        VerticalLayout {
+            alignment: center;
+            if root.stream.playable: Rectangle {
+                width: 38px;
+                height: 38px;
+                border-radius: 19px;
+                background: touch.has-hover || focus.has-focus ? Theme.accent : Theme.selected;
+                Text {
+                    text: "▶";
+                    color: touch.has-hover || focus.has-focus ? (Theme.dark ? #171a22 : #ffffff) : Theme.accent;
+                    font-size: 14px;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+            if !root.stream.playable: Text {
+                text: root.stream.kind;
+                color: Theme.text-dim;
+                font-size: 12px;
+            }
         }
     }
 }
@@ -1773,6 +1800,11 @@ export component AppWindow inherits Window {
     // one ("" for all).
     in property <[StreamGroup]> stream-groups;
     in-out property <string> stream-group;
+    // An episode is picked: the panel lists its places to watch.
+    in-out property <bool> episode-open;
+    // The picked episode in words, such as "S3 E4 · Its name".
+    in property <string> episode-label;
+    in-out property <string> episode-filter;
     // How many places to watch are shown; "Show more" adds ten.
     in-out property <int> stream-limit: 10;
     // Where the open film or episode would resume, in words; often empty.
@@ -1923,6 +1955,7 @@ export component AppWindow inherits Window {
     callback close-detail();
     callback season-selected(int);
     callback episode-selected(string);
+    callback filter-episodes(string);
     // Puts the open title on the watchlist, or takes it off.
     callback toggle-watchlist();
     // Takes a title off Continue Watching (forgets how far it was watched).
@@ -2066,233 +2099,271 @@ export component AppWindow inherits Window {
             visible: !root.player-open;
             horizontal-stretch: 1;
 
-            if root.detail-open: detail-view := ScrollView {
-                content-width: self.visible-width;
-                content-height: detail-content.preferred-height;
+            if root.detail-open: detail-view := Rectangle {
+                // A series lists its episodes in the panel first; a film,
+                // or an episode once picked, lists its places to watch.
+                private property <bool> is-series: root.episodes.length > 0 || root.seasons.length > 0;
+                private property <bool> sources-shown: !self.is-series || root.episode-open;
+                private property <length> panel-width: clamp(self.width * 0.42, 360px, 540px);
+                clip: true;
+                background: Theme.background;
 
-                detail-content := VerticalLayout {
-                    width: detail-view.visible-width;
-                    alignment: start;
+                if root.detail.has-background: Image {
+                    width: 100%;
+                    height: 100%;
+                    source: root.detail.background;
+                    image-fit: cover;
+                }
+                // Darkened towards the words on the left and the bottom.
+                Rectangle {
+                    background: @linear-gradient(90deg, Theme.background.with-alpha(0.94) 0%, Theme.background.with-alpha(0.6) 55%, Theme.background.with-alpha(0.4) 100%);
+                }
+                Rectangle {
+                    background: @linear-gradient(180deg, transparent 35%, Theme.background.with-alpha(0.9) 100%);
+                }
 
-                    Rectangle {
-                        // Tall enough for the wide picture's faces: up to
-                        // the picture's own shape, within reason.
-                        height: clamp(detail-view.visible-width * 0.3, 220px, 380px);
-                        clip: true;
-                        background: Theme.surface;
+                // ---- The title, on the left over the picture.
+                VerticalLayout {
+                    x: 40px;
+                    width: parent.width - detail-view.panel-width - 24px - 40px - 36px;
+                    height: parent.height;
+                    padding-top: 20px;
+                    padding-bottom: 36px;
+                    spacing: 10px;
 
-                        if root.detail.has-background: Image {
-                            width: 100%;
-                            height: 100%;
-                            source: root.detail.background;
-                            image-fit: cover;
-                            // Keep the top of the picture, where heads are.
-                            vertical-alignment: top;
-                        }
-                        Rectangle {
-                            background: @linear-gradient(180deg, transparent 35%, Theme.background 100%);
-                        }
+                    HorizontalLayout {
+                        alignment: start;
                         Button {
-                            x: 24px;
-                            y: 20px;
                             text: "‹ Back";
                             accessible-label: "Back";
                             clicked => { root.close-detail(); }
                         }
                     }
-                    VerticalLayout {
-                        padding-left: 32px;
-                        padding-right: 32px;
-                        padding-bottom: 32px;
-                        spacing: 24px;
+                    Rectangle { vertical-stretch: 1; }
+                    if root.detail.has-poster && detail-view.height > 560px: HorizontalLayout {
+                        alignment: start;
+                        Rectangle {
+                            width: 120px;
+                            height: 180px;
+                            border-radius: 10px;
+                            clip: true;
+                            border-width: 1px;
+                            border-color: Theme.border;
+                            Image {
+                                width: 100%;
+                                height: 100%;
+                                source: root.detail.poster;
+                                image-fit: cover;
+                            }
+                        }
+                    }
+                    Text {
+                        text: root.detail.title;
+                        color: Theme.text;
+                        font-size: 36px;
+                        font-weight: 800;
+                        wrap: word-wrap;
+                    }
+                    if root.episode-open && root.episode-label != "": Text {
+                        text: root.episode-label;
+                        color: Theme.accent;
+                        font-size: 18px;
+                        font-weight: 600;
+                        wrap: word-wrap;
+                    }
+                    if root.detail.facts != "": Text {
+                        text: root.detail.facts;
+                        color: Theme.text;
+                        font-size: 14px;
+                        font-weight: 600;
+                        wrap: word-wrap;
+                    }
+                    if root.detail.loading: Text {
+                        text: "Loading details…";
+                        color: Theme.text-dim;
+                    }
+                    if root.detail.error != "": Text {
+                        text: root.detail.error;
+                        color: Theme.text-dim;
+                        wrap: word-wrap;
+                    }
+                    if root.detail.description != "": Text {
+                        text: root.detail.description;
+                        color: Theme.text;
+                        font-size: 14px;
+                        wrap: word-wrap;
+                        overflow: elide;
+                        max-height: 118px;
+                    }
+                    if root.detail.cast != "": Text {
+                        text: "Cast   " + root.detail.cast;
+                        color: Theme.text-dim;
+                        font-size: 13px;
+                        overflow: elide;
+                    }
+                    if root.detail.director != "": Text {
+                        text: "Director   " + root.detail.director;
+                        color: Theme.text-dim;
+                        font-size: 13px;
+                        overflow: elide;
+                    }
+                    HorizontalLayout {
+                        alignment: start;
+                        padding-top: 6px;
+                        Chip {
+                            height: 38px;
+                            border-radius: 19px;
+                            width: root.detail.saved ? 160px : 180px;
+                            label: root.detail.saved ? "✓  On Watchlist" : "＋  Add to Watchlist";
+                            selected: root.detail.saved;
+                            clicked => { root.toggle-watchlist(); }
+                        }
+                    }
+                }
+
+                // ---- The panel on the right: episodes, then places to watch.
+                Rectangle {
+                    x: parent.width - detail-view.panel-width - 24px;
+                    y: 24px;
+                    width: detail-view.panel-width;
+                    height: parent.height - 48px;
+                    border-radius: 18px;
+                    background: Theme.surface.with-alpha(0.94);
+                    border-width: 1px;
+                    border-color: Theme.border;
+                    clip: true;
+                    // Clicks on the panel do not fall through to the picture.
+                    TouchArea { }
+
+                    if !detail-view.sources-shown: VerticalLayout {
+                        padding: 16px;
+                        spacing: 12px;
+
+                        if root.seasons.length > 0: Rectangle {
+                            height: 32px;
+                            Flickable {
+                                width: parent.width;
+                                height: parent.height;
+                                content-width: root.seasons.length * 108px;
+                                content-height: self.height;
+                                for number[index] in root.seasons: Chip {
+                                    x: index * 108px;
+                                    width: 100px;
+                                    label: number == 0 ? "Specials" : "Season " + number;
+                                    selected: number == root.season;
+                                    clicked => { root.season-selected(number); }
+                                }
+                            }
+                        }
+                        if root.seasons.length > 0: LineEdit {
+                            placeholder-text: "Filter episodes";
+                            text <=> root.episode-filter;
+                            edited(text) => { root.filter-episodes(text); }
+                        }
+                        if root.episodes.length == 0: Text {
+                            text: "No episode matches.";
+                            color: Theme.text-dim;
+                        }
+                        episode-scroll := ScrollView {
+                            vertical-stretch: 1;
+                            content-width: self.visible-width;
+                            content-height: episode-list.preferred-height;
+                            episode-list := VerticalLayout {
+                                width: episode-scroll.visible-width;
+                                alignment: start;
+                                spacing: 8px;
+                                for episode in root.episodes: EpisodeItem {
+                                    episode: episode;
+                                    clicked => { root.episode-selected(episode.id); }
+                                }
+                            }
+                        }
+                    }
+
+                    if detail-view.sources-shown: VerticalLayout {
+                        padding: 16px;
+                        spacing: 10px;
 
                         HorizontalLayout {
-                            spacing: 24px;
-                            alignment: start;
-
-                            Rectangle {
-                                width: 180px;
-                                height: 270px;
-                                border-radius: 8px;
-                                clip: true;
-                                background: Theme.surface;
-                                border-width: 1px;
-                                border-color: Theme.border;
-                                if root.detail.has-poster: Image {
-                                    width: 100%;
-                                    height: 100%;
-                                    source: root.detail.poster;
-                                    image-fit: cover;
-                                }
+                            spacing: 10px;
+                            if detail-view.is-series: Chip {
+                                width: 34px;
+                                label: "‹";
+                                accessible-label: "Back to the episodes";
+                                clicked => { root.episode-open = false; }
                             }
-                            VerticalLayout {
-                                width: detail-view.visible-width - 64px - 180px - 24px;
-                                alignment: start;
-                                spacing: 10px;
-
-                                Text {
-                                    text: root.detail.title;
-                                    color: Theme.text;
-                                    font-size: 28px;
-                                    font-weight: 700;
-                                    wrap: word-wrap;
-                                }
-                                if root.detail.facts != "": Text {
-                                    text: root.detail.facts;
-                                    color: Theme.text-dim;
-                                    wrap: word-wrap;
-                                }
-                                HorizontalLayout {
+                            Text {
+                                horizontal-stretch: 1;
+                                text: detail-view.is-series && root.episode-label != "" ? root.episode-label : "Play from your sources";
+                                color: Theme.text;
+                                font-size: 16px;
+                                font-weight: 700;
+                                vertical-alignment: center;
+                                overflow: elide;
+                            }
+                        }
+                        if root.resume-note != "": Text {
+                            text: root.resume-note;
+                            color: Theme.accent;
+                            font-size: 13px;
+                            wrap: word-wrap;
+                        }
+                        // Narrow the list to one provider when there are several.
+                        if root.stream-groups.length > 1: Rectangle {
+                            height: 30px;
+                            Flickable {
+                                width: parent.width;
+                                height: parent.height;
+                                content-width: group-chips.preferred-width;
+                                content-height: self.height;
+                                group-chips := HorizontalLayout {
+                                    spacing: 8px;
                                     alignment: start;
                                     Chip {
-                                        width: root.detail.saved ? 150px : 170px;
-                                        label: root.detail.saved ? "✓  On Watchlist" : "＋  Add to Watchlist";
-                                        selected: root.detail.saved;
-                                        clicked => { root.toggle-watchlist(); }
+                                        label: "All  " + root.streams.length;
+                                        selected: root.stream-group == "";
+                                        clicked => { root.stream-group = ""; root.stream-limit = 10; }
                                     }
-                                }
-                                if root.detail.loading: Text {
-                                    text: "Loading details…";
-                                    color: Theme.text-dim;
-                                }
-                                if root.detail.error != "": Text {
-                                    text: root.detail.error;
-                                    color: Theme.text-dim;
-                                    wrap: word-wrap;
-                                }
-                                if root.detail.description != "": Text {
-                                    text: root.detail.description;
-                                    color: Theme.text;
-                                    wrap: word-wrap;
-                                }
-                                if root.detail.cast != "": Text {
-                                    text: "Cast: " + root.detail.cast;
-                                    color: Theme.text-dim;
-                                    font-size: 13px;
-                                    wrap: word-wrap;
-                                }
-                                if root.detail.director != "": Text {
-                                    text: "Director: " + root.detail.director;
-                                    color: Theme.text-dim;
-                                    font-size: 13px;
-                                    wrap: word-wrap;
+                                    for group in root.stream-groups: Chip {
+                                        label: group.name + "  " + group.count;
+                                        selected: root.stream-group == group.name;
+                                        clicked => { root.stream-group = group.name; root.stream-limit = 10; }
+                                    }
                                 }
                             }
                         }
-
-                        if root.episodes.length > 0 || root.seasons.length > 0: VerticalLayout {
-                            spacing: 10px;
-
-                            SectionTitle { text: "Episodes"; }
-                            if root.seasons.length > 0: Rectangle {
-                                height: 30px;
-                                Flickable {
-                                    width: parent.width;
-                                    height: parent.height;
-                                    content-width: root.seasons.length * 108px;
-                                    content-height: self.height;
-                                    for number[index] in root.seasons: Chip {
-                                        x: index * 108px;
-                                        width: 100px;
-                                        label: number == 0 ? "Specials" : "Season " + number;
-                                        selected: number == root.season;
-                                        clicked => { root.season-selected(number); }
-                                    }
-                                }
-                            }
-                            for episode in root.episodes: EpisodeItem {
-                                episode: episode;
-                                clicked => { root.episode-selected(episode.id); }
-                            }
+                        if root.detail.loading && !root.streams-loading: Text {
+                            text: "Loading…";
+                            color: Theme.text-dim;
+                            font-size: 13px;
                         }
-
-                        VerticalLayout {
-                            spacing: 10px;
-
-                            SectionTitle { text: root.streams-title; }
-                            if root.streams-loading: Text {
-                                text: "Asking your media servers and add-ons…";
-                                color: Theme.text-dim;
-                            }
-                            if root.streams-note != "": Text {
-                                text: root.streams-note;
-                                color: Theme.text-dim;
-                                wrap: word-wrap;
-                            }
-                            if root.resume-note != "": Text {
-                                text: root.resume-note;
-                                color: Theme.accent;
-                                wrap: word-wrap;
-                            }
-                            HorizontalLayout {
-                                spacing: 8px;
-                                alignment: start;
-                                Text {
-                                    text: "Play on";
-                                    color: Theme.text-dim;
-                                    font-size: 13px;
-                                    vertical-alignment: center;
-                                }
-                                Chip {
-                                    label: "This computer";
-                                    selected: root.cast-target < 0;
-                                    clicked => { root.cast-target = -1; }
-                                }
-                                for name[index] in root.cast-devices: Chip {
-                                    label: name;
-                                    selected: root.cast-target == index;
-                                    clicked => { root.cast-target = index; }
-                                }
-                                Chip {
-                                    label: root.cast-finding ? "Looking…" : "Find Chromecasts";
-                                    clicked => {
-                                        if (!root.cast-finding) {
-                                            root.find-cast-devices();
-                                        }
-                                    }
-                                }
-                            }
-                            if root.cast-note != "": Text {
-                                text: root.cast-note;
-                                color: Theme.text-dim;
-                                font-size: 12px;
-                                wrap: word-wrap;
-                            }
-                            // Narrow the list to one provider when there are several.
-                            if root.stream-groups.length > 1: Rectangle {
-                                height: 30px;
-                                Flickable {
-                                    width: parent.width;
-                                    height: parent.height;
-                                    content-width: group-chips.preferred-width;
-                                    content-height: self.height;
-                                    group-chips := HorizontalLayout {
-                                        spacing: 8px;
-                                        alignment: start;
-                                        Chip {
-                                            label: "All  " + root.streams.length;
-                                            selected: root.stream-group == "";
-                                            clicked => { root.stream-group = ""; root.stream-limit = 10; }
-                                        }
-                                        for group in root.stream-groups: Chip {
-                                            label: group.name + "  " + group.count;
-                                            selected: root.stream-group == group.name;
-                                            clicked => { root.stream-group = group.name; root.stream-limit = 10; }
-                                        }
-                                    }
-                                }
-                            }
+                        if root.streams-loading: Text {
+                            text: root.streams.length > 0 ? "More are still coming in…" : "Asking your media servers and add-ons…";
+                            color: Theme.text-dim;
+                            font-size: 13px;
+                        }
+                        if root.streams-note != "": Text {
+                            text: root.streams-note;
+                            color: Theme.text-dim;
+                            wrap: word-wrap;
+                        }
+                        source-scroll := ScrollView {
+                            vertical-stretch: 1;
+                            content-width: self.visible-width;
+                            content-height: source-list.preferred-height;
                             // Rows of other providers take up no room.
-                            VerticalLayout {
+                            source-list := VerticalLayout {
+                                width: source-scroll.visible-width;
+                                alignment: start;
                                 for stream[index] in root.streams: stream-slot := Rectangle {
                                     // A few at a time: the rest wait for "Show more".
                                     private property <bool> shown: root.stream-group == ""
                                         ? index < root.stream-limit
                                         : stream.group == root.stream-group && stream.group-at < root.stream-limit;
-                                    height: self.shown ? 68px : 0px;
-                                    if stream-slot.shown: StreamItem {
+                                    height: self.shown ? 96px : 0px;
+                                    if stream-slot.shown: SourceCard {
                                         y: 0;
-                                        height: 58px;
+                                        height: 88px;
                                         stream: stream;
                                         play => { root.play-stream(index); }
                                     }
@@ -2316,55 +2387,86 @@ export component AppWindow inherits Window {
                             }
                         }
 
-                        if root.offers-note != "" || root.offers.length > 0: VerticalLayout {
-                            spacing: 8px;
-
-                            SectionTitle { text: "Where to watch"; }
-                            if root.offers-note != "": Text {
-                                text: root.offers-note;
-                                color: Theme.text-dim;
-                                wrap: word-wrap;
-                            }
-                            for offer in root.offers: Rectangle {
-                                height: 40px;
-                                border-radius: 8px;
-                                background: Theme.surface;
-                                border-width: 1px;
-                                border-color: Theme.border;
-                                HorizontalLayout {
-                                    padding-left: 14px;
-                                    padding-right: 14px;
-                                    spacing: 12px;
+                        // Where it plays, and the services that carry it.
+                        Rectangle {
+                            height: 1px;
+                            background: Theme.border;
+                        }
+                        Rectangle {
+                            height: 30px;
+                            Flickable {
+                                width: parent.width;
+                                height: parent.height;
+                                content-width: cast-chips.preferred-width;
+                                content-height: self.height;
+                                cast-chips := HorizontalLayout {
+                                    spacing: 8px;
+                                    alignment: start;
                                     Text {
-                                        horizontal-stretch: 1;
-                                        text: offer.name;
-                                        color: Theme.text;
-                                        font-weight: 600;
-                                        vertical-alignment: center;
-                                        overflow: elide;
-                                    }
-                                    Text {
-                                        text: offer.ways;
+                                        text: "Play on";
                                         color: Theme.text-dim;
-                                        font-size: 12px;
+                                        font-size: 13px;
                                         vertical-alignment: center;
+                                    }
+                                    Chip {
+                                        label: "This computer";
+                                        selected: root.cast-target < 0;
+                                        clicked => { root.cast-target = -1; }
+                                    }
+                                    for name[index] in root.cast-devices: Chip {
+                                        label: name;
+                                        selected: root.cast-target == index;
+                                        clicked => { root.cast-target = index; }
+                                    }
+                                    Chip {
+                                        label: root.cast-finding ? "Looking…" : "Find Chromecasts";
+                                        clicked => {
+                                            if (!root.cast-finding) {
+                                                root.find-cast-devices();
+                                            }
+                                        }
                                     }
                                 }
                             }
-                            if root.offers.length > 0: HorizontalLayout {
-                                spacing: 12px;
-                                alignment: start;
-                                if root.offers-link != "": Button {
-                                    text: "Open these in your web browser";
-                                    clicked => { root.open-link(root.offers-link); }
-                                }
-                                Text {
-                                    text: "Availability from JustWatch, by way of TMDB.";
-                                    color: Theme.text-dim;
-                                    font-size: 12px;
-                                    vertical-alignment: center;
+                        }
+                        if root.cast-note != "": Text {
+                            text: root.cast-note;
+                            color: Theme.text-dim;
+                            font-size: 12px;
+                            wrap: word-wrap;
+                        }
+                        if root.offers.length > 0: Rectangle {
+                            height: 30px;
+                            Flickable {
+                                width: parent.width;
+                                height: parent.height;
+                                content-width: offer-chips.preferred-width;
+                                content-height: self.height;
+                                offer-chips := HorizontalLayout {
+                                    spacing: 8px;
+                                    alignment: start;
+                                    Text {
+                                        text: "Also on";
+                                        color: Theme.text-dim;
+                                        font-size: 13px;
+                                        vertical-alignment: center;
+                                    }
+                                    for offer in root.offers: Chip {
+                                        label: offer.name + "  ·  " + offer.ways;
+                                        clicked => {
+                                            if (root.offers-link != "") {
+                                                root.open-link(root.offers-link);
+                                            }
+                                        }
+                                    }
                                 }
                             }
+                        }
+                        if root.offers.length > 0: Text {
+                            text: root.offers-note + "  Availability from JustWatch, by way of TMDB.";
+                            color: Theme.text-dim;
+                            font-size: 11px;
+                            overflow: elide;
                         }
                     }
                 }

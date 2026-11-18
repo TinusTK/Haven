@@ -165,6 +165,23 @@ enum DetailImage {
     Background,
 }
 
+/// A counter that says which list of places to watch is current. Work
+/// off the UI thread reads it to stop when its list is no longer wanted.
+#[derive(Default)]
+struct Epoch(Arc<std::sync::atomic::AtomicU64>);
+
+impl Epoch {
+    fn get(&self) -> u64 {
+        self.0.load(std::sync::atomic::Ordering::Relaxed)
+    }
+    fn set(&self, value: u64) {
+        self.0.store(value, std::sync::atomic::Ordering::Relaxed);
+    }
+    fn shared(&self) -> Arc<std::sync::atomic::AtomicU64> {
+        self.0.clone()
+    }
+}
+
 pub struct Library {
     ui: slint::Weak<AppWindow>,
     store: Rc<Store>,
@@ -188,7 +205,7 @@ pub struct Library {
     episodes: Rc<VecModel<EpisodeRow>>,
     streams: Rc<VecModel<StreamRow>>,
     /// Goes up whenever streams are asked for again.
-    stream_generation: Cell<u64>,
+    stream_generation: Epoch,
     /// Add-ons that have not answered the current stream request yet.
     streams_pending: Cell<usize>,
     /// What is behind each row of `streams`.
@@ -283,7 +300,7 @@ impl Library {
             seasons: Rc::default(),
             episodes: Rc::default(),
             streams: Rc::default(),
-            stream_generation: Cell::new(0),
+            stream_generation: Epoch::default(),
             streams_pending: Cell::new(0),
             stream_sources: RefCell::default(),
             server_rows: Cell::new(0),
@@ -356,6 +373,7 @@ impl Library {
         connect!(on_close_detail, | | |l: &Rc<Self>| l.close_detail());
         connect!(on_season_selected, |season| |l: &Rc<Self>| l.show_season(season));
         connect!(on_episode_selected, |id| |l: &Rc<Self>| l.open_episode(id.as_str()));
+        connect!(on_filter_episodes, |words| |l: &Rc<Self>| l.filter_episodes(words.as_str()));
         connect!(on_play_stream, |row| |l: &Rc<Self>| l.play_stream(row));
         connect!(on_toggle_watchlist, | | |l: &Rc<Self>| l.toggle_watchlist());
         connect!(on_clear_cache, | | |l: &Rc<Self>| l.clear_cache());
@@ -1073,6 +1091,9 @@ impl Library {
             saved: self.store.in_watchlist(&kind, &id).unwrap_or(false),
             ..Detail::default()
         });
+        ui.set_episode_open(false);
+        ui.set_episode_label("".into());
+        ui.set_episode_filter("".into());
         ui.set_detail_open(true);
 
         let sources: Vec<String> = self
@@ -1239,13 +1260,37 @@ impl Library {
     }
 
     fn show_season(&self, season: i32) {
+        // Narrowed to the words typed over the list, if any.
+        let words = self.ui.upgrade().map(|ui| ui.get_episode_filter().to_lowercase()).unwrap_or_default();
+        let words = words.trim();
+        let picked = self.listed.borrow().as_ref().map(|listed| listed.video_id.clone());
         let rows: Vec<EpisodeRow> = match self.open.borrow().as_ref().and_then(|o| o.meta.as_ref()) {
-            Some(meta) => meta.episodes(season.max(0) as u32).into_iter().map(episode_row).collect(),
+            Some(meta) => meta
+                .episodes(season.max(0) as u32)
+                .into_iter()
+                .map(|video| {
+                    let mut row = episode_row(video);
+                    row.selected = picked.as_deref() == Some(video.id.as_str());
+                    row
+                })
+                .filter(|row| {
+                    words.is_empty()
+                        || row.title.to_lowercase().contains(words)
+                        || row.number.to_lowercase().contains(words)
+                })
+                .collect(),
             None => return,
         };
         self.episodes.set_vec(rows);
         if let Some(ui) = self.ui.upgrade() {
             ui.set_season(season);
+        }
+    }
+
+    /// The words over the episode list changed: show the season again.
+    fn filter_episodes(&self, _words: &str) {
+        if let Some(season) = self.ui.upgrade().map(|ui| ui.get_season()) {
+            self.show_season(season);
         }
     }
 
@@ -1277,6 +1322,10 @@ impl Library {
             }
         }
         self.load_streams(&kind, video_id, heading.trim());
+        if let Some(ui) = self.ui.upgrade() {
+            ui.set_episode_label(detail.as_str().into());
+            ui.set_episode_open(true);
+        }
         if let Some(listed) = self.listed.borrow_mut().as_mut() {
             listed.detail = detail;
         }
