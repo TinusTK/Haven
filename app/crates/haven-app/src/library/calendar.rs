@@ -36,6 +36,8 @@ pub(super) struct Release {
     time: Option<NaiveTime>,
     /// "S3 E5 · Its name" for an episode; empty for a film.
     label: String,
+    /// The episode's own id, to open it by; empty for a film.
+    video: String,
 }
 
 /// A title on the Watchlist: its kind and id.
@@ -105,7 +107,7 @@ pub(super) fn releases_of<Tz: TimeZone>(meta: &MetaDetail, zone: &Tz) -> Vec<Rel
                 .filter(|part| !part.is_empty())
                 .collect::<Vec<_>>()
                 .join(" · ");
-            Some(Release { day, time, label })
+            Some(Release { day, time, label, video: video.id.clone() })
         })
         .collect();
     // A film, or a series with no episodes listed: the title's own date.
@@ -113,7 +115,7 @@ pub(super) fn releases_of<Tz: TimeZone>(meta: &MetaDetail, zone: &Tz) -> Vec<Rel
         if let Some((day, time)) =
             meta.released.as_deref().and_then(|released| local_release(released, zone))
         {
-            releases.push(Release { day, time, label: String::new() });
+            releases.push(Release { day, time, label: String::new(), video: String::new() });
         }
     }
     releases
@@ -185,10 +187,13 @@ impl Library {
         ui.on_calendar_open({
             let library = self.clone();
             move |entry| {
+                // An episode opens on that episode, with its places to
+                // watch; a film on its own page.
                 library.open_title(Poster {
                     id: entry.id,
                     kind: entry.kind,
                     title: entry.title,
+                    video: entry.video,
                     ..Poster::default()
                 })
             }
@@ -290,6 +295,7 @@ impl Library {
                         id: title.1.as_str().into(),
                         title: name.as_str().into(),
                         label: release.label.as_str().into(),
+                        video: release.video.as_str().into(),
                         time: release
                             .time
                             .map(|time| time.format("%H:%M").to_string())
@@ -411,6 +417,7 @@ mod tests {
         let releases = releases_of(&series, &zone);
         assert_eq!(releases.len(), 1);
         assert_eq!(releases[0].label, "S3 E5 · Five");
+        assert_eq!(releases[0].video, "tt1:3:5");
         assert_eq!(releases[0].time, NaiveTime::from_hms_opt(8, 30, 0));
         let film: MetaDetail = serde_json::from_value(serde_json::json!({
             "id": "tt2", "type": "movie", "name": "A Film", "released": "2026-12-25T00:00:00.000Z"

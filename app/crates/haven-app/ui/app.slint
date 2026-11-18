@@ -90,6 +90,8 @@ export struct CalendarEntry {
     title: string,
     // "S3 E5 · Its name" for an episode; empty for a film.
     label: string,
+    // The episode's id, to open it by; empty for a film.
+    video: string,
     // The local time of day, if known.
     time: string,
 }
