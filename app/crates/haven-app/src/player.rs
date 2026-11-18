@@ -184,6 +184,7 @@ impl Player {
             .change_preferences(|preferences| preferences.passthrough = on));
         connect!(on_player_subtitle_scale_step, |way| |p: &Rc<Self>| p.step_subtitle_scale(way));
         connect!(on_player_subtitle_delay_step, |way| |p: &Rc<Self>| p.step_subtitle_delay(way));
+        connect!(on_player_subtitle_sync, |way| |p: &Rc<Self>| p.sync_subtitles(way));
         connect!(on_player_next, | | |p: &Rc<Self>| p.go_next());
         connect!(on_player_cancel_next, | | |p: &Rc<Self>| p.close());
         connect!(on_player_controls_shown, |shown| |p: &Rc<Self>| {
@@ -271,11 +272,26 @@ impl Player {
         });
     }
 
+    /// Half a second later or earlier.
     fn step_subtitle_delay(&self, way: i32) {
         self.subtitle_delay
-            .set((self.subtitle_delay.get() + 0.1 * f64::from(way.signum())).clamp(-30.0, 30.0));
+            .set((self.subtitle_delay.get() + 0.5 * f64::from(way.signum())).clamp(-60.0, 60.0));
         self.apply_settings();
         self.show_settings();
+    }
+
+    /// Puts the subtitles in step with the sound: `way` 1 shows the
+    /// next line now, -1 the line before, 0 takes the delay away.
+    fn sync_subtitles(&self, way: i32) {
+        let delay = match way {
+            0 => Some(0.0),
+            way => self.video.borrow().sync_subtitles(way),
+        };
+        if let Some(delay) = delay {
+            self.subtitle_delay.set(delay.clamp(-60.0, 60.0));
+            self.apply_settings();
+            self.show_settings();
+        }
     }
 
     fn set_speed(&self, speed: f64) {
@@ -426,6 +442,10 @@ impl Player {
             .into(),
         );
         let left = (status.duration - status.position).max(0.0);
+        // How the stream is coming in: its speed and how far ahead of
+        // the picture it has got.
+        ui.set_player_net(arrival(status.arriving, status.ahead).into());
+        ui.set_player_buffered((status.position + status.ahead.unwrap_or(0.0)) as f32);
         ui.set_player_elapsed(clock(status.position).into());
         ui.set_player_remaining(
             if status.duration > 0.0 { format!("−{}", clock(left)) } else { "Live".to_owned() }.into(),
@@ -745,5 +765,36 @@ fn fit_of(choice: i32) -> Fit {
         1 => Fit::Fill,
         2 => Fit::Stretch,
         _ => Fit::Whole,
+    }
+}
+
+/// "4.2 MB/s · 38 s ahead": how fast a stream arrives and how much of it
+/// is waiting to be shown. Empty when mpv does not say.
+fn arrival(bytes_a_second: Option<f64>, ahead: Option<f64>) -> String {
+    // Nothing arriving (all of it is here already) is not worth saying.
+    let speed = bytes_a_second.filter(|speed| *speed >= 1_000.0).map(|speed| {
+        if speed >= 1_000_000.0 {
+            format!("{:.1} MB/s", speed / 1_000_000.0)
+        } else {
+            format!("{:.0} KB/s", speed / 1_000.0)
+        }
+    });
+    let ahead = ahead.map(|ahead| {
+        if ahead >= 90.0 { format!("{:.0} min ahead", ahead / 60.0) } else { format!("{ahead:.0} s ahead") }
+    });
+    [speed, ahead].into_iter().flatten().collect::<Vec<_>>().join("  ·  ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::arrival;
+
+    #[test]
+    fn a_streams_arrival_is_put_in_words() {
+        assert_eq!(arrival(Some(4_200_000.0), Some(38.0)), "4.2 MB/s  ·  38 s ahead");
+        assert_eq!(arrival(Some(850_000.0), Some(300.0)), "850 KB/s  ·  5 min ahead");
+        assert_eq!(arrival(None, Some(12.0)), "12 s ahead");
+        assert_eq!(arrival(Some(0.0), Some(26.0)), "26 s ahead");
+        assert_eq!(arrival(None, None), "");
     }
 }

@@ -263,6 +263,10 @@ pub struct Status {
     pub paused: bool,
     /// Waiting for more of the stream to arrive.
     pub buffering: bool,
+    /// How fast the stream is arriving, in bytes a second, if known.
+    pub arriving: Option<f64>,
+    /// How many seconds past the position have already arrived.
+    pub ahead: Option<f64>,
 }
 
 /// How the picture fills the window.
@@ -619,6 +623,8 @@ impl Video {
             duration: mpv.get_property::<f64>("duration").unwrap_or(0.0),
             paused: mpv.get_property::<bool>("pause").unwrap_or(false),
             buffering: mpv.get_property::<bool>("paused-for-cache").unwrap_or(false),
+            arriving: mpv.get_property::<i64>("cache-speed").ok().map(|speed| speed.max(0) as f64),
+            ahead: mpv.get_property::<f64>("demuxer-cache-duration").ok().map(|ahead| ahead.max(0.0)),
         })
     }
 
@@ -725,6 +731,15 @@ impl Video {
         if let Some(mpv) = self.mpv {
             let _ = mpv.set_property("sub-delay", seconds.clamp(-60.0, 60.0));
         }
+    }
+
+    /// Moves the subtitles in time so that the next line (`way` 1) or
+    /// the line before (-1) shows now: the quick way to put subtitles
+    /// back in step with the sound. Returns the delay that results.
+    pub fn sync_subtitles(&self, way: i32) -> Option<f64> {
+        let mpv = self.mpv?;
+        mpv.command("sub-step", &[if way < 0 { "-1" } else { "1" }]).ok()?;
+        mpv.get_property::<f64>("sub-delay").ok()
     }
 
     /// What is known about the picture and sound of what is playing.

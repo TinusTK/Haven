@@ -280,6 +280,7 @@ fn act(ui: &AppWindow, action: &str) {
         "fit" => ui.invoke_player_set_fit(number as i32),
         "subsize" => ui.invoke_player_subtitle_scale_step(number as i32),
         "subdelay" => ui.invoke_player_subtitle_delay_step(number as i32),
+        "subsync" => ui.invoke_player_subtitle_sync(number as i32),
         "next" => ui.invoke_player_next(),
         "cancelnext" => ui.invoke_player_cancel_next(),
         "controls" => eprintln!(

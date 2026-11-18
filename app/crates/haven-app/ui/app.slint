@@ -777,6 +777,8 @@ component LevelBar inherits Rectangle {
 component SeekBar inherits Rectangle {
     in property <float> duration;
     in property <float> position;
+    // How far the stream has arrived, in seconds from the start.
+    in property <float> buffered;
     out property <bool> hovered: touch.has-hover || touch.pressed;
     callback seek(float);
     private property <float> dragged;
@@ -801,6 +803,12 @@ component SeekBar inherits Rectangle {
         height: root.hovered ? 6px : 4px;
         border-radius: self.height / 2;
         background: #ffffff40;
+        Rectangle {
+            x: 0;
+            width: parent.width * (root.duration > 0 ? clamp(root.buffered / root.duration, 0, 1) : 0);
+            border-radius: parent.border-radius;
+            background: #ffffff70;
+        }
         Rectangle {
             x: 0;
             width: parent.width * root.share;
@@ -950,6 +958,9 @@ component PlayerView inherits Rectangle {
     in property <string> elapsed-text;
     in property <string> remaining-text;
     in property <string> ends-at;
+    // "4.2 MB/s · 38 s ahead", and how far the stream has arrived.
+    in property <string> net;
+    in property <float> buffered;
     in property <[TrackRow]> audio-tracks;
     in property <[TrackRow]> subtitle-tracks;
     in property <bool> fullscreen;
@@ -982,6 +993,8 @@ component PlayerView inherits Rectangle {
     // -1 or 1: a step smaller or larger, earlier or later.
     callback subtitle-scale-step(int);
     callback subtitle-delay-step(int);
+    // 1: the next line shows now; -1: the line before; 0: no delay.
+    callback subtitle-sync(int);
     callback next();
     callback cancel-next();
     // The bars came up or went away (subtitles move out of their way).
@@ -1162,6 +1175,35 @@ component PlayerView inherits Rectangle {
                     overflow: elide;
                 }
             }
+            // How the stream is coming in: a globe, its speed and how far
+            // ahead of the picture it has arrived.
+            if root.net != "": HorizontalLayout {
+                horizontal-stretch: 0;
+                height: 40px;
+                spacing: 7px;
+                VerticalLayout {
+                    alignment: center;
+                    Path {
+                        width: 18px;
+                        height: 18px;
+                        viewbox-width: 24;
+                        viewbox-height: 24;
+                        commands: "M 2 12 A 10 10 0 1 0 22 12 A 10 10 0 1 0 2 12 Z M 12 2 A 4.5 10 0 1 0 12 22 A 4.5 10 0 1 0 12 2 Z M 2 12 L 22 12 M 4.5 6.5 L 19.5 6.5 M 4.5 17.5 L 19.5 17.5";
+                        stroke: #f2c66d;
+                        stroke-width: 1.8px;
+                        fill: transparent;
+                    }
+                }
+                Text {
+                    text: root.net;
+                    color: white;
+                    font-size: 14px;
+                    font-weight: 600;
+                    vertical-alignment: center;
+                    accessible-label: "The stream: " + root.net;
+                }
+                Rectangle { width: 14px; }
+            }
             Text {
                 height: 40px;
                 text: root.ends-at;
@@ -1229,6 +1271,7 @@ component PlayerView inherits Rectangle {
                     horizontal-stretch: 1;
                     duration: root.duration;
                     position: root.position;
+                    buffered: root.buffered;
                     seek(seconds) => { root.seek(seconds); }
                 }
                 Text {
@@ -1365,6 +1408,36 @@ component PlayerView inherits Rectangle {
                     label: "Shown later by";
                     value: (round(root.subtitle-delay * 10) / 10) + " s";
                     step(way) => { root.subtitle-delay-step(way); }
+                }
+                // Out of step with the sound? When someone starts to speak,
+                // press the one that fits: the subtitles move to match.
+                if root.menu == 2 && root.subtitle-tracks.length > 0: Rectangle {
+                    height: 26px;
+                    Text {
+                        x: 12px;
+                        text: "Out of step? As someone starts to speak:";
+                        color: #ffffffb0;
+                        font-size: 12px;
+                        vertical-alignment: center;
+                    }
+                }
+                if root.menu == 2 && root.subtitle-tracks.length > 0: HorizontalLayout {
+                    padding-left: 8px;
+                    padding-right: 8px;
+                    spacing: 6px;
+                    height: 36px;
+                    PlayerButton {
+                        label: "Show next line now";
+                        clicked => { root.subtitle-sync(1); }
+                    }
+                    PlayerButton {
+                        label: "Line before";
+                        clicked => { root.subtitle-sync(-1); }
+                    }
+                    PlayerButton {
+                        label: "Reset";
+                        clicked => { root.subtitle-sync(0); }
+                    }
                 }
                 if root.menu == 3: VerticalLayout {
                     for speed in root.speeds: TrackItem {
@@ -1990,6 +2063,8 @@ export component AppWindow inherits Window {
     in property <string> player-elapsed;
     in property <string> player-remaining;
     in property <string> player-ends-at;
+    in property <string> player-net;
+    in property <float> player-buffered;
     in property <float> player-volume: 1;
     in property <bool> player-muted;
     in property <float> player-speed: 1;
@@ -2147,6 +2222,7 @@ export component AppWindow inherits Window {
     callback player-set-fit(int);
     callback player-subtitle-scale-step(int);
     callback player-subtitle-delay-step(int);
+    callback player-subtitle-sync(int);
     callback player-set-passthrough(bool);
     callback player-next();
     callback player-cancel-next();
@@ -4104,6 +4180,8 @@ export component AppWindow inherits Window {
         elapsed-text: root.player-elapsed;
         remaining-text: root.player-remaining;
         ends-at: root.player-ends-at;
+        net: root.player-net;
+        buffered: root.player-buffered;
         volume: root.player-volume;
         muted: root.player-muted;
         speed: root.player-speed;
@@ -4131,6 +4209,7 @@ export component AppWindow inherits Window {
         set-fit(fit) => { root.player-set-fit(fit); }
         subtitle-scale-step(way) => { root.player-subtitle-scale-step(way); }
         subtitle-delay-step(way) => { root.player-subtitle-delay-step(way); }
+        subtitle-sync(way) => { root.player-subtitle-sync(way); }
         next => { root.player-next(); }
         cancel-next => { root.player-cancel-next(); }
         controls-shown(shown) => { root.player-controls-shown(shown); }
