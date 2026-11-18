@@ -1,0 +1,37 @@
+name: SideStore source
+
+# Rebuilds Haven's official AltStore / SideStore source whenever a release
+# is published, and puts it on GitHub Pages:
+# https://tinustk.github.io/Haven/source.json
+on:
+  release:
+    types: [published, edited, deleted]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: sidestore-source
+  cancel-in-progress: true
+
+jobs:
+  source:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}source.json
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build source.json
+        run: python3 ios/sidestore_source.py site
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - id: deploy
+        uses: actions/deploy-pages@v4

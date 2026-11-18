@@ -1921,6 +1921,8 @@ export component AppWindow inherits Window {
     // The countries to choose from for those services, and the chosen one.
     in property <[string]> countries;
     in-out property <int> country-index;
+    // A store build (App Store, Google Play): no Add-ons page, no mention of add-ons.
+    in property <bool> addons-hidden;
     in property <[SharedAddonRow]> shared-addons;
     // How many pictures are kept on this computer, in words.
     in property <string> cache-status;
@@ -2307,7 +2309,7 @@ export component AppWindow inherits Window {
                 }
                 for label[index] in root.pages: NavItem {
                     // A phone build has no Add-ons page.
-                    visible: !(root.mobile && index == root.addons-page);
+                    visible: !(root.addons-hidden && index == root.addons-page);
                     height: self.visible ? 42px : 0px;
                     label: label;
                     selected: root.page == index;
@@ -2607,7 +2609,7 @@ export component AppWindow inherits Window {
                             font-size: 13px;
                         }
                         if root.streams-loading: Text {
-                            text: root.streams.length > 0 ? "More are still coming in…" : root.mobile ? "Asking your media servers…" : "Asking your media servers and add-ons…";
+                            text: root.streams.length > 0 ? "More are still coming in…" : root.addons-hidden ? "Asking your media servers…" : "Asking your media servers and add-ons…";
                             color: Theme.text-dim;
                             font-size: 13px;
                         }
@@ -3079,7 +3081,7 @@ export component AppWindow inherits Window {
 
                 PageTitle { text: "Home"; }
                 Text {
-                    text: root.mobile
+                    text: root.addons-hidden
                         ? "Home fills with shelves of films and series from your media servers and the TMDB catalogue. Add a media server or a TMDB key in Settings."
                         : "Home fills with shelves of films and series from your media servers, your add-ons and the TMDB catalogue. Add a media server or a TMDB key in Settings, or install an add-on.";
                     color: Theme.text-dim;
@@ -3096,7 +3098,7 @@ export component AppWindow inherits Window {
                             root.page-selected(root.settings-page);
                         }
                     }
-                    if !root.mobile: Button {
+                    if !root.addons-hidden: Button {
                         text: "Open Add-ons";
                         clicked => {
                             root.page = root.addons-page;
@@ -3129,7 +3131,7 @@ export component AppWindow inherits Window {
                         remove(poster) => { root.remove-continue(poster); }
                     }
                     if root.shelves.length == 0 && root.server-shelves.length == 0 && root.catalog-shelves.length == 0: Text {
-                        text: root.servers.length > 0 ? "Waiting for your media servers…" : root.mobile ? "Nothing to show here yet." : "Your add-ons have no catalogues to show here.";
+                        text: root.servers.length > 0 ? "Waiting for your media servers…" : root.addons-hidden ? "Nothing to show here yet." : "Your add-ons have no catalogues to show here.";
                         color: Theme.text-dim;
                         wrap: word-wrap;
                     }
@@ -3166,7 +3168,7 @@ export component AppWindow inherits Window {
                     }
                 }
                 if root.explore-count == 0: Text {
-                    text: root.mobile
+                    text: root.addons-hidden
                         ? "Explore browses everything you can watch. Add a media server or a TMDB key in Settings and it shows here."
                         : "Explore browses everything you can watch. Add a media server or a TMDB key in Settings, or install an add-on, and it shows here.";
                     color: Theme.text-dim;
@@ -4131,7 +4133,7 @@ export component AppWindow inherits Window {
                 padding: 8px;
                 spacing: 4px;
                 for label[index] in root.pages: more-slot := Rectangle {
-                    private property <bool> listed: index > root.tv-page && !(root.mobile && index == root.addons-page);
+                    private property <bool> listed: index > root.tv-page && !(root.addons-hidden && index == root.addons-page);
                     height: self.listed ? 48px : 0px;
                     if more-slot.listed: NavItem {
                         height: 44px;

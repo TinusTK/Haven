@@ -10,4 +10,7 @@ With `HAVEN_SIGN_IDENTITY` set to a Developer ID certificate in the
 keychain, `bundle.sh` signs the app with it; with `HAVEN_NOTARY_PROFILE`
 set as well, it has Apple notarise the disk image (see the top of the
 script). Without them the app is signed "ad hoc" and macOS warns the first
-time it is opened (right-click Haven > Open). The CI build is ad hoc.
+time it is opened (right-click Haven > Open). CI signs and notarises the
+app when the repository's Apple secrets are set (`APPLE_CERTIFICATE`,
+`APPLE_CERTIFICATE_PASSWORD`, `APPLE_API_KEY_P8`, `APPLE_API_KEY_ID`,
+`APPLE_API_ISSUER`); without them its build is ad hoc.

@@ -207,7 +207,7 @@ impl Library {
             return self.set_streams_state(
                 Some(heading),
                 false,
-                if super::MOBILE {
+                if super::NO_ADDONS {
                     "Nothing you have added can play this. Add a media server or an Xtream Codes account in Settings."
                 } else {
                     "Nothing you have added can play this. Add a media server or an Xtream Codes account in Settings, or install an add-on that offers streams."
@@ -352,7 +352,7 @@ impl Library {
         if pending == 0 {
             self.give_up_autoplay();
             let note = if self.streams.row_count() == 0 {
-                if super::MOBILE {
+                if super::NO_ADDONS {
                     "None of your media servers or accounts has this."
                 } else {
                     "None of your media servers, accounts or add-ons has this."

@@ -24,6 +24,9 @@ crate-type = ["lib", "cdylib"]
 # everywhere and lists streams without playing them.
 [features]
 player = ["haven-player/mpv"]
+# A build for the App Store (TestFlight) or Google Play: no Add-ons page
+# and no mention of add-ons. The builds on GitHub keep add-ons.
+store = []
 
 [dependencies]
 ring = "0.17"

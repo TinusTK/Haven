@@ -69,8 +69,10 @@ pub fn run(paths: AppPaths, phone: bool) -> Result<(), Box<dyn Error>> {
     }
 
     let ui = AppWindow::new()?;
-    // A phone or tablet: no Add-ons page, and updates come as new APKs.
+    // A phone or tablet: updates come as a new APK or IPA.
     ui.set_mobile(cfg!(any(target_os = "android", target_os = "ios")));
+    // A store build (App Store, Google Play): no add-ons.
+    ui.set_addons_hidden(library::NO_ADDONS);
     ui.set_compact(phone);
     ui.set_ios(cfg!(target_os = "ios"));
     ui.set_version(env!("CARGO_PKG_VERSION").into());
@@ -79,8 +81,8 @@ pub fn run(paths: AppPaths, phone: bool) -> Result<(), Box<dyn Error>> {
     ui.set_dark(settings.borrow().theme == ThemeChoice::Dark);
     let page_count = ui.get_pages().row_count() as u32;
     let last = settings.borrow().last_page.min(page_count.saturating_sub(1)) as i32;
-    // A phone build has no Add-ons page to come back to.
-    ui.set_page(if library::MOBILE && ui.get_pages().row_data(last as usize).is_some_and(|name| name == "Add-ons") { 0 } else { last });
+    // A store build has no Add-ons page to come back to.
+    ui.set_page(if library::NO_ADDONS && ui.get_pages().row_data(last as usize).is_some_and(|name| name == "Add-ons") { 0 } else { last });
 
     ui.on_dark_toggled({
         let (store, settings) = (store.clone(), settings.clone());

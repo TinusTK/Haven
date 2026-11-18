@@ -196,13 +196,17 @@ impl Pause {
     }
 }
 
-/// A phone or tablet build: it has no Add-ons page and never speaks
-/// of add-ons.
 /// Said when nothing knows the title that was opened.
 const NO_DETAILS: &str =
-    if MOBILE { "There are no details for this title." } else { "None of your add-ons has details for this title." };
+    if NO_ADDONS { "There are no details for this title." } else { "None of your add-ons has details for this title." };
 
+/// A phone or tablet build (updates come as a new APK or IPA).
 pub(crate) const MOBILE: bool = cfg!(any(target_os = "android", target_os = "ios"));
+
+/// A build for the App Store or Google Play (feature `store`): it has no
+/// Add-ons page and never speaks of add-ons. Every other build, the phone
+/// ones on GitHub too, has add-ons.
+pub(crate) const NO_ADDONS: bool = cfg!(feature = "store");
 
 /// A counter that says which list of places to watch is current. Work
 /// off the UI thread reads it to stop when its list is no longer wanted.
@@ -532,9 +536,9 @@ impl Library {
     fn install_free_catalogue(&self) {
         const DONE: &str = "free_catalogue_installed";
         const CINEMETA: &str = "https://v3-cinemeta.strem.io/manifest.json";
-        // A phone build has no Add-ons page to put it back from: there
+        // A store build has no Add-ons page to put it back from: there
         // it is Haven's built-in catalogue, made sure of at every start.
-        if MOBILE {
+        if NO_ADDONS {
             if !self.addon_urls.borrow().iter().any(|url| url == CINEMETA) {
                 self.install(CINEMETA);
             }
@@ -744,13 +748,13 @@ impl Library {
             }
         }
         let note = if self.installed.borrow().is_empty() && plans.is_empty() {
-            if MOBILE {
+            if NO_ADDONS {
                 "Add a media server or a TMDB key in Settings: search looks through those."
             } else {
                 "Add a media server or a TMDB key in Settings, or install an add-on: search looks through those."
             }
         } else if plans.is_empty() {
-            if MOBILE { "Nothing you have added can be searched." } else { "None of your add-ons can be searched." }
+            if NO_ADDONS { "Nothing you have added can be searched." } else { "None of your add-ons can be searched." }
         } else {
             ""
         };
