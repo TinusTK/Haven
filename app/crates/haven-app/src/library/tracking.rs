@@ -96,6 +96,8 @@ impl Library {
                     name: service.label().into(),
                     state: if connected {
                         "Linked: what you finish is marked watched, and your watchlist is passed on."
+                    } else if has_keys && service == Service::Trakt && cfg!(any(target_os = "android", target_os = "ios")) {
+                        "Not linked. Link opens trakt.tv and shows a short code to approve there."
                     } else if has_keys && service == Service::Trakt {
                         "Not linked. Link opens trakt.tv to sign in, then comes back to Haven."
                     } else if has_keys {
@@ -140,7 +142,11 @@ impl Library {
     /// Starts a sign-in: shows the code, opens the service's page and
     /// waits for the user to approve it there.
     fn tracking_connect(&self, service: Service) {
-        if service == Service::Trakt {
+        // A computer: sign in on trakt.tv and come straight back. A phone
+        // puts Haven to sleep behind the browser, so it cannot hear
+        // trakt.tv's answer: there Trakt's activation page and a short
+        // code are used, and Haven links by itself once it is approved.
+        if service == Service::Trakt && !cfg!(any(target_os = "android", target_os = "ios")) {
             return self.trakt_link();
         }
         let attempt = self.tracking_attempt.fetch_add(1, Ordering::SeqCst) + 1;
