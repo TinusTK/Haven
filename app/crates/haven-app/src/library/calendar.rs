@@ -20,7 +20,7 @@ use crate::{AgendaRow, CalendarDay, CalendarEntry, Poster};
 /// Titles whose details are asked for at the same time.
 const TITLES_AT_ONCE: usize = 2;
 /// Releases named in one day's square; the rest are counted.
-const SHOWN_PER_DAY: usize = 3;
+const SHOWN_PER_DAY: usize = 2;
 
 const MONTHS: [&str; 12] = [
     "January", "February", "March", "April", "May", "June", "July", "August", "September",
@@ -38,18 +38,26 @@ pub(super) struct Release {
     label: String,
     /// The episode's own id, to open it by; empty for a film.
     video: String,
+    /// "S01E05" for an episode; empty for a film.
+    number: String,
+    /// The episode's name, if it has one.
+    name: String,
 }
 
 /// A title on the Watchlist: its kind and id.
 type Title = (String, String);
 
 pub(super) struct Calendar {
-    /// The month showing: year and month (1 to 12).
-    month: Cell<(i32, u32)>,
+    /// A day in the month or week showing.
+    anchor: Cell<NaiveDate>,
+    /// A week at a time instead of a month.
+    week: Cell<bool>,
     releases: RefCell<HashMap<Title, Vec<Release>>>,
     /// Titles asked for already (answered or not).
     asked: RefCell<HashSet<Title>>,
     waiting: Cell<usize>,
+    /// Each title's wide picture (else its poster), for Home's Upcoming.
+    pictures: RefCell<HashMap<Title, String>>,
     /// The page has been opened, so it is kept up to date.
     opened: Cell<bool>,
     gate: Arc<Semaphore>,
@@ -59,10 +67,12 @@ impl Default for Calendar {
     fn default() -> Self {
         let today = Local::now().date_naive();
         Self {
-            month: Cell::new((today.year(), today.month())),
+            anchor: Cell::new(today),
+            week: Cell::new(false),
             releases: RefCell::default(),
             asked: RefCell::default(),
             waiting: Cell::new(0),
+            pictures: RefCell::default(),
             opened: Cell::new(false),
             gate: Arc::new(Semaphore::new(TITLES_AT_ONCE)),
         }
@@ -95,6 +105,9 @@ pub(super) fn releases_of<Tz: TimeZone>(meta: &MetaDetail, zone: &Tz) -> Vec<Rel
     let mut releases: Vec<Release> = meta
         .videos
         .iter()
+        // Specials (season 0) are left out: sources list making-of
+        // pieces there on the same day as the real episodes.
+        .filter(|video| video.season != Some(0))
         .filter_map(|video| {
             let (day, time) = local_release(video.released.as_deref()?, zone)?;
             let number = match (video.season, video.episode) {
@@ -107,18 +120,46 @@ pub(super) fn releases_of<Tz: TimeZone>(meta: &MetaDetail, zone: &Tz) -> Vec<Rel
                 .filter(|part| !part.is_empty())
                 .collect::<Vec<_>>()
                 .join(" · ");
-            Some(Release { day, time, label, video: video.id.clone() })
+            let short = match (video.season, video.episode) {
+                (Some(season), Some(episode)) => format!("S{season:02}E{episode:02}"),
+                (None, Some(episode)) => format!("E{episode:02}"),
+                _ => String::new(),
+            };
+            Some(Release {
+                day,
+                time,
+                label,
+                video: video.id.clone(),
+                number: short,
+                name: video.title.clone().unwrap_or_default(),
+            })
         })
         .collect();
+    // The same episode listed twice (some sources repeat it) shows once.
+    let mut seen = HashSet::new();
+    releases.retain(|release| seen.insert((release.day, release.label.clone())));
     // A film, or a series with no episodes listed: the title's own date.
     if releases.is_empty() {
         if let Some((day, time)) =
             meta.released.as_deref().and_then(|released| local_release(released, zone))
         {
-            releases.push(Release { day, time, label: String::new(), video: String::new() });
+            releases.push(Release {
+                day,
+                time,
+                label: String::new(),
+                video: String::new(),
+                number: String::new(),
+                name: String::new(),
+            });
         }
     }
     releases
+}
+
+/// The 7 days of the week (Monday first) that holds `day`.
+pub(super) fn week_days(day: NaiveDate) -> Vec<NaiveDate> {
+    let start = day - Days::new(day.weekday().num_days_from_monday() as u64);
+    (0..7).map(|at| start + Days::new(at)).collect()
 }
 
 /// The 42 days a month's page shows: whole weeks from the Monday on or
@@ -132,7 +173,7 @@ pub(super) fn month_days(year: i32, month: u32) -> Vec<NaiveDate> {
 impl Library {
     /// Fetches a title's details from wherever it came from: its media
     /// server, TMDB, or the first add-on that knows it.
-    fn details_of(
+    pub(super) fn details_of(
         &self,
         kind: &str,
         id: &str,
@@ -172,6 +213,11 @@ impl Library {
         }))
     }
 
+    /// Titles whose dates have been asked for, and how many have not answered.
+    pub(super) fn calendar_load(&self) -> (usize, usize) {
+        (self.calendar.asked.borrow().len(), self.calendar.waiting.get())
+    }
+
     pub(super) fn start_calendar(self: &std::rc::Rc<Self>, ui: &crate::AppWindow) {
         ui.on_calendar_shown({
             let library = self.clone();
@@ -183,6 +229,13 @@ impl Library {
         ui.on_calendar_step({
             let library = self.clone();
             move |step| library.step_calendar(step)
+        });
+        ui.on_calendar_week({
+            let library = self.clone();
+            move |week| {
+                library.calendar.week.set(week);
+                library.show_calendar();
+            }
         });
         ui.on_calendar_open({
             let library = self.clone();
@@ -201,21 +254,25 @@ impl Library {
         ui.set_calendar_zone(
             format!("Times are in your local time (UTC{}).", Local::now().offset()).into(),
         );
-        self.show_calendar();
+        // Home's Upcoming row needs the dates too: look them up at start.
+        self.calendar.opened.set(true);
+        self.refresh_calendar();
     }
 
-    /// Moves a month back (-1) or on (1), or to this month (0).
+    /// Moves a month (or week) back (-1) or on (1), or to today (0).
     fn step_calendar(&self, step: i32) {
         let today = Local::now().date_naive();
-        let (year, month) = self.calendar.month.get();
-        let shown = NaiveDate::from_ymd_opt(year, month, 1).unwrap_or(today);
+        let shown = self.calendar.anchor.get();
+        let week = self.calendar.week.get();
         let next = match step {
             0 => Some(today),
-            step if step < 0 => shown.checked_sub_months(Months::new(1)),
-            _ => shown.checked_add_months(Months::new(1)),
+            step if step < 0 && week => shown.checked_sub_days(Days::new(7)),
+            _ if week => shown.checked_add_days(Days::new(7)),
+            step if step < 0 => shown.with_day(1).and_then(|d| d.checked_sub_months(Months::new(1))),
+            _ => shown.with_day(1).and_then(|d| d.checked_add_months(Months::new(1))),
         };
         if let Some(next) = next {
-            self.calendar.month.set((next.year(), next.month()));
+            self.calendar.anchor.set(next);
         }
         self.show_calendar();
     }
@@ -245,6 +302,7 @@ impl Library {
                     Err(_) => Err("stopped".to_owned()),
                 };
                 let releases = found.as_ref().map(|meta| releases_of(meta, &Local)).ok();
+                let picture = found.as_ref().ok().and_then(|meta| meta.background.clone().or(meta.poster.clone()));
                 if let Err(err) = &found {
                     haven_core::diag::note(&format!("calendar: no dates for a title ({err})"));
                 }
@@ -255,6 +313,9 @@ impl Library {
                     if calendar.asked.borrow().contains(&title) {
                         match releases {
                             Some(releases) => {
+                                if let Some(picture) = picture {
+                                    calendar.pictures.borrow_mut().insert(title.clone(), picture);
+                                }
                                 calendar.releases.borrow_mut().insert(title, releases);
                             }
                             // Asked again the next time the page opens.
@@ -273,7 +334,9 @@ impl Library {
     /// Fills the page for the month showing.
     fn show_calendar(&self) {
         let Some(ui) = self.ui.upgrade() else { return };
-        let (year, month) = self.calendar.month.get();
+        let anchor = self.calendar.anchor.get();
+        let (year, month) = (anchor.year(), anchor.month());
+        let week = self.calendar.week.get();
         let today = Local::now().date_naive();
         let names: HashMap<Title, String> = self
             .store
@@ -312,20 +375,22 @@ impl Library {
             });
         }
 
-        let days = month_days(year, month);
+        let days = if week { week_days(anchor) } else { month_days(year, month) };
+        // A week's squares are tall enough to name everything.
+        let shown_per_day = if week { usize::MAX } else { SHOWN_PER_DAY };
         let squares: Vec<CalendarDay> = days
             .iter()
             .map(|day| {
                 let entries = by_day.get(day).map(Vec::as_slice).unwrap_or_default();
                 CalendarDay {
                     number: day.day() as i32,
-                    in_month: day.month() == month,
+                    in_month: week || day.month() == month,
                     today: *day == today,
-                    more: entries.len().saturating_sub(SHOWN_PER_DAY) as i32,
+                    more: entries.len().saturating_sub(shown_per_day) as i32,
                     entries: ModelRc::new(VecModel::from(
                         entries
                             .iter()
-                            .take(SHOWN_PER_DAY)
+                            .take(shown_per_day)
                             .map(|(_, entry)| entry.clone())
                             .collect::<Vec<_>>(),
                     )),
@@ -333,7 +398,7 @@ impl Library {
             })
             .collect();
         let mut agenda: Vec<AgendaRow> = Vec::new();
-        for day in days.iter().filter(|day| day.month() == month) {
+        for day in days.iter().filter(|day| week || day.month() == month) {
             for (at, (_, entry)) in by_day.get(day).into_iter().flatten().enumerate() {
                 agenda.push(AgendaRow {
                     heading: if at == 0 {
@@ -352,15 +417,95 @@ impl Library {
             "Add films and series to your Watchlist to see here when they come out."
         } else if self.calendar.waiting.get() > 0 {
             "Looking up dates…"
+        } else if agenda.is_empty() && week {
+            "Nothing on your Watchlist comes out this week."
         } else if agenda.is_empty() {
             "Nothing on your Watchlist comes out this month."
         } else {
             ""
         };
-        ui.set_calendar_title(format!("{} {year}", MONTHS[(month as usize).clamp(1, 12) - 1]).into());
+        let month_name = |day: NaiveDate| MONTHS[day.month0() as usize];
+        let title = if week {
+            let (first, last) = (days[0], days[6]);
+            if first.month() == last.month() {
+                format!("{} – {} {} {}", first.day(), last.day(), month_name(last), last.year())
+            } else {
+                format!("{} {} – {} {} {}", first.day(), &month_name(first)[..3], last.day(), &month_name(last)[..3], last.year())
+            }
+        } else {
+            format!("{} {year}", month_name(anchor))
+        };
+        ui.set_calendar_title(title.into());
+        ui.set_calendar_is_week(week);
         ui.set_calendar_days(ModelRc::new(VecModel::from(squares)));
         ui.set_calendar_agenda(ModelRc::new(VecModel::from(agenda)));
         ui.set_calendar_note(note.into());
+        drop(ui);
+        self.fill_upcoming(&names, today);
+    }
+
+    /// Home's Upcoming row: what comes out from today on, soonest first.
+    fn fill_upcoming(&self, names: &HashMap<Title, String>, today: NaiveDate) {
+        let releases = self.calendar.releases.borrow();
+        let pictures = self.calendar.pictures.borrow();
+        let mut coming: Vec<(&Title, &Release)> = releases
+            .iter()
+            .flat_map(|(title, list)| list.iter().map(move |release| (title, release)))
+            .filter(|(_, release)| release.day >= today)
+            .collect();
+        coming.sort_by(|a, b| (a.1.day, a.1.time, &a.0.1).cmp(&(b.1.day, b.1.time, &b.0.1)));
+        // One card a show (user: two episodes of one show clog the row):
+        // its next release; more of it the same day widen the badge.
+        let mut last_same_day: HashMap<&Title, &Release> = HashMap::new();
+        for (title, release) in &coming {
+            let first = coming.iter().find(|(other, _)| other == title).map(|(_, r)| r.day);
+            if Some(release.day) == first {
+                last_same_day.insert(*title, *release);
+            }
+        }
+        let mut seen: HashSet<&Title> = HashSet::new();
+        coming.retain(|(title, _)| seen.insert(*title));
+        let cards = coming
+            .into_iter()
+            .filter_map(|(title, release)| {
+                let last = last_same_day.get(title).copied().filter(|last| last.number != release.number);
+                let name = names.get(title)?;
+                let days = (release.day - today).num_days();
+                let when = match days {
+                    0 => "Today".to_owned(),
+                    1 => "Tomorrow".to_owned(),
+                    2..=6 => format!("In {days} days"),
+                    _ => format!("{} {}", &MONTHS[release.day.month0() as usize][..3], release.day.day()),
+                };
+                let card = crate::UpcomingCard {
+                    id: title.1.as_str().into(),
+                    kind: title.0.as_str().into(),
+                    video: release.video.as_str().into(),
+                    title: name.as_str().into(),
+                    episode: if last.is_some() {
+                        "New episodes".into()
+                    } else if release.name.is_empty() {
+                        if release.number.is_empty() { "Film".into() } else { release.number.as_str().into() }
+                    } else {
+                        release.name.as_str().into()
+                    },
+                    badge: match last {
+                        // "S03E07–E08"
+                        Some(last) if last.number.len() > 3 => {
+                            format!("{}–{}", release.number, &last.number[last.number.len().saturating_sub(3)..]).into()
+                        }
+                        _ => release.number.as_str().into(),
+                    },
+                    when: when.into(),
+                    soon: days < 7,
+                    ..Default::default()
+                };
+                Some((card, pictures.get(title).cloned()))
+            })
+            .take(12)
+            .collect();
+        drop((releases, pictures));
+        self.show_upcoming(cards);
     }
 }
 
@@ -417,6 +562,20 @@ mod tests {
         let releases = releases_of(&series, &zone);
         assert_eq!(releases.len(), 1);
         assert_eq!(releases[0].label, "S3 E5 · Five");
+        let doubled: MetaDetail = serde_json::from_value(serde_json::json!({
+            "id": "tt3", "type": "series", "name": "B",
+            "videos": [
+                {"id": "tt3:0:31", "title": "The Making Of Episode 1", "season": 0, "episode": 31, "released": "2026-11-11T11:00:00.000Z"},
+                {"id": "tt3:3:1", "title": "One", "season": 3, "episode": 1, "released": "2026-11-11T11:00:00.000Z"},
+                {"id": "tt3:3:1", "title": "One", "season": 3, "episode": 1, "released": "2026-11-11T11:00:00.000Z"}
+            ]
+        }))
+        .unwrap();
+        let once = releases_of(&doubled, &zone);
+        assert_eq!(once.len(), 1);
+        assert_eq!(once[0].label, "S3 E1 · One");
+        assert_eq!(week_days(NaiveDate::from_ymd_opt(2026, 11, 19).unwrap())[0],
+            NaiveDate::from_ymd_opt(2026, 11, 16).unwrap());
         assert_eq!(releases[0].video, "tt1:3:5");
         assert_eq!(releases[0].time, NaiveTime::from_hms_opt(8, 30, 0));
         let film: MetaDetail = serde_json::from_value(serde_json::json!({

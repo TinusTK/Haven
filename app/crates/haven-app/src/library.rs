@@ -10,11 +10,14 @@ use std::{
 
 mod calendar;
 mod cast;
+mod downloads;
 mod explore;
+mod home;
 mod offers;
 mod ondemand;
 mod servers;
 mod sources;
+mod sync;
 mod tracking;
 mod updates;
 
@@ -49,7 +52,7 @@ const IMAGES_AT_ONCE: usize = 6;
 /// refuses the streams too).
 const SERVER_SHELVES_AT_ONCE: usize = 2;
 const CAST_SHOWN: usize = 6;
-const CONTINUE_LENGTH: u32 = 20;
+pub(super) const CONTINUE_LENGTH: u32 = 20;
 
 type Pixels = SharedPixelBuffer<Rgba8Pixel>;
 
@@ -239,6 +242,9 @@ pub struct Library {
     image_gate: Arc<Semaphore>,
     server_gate: Arc<Semaphore>,
     calendar: calendar::Calendar,
+    downloads: downloads::Downloads,
+    home_top: home::HomeTop,
+    sync: sync::SyncState,
     updates: updates::Updates,
     /// Held while Home is not the page showing.
     home_pause: Arc<Pause>,
@@ -280,6 +286,9 @@ pub struct Library {
     continue_generation: Cell<u64>,
     watchlist: Rc<VecModel<Poster>>,
     watchlist_generation: Cell<u64>,
+    /// Everything watched, newest first (the Library's History).
+    history: Rc<VecModel<Poster>>,
+    history_generation: Cell<u64>,
 
     /// The media servers in use (those switched on).
     servers: RefCell<Vec<haven_servers::Server>>,
@@ -345,6 +354,9 @@ impl Library {
             server_gate: Arc::new(Semaphore::new(SERVER_SHELVES_AT_ONCE)),
             home_pause: Arc::default(),
             calendar: calendar::Calendar::default(),
+            downloads: downloads::Downloads::default(),
+            home_top: home::HomeTop::default(),
+            sync: sync::SyncState::default(),
             updates: updates::Updates::default(),
             picture_cache: Arc::new(picture_cache),
             open: RefCell::default(),
@@ -367,6 +379,8 @@ impl Library {
             continue_generation: Cell::new(0),
             watchlist: Rc::default(),
             watchlist_generation: Cell::new(0),
+            history: Rc::default(),
+            history_generation: Cell::new(0),
             servers: RefCell::default(),
             all_servers: RefCell::default(),
             server_client,
@@ -442,14 +456,23 @@ impl Library {
         library.reload_continue();
         library.reload_watchlist();
         library.start_tracking(ui);
+        library.start_sync(ui);
         library.start_explore(ui);
         library.start_offers(ui);
+        library.start_home_top(ui);
         library.start_calendar(ui);
+        library.start_downloads(ui);
+        library.start_history(ui);
         library.start_updates(ui);
         library.start_servers(ui);
         library.start_casting(ui);
         library.reload_catalog();
         Ok(library)
+    }
+
+    /// How far start-up loading has got, 0 to 1 (the loading screen).
+    pub fn startup(&self) -> f32 {
+        self.startup_progress()
     }
 
     /// Gives the library a player; from then on Direct streams can be
@@ -860,6 +883,9 @@ impl Library {
                 // more than once: show each once.
                 let metas: Vec<MetaPreview> =
                     haven_addons::without_repeats(metas).into_iter().take(length).collect();
+                if board != Board::Search {
+                    self.offer_hero(&metas);
+                }
                 items.set_vec(
                     metas
                         .iter()
@@ -1016,6 +1042,8 @@ impl Library {
             })
             .collect();
         self.continuing.set_vec(rows);
+        self.fill_continue_cards(&watched);
+        self.reload_history();
         for (item, url) in wanted {
             self.fetch_image(url, POSTER_SIZE, move |library, pixels| {
                 if generation != library.continue_generation.get() {
@@ -1025,6 +1053,65 @@ impl Library {
                     poster.image = Image::from_rgba8(pixels);
                     poster.has_image = true;
                     library.continuing.set_row_data(item, poster);
+                }
+            });
+        }
+    }
+
+    pub(super) fn start_history(&self, ui: &AppWindow) {
+        ui.set_history(ModelRc::from(self.history.clone()));
+        self.reload_history();
+    }
+
+    /// Rebuilds the Library's History: every title watched, the latest
+    /// film or episode of each, newest first.
+    fn reload_history(&self) {
+        let generation = self.history_generation.get() + 1;
+        self.history_generation.set(generation);
+        let watched = self.store.history(300).unwrap_or_default();
+        let had: Vec<Poster> = self.history.iter().collect();
+        let mut wanted = Vec::new();
+        let rows: Vec<Poster> = watched
+            .iter()
+            .enumerate()
+            .map(|(item, progress)| {
+                let old = had
+                    .iter()
+                    .find(|old| old.has_image && old.id == progress.title_id && old.kind == progress.kind);
+                if old.is_none() {
+                    if let Some(url) = &progress.poster {
+                        wanted.push((item, url.clone()));
+                    }
+                }
+                let note = if !progress.detail.is_empty() {
+                    progress.detail.clone()
+                } else if progress.finished {
+                    "Watched".to_owned()
+                } else {
+                    format!("{} left", clock(progress.duration - progress.position))
+                };
+                Poster {
+                    id: progress.title_id.as_str().into(),
+                    kind: progress.kind.as_str().into(),
+                    title: progress.title.as_str().into(),
+                    year: note.into(),
+                    image: old.map(|old| old.image.clone()).unwrap_or_default(),
+                    has_image: old.is_some(),
+                    video: progress.video_id.as_str().into(),
+                    progress: if progress.finished { 1.0 } else { resume::share(progress.position, progress.duration).max(0.02) },
+                }
+            })
+            .collect();
+        self.history.set_vec(rows);
+        for (item, url) in wanted {
+            self.fetch_image(url, POSTER_SIZE, move |library, pixels| {
+                if generation != library.history_generation.get() {
+                    return;
+                }
+                if let Some(mut poster) = library.history.row_data(item) {
+                    poster.image = Image::from_rgba8(pixels);
+                    poster.has_image = true;
+                    library.history.set_row_data(item, poster);
                 }
             });
         }

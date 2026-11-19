@@ -19,6 +19,9 @@ env:
   # without one of your own. Empty where secrets are not shared (pull
   # requests from forks): Haven then asks for a key in Settings.
   HAVEN_TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
+  # Haven's own Trakt app (trakt.tv/oauth/applications), for Link in Settings.
+  HAVEN_TRAKT_CLIENT_ID: ${{ secrets.TRAKT_CLIENT_ID }}
+  HAVEN_TRAKT_CLIENT_SECRET: ${{ secrets.TRAKT_CLIENT_SECRET }}
 
 jobs:
   windows:

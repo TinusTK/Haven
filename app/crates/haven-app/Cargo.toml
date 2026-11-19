@@ -45,6 +45,8 @@ png.workspace = true
 reqwest.workspace = true
 serde.workspace = true
 slint.workspace = true
+# The device's region, for the country in Settings (Slint uses it too).
+sys-locale = "0.3"
 tokio.workspace = true
 
 [build-dependencies]

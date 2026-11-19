@@ -118,6 +118,38 @@ pub fn run(paths: AppPaths, phone: bool) -> Result<(), Box<dyn Error>> {
 
     let live = livetv::LiveTv::start(&ui, store.clone(), tasks.handle().clone())?;
 
+    // The loading screen: the halo and a bar that follows what Haven
+    // loads at start. It shows for at least 3 seconds, and after that
+    // until the bar is full (at most 25 seconds, so a dead network never
+    // keeps Haven shut).
+    let splash = Rc::new(slint::Timer::default());
+    {
+        let started = std::time::Instant::now();
+        let shown = std::cell::Cell::new(0.0f32);
+        let (ui, library, timer) = (ui.as_weak(), library.clone(), Rc::downgrade(&splash));
+        splash.start(slint::TimerMode::Repeated, std::time::Duration::from_millis(80), move || {
+            let Some(ui) = ui.upgrade() else { return };
+            let elapsed = started.elapsed().as_secs_f32();
+            let real = if elapsed >= 25.0 { 1.0 } else { library.startup().clamp(0.0, 1.0) };
+            // In the first 3 seconds the bar cannot run ahead of the clock.
+            let target = if elapsed < 3.0 { real.min(elapsed / 3.0) } else { real };
+            shown.set(shown.get().max(target));
+            ui.set_splash_progress(shown.get());
+            if shown.get() >= 1.0 && elapsed >= 3.0 {
+                ui.set_splash_shown(false);
+                let faded = ui.as_weak();
+                slint::Timer::single_shot(std::time::Duration::from_millis(450), move || {
+                    if let Some(ui) = faded.upgrade() {
+                        ui.set_splash_gone(true);
+                    }
+                });
+                if let Some(timer) = timer.upgrade() {
+                    timer.stop();
+                }
+            }
+        });
+    }
+
     // On a computer whose graphics have no usable OpenGL, Slint draws the
     // window in software and the player cannot hook into it. Haven then
     // runs without the player (streams and channels are listed, not
@@ -169,6 +201,7 @@ pub fn run(paths: AppPaths, phone: bool) -> Result<(), Box<dyn Error>> {
     let _devtools = devtools::start(&ui);
 
     ui.run()?;
+    drop(splash);
     // Don't wait for downloads that are still running.
     tasks.shutdown_background();
 

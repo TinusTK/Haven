@@ -10,7 +10,35 @@ use haven_core::{http, secrets::Secrets};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-const TRAKT: &str = "https://api.trakt.tv";
+const TRAKT_API: &str = "https://api.trakt.tv";
+const TRAKT_SITE: &str = "https://trakt.tv";
+/// Where trakt.tv sends the browser back to after the user allows Haven:
+/// a small listener Haven runs on this computer while linking. Register
+/// it (and `urn:ietf:wg:oauth:2.0:oob`) as Redirect URIs of Haven's
+/// Trakt app.
+pub const TRAKT_REDIRECT: &str = "http://127.0.0.1:47219/trakt";
+/// The port in [`TRAKT_REDIRECT`].
+pub const TRAKT_REDIRECT_PORT: u16 = 47219;
+
+/// Trakt's API, or a stand-in named by `HAVEN_TRAKT_API` in a debug build.
+fn trakt_api() -> String {
+    if cfg!(debug_assertions) {
+        if let Ok(at) = std::env::var("HAVEN_TRAKT_API") {
+            return at;
+        }
+    }
+    TRAKT_API.to_owned()
+}
+
+/// Trakt's website, or a stand-in named by `HAVEN_TRAKT_SITE` in a debug build.
+fn trakt_site() -> String {
+    if cfg!(debug_assertions) {
+        if let Ok(at) = std::env::var("HAVEN_TRAKT_SITE") {
+            return at;
+        }
+    }
+    TRAKT_SITE.to_owned()
+}
 const SIMKL: &str = "https://api.simkl.com";
 const ANSWER_BYTES: usize = 16 * 1024 * 1024;
 /// A Trakt token is renewed when it has less than this long to live.
@@ -138,6 +166,53 @@ fn body(subject: &Subject, simkl_list: Option<&str>) -> Value {
     if subject.series { json!({ "shows": [entry] }) } else { json!({ "movies": [entry] }) }
 }
 
+/// A film or episode the service says was watched.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Watched {
+    pub imdb: String,
+    pub title: String,
+    /// Season and episode for an episode; `None` for a film.
+    pub episode: Option<(u32, u32)>,
+    /// When, in seconds since 1970 (0 if not given).
+    pub at: i64,
+}
+
+fn moment(text: Option<&Value>) -> i64 {
+    text.and_then(Value::as_str)
+        .and_then(|text| chrono::DateTime::parse_from_rfc3339(text).ok())
+        .map_or(0, |moment| moment.timestamp())
+}
+
+/// Trakt's `/sync/watched/movies` or `/sync/watched/shows` answer.
+pub fn read_watched(answer: &Value, series: bool) -> Vec<Watched> {
+    let key = if series { "show" } else { "movie" };
+    let mut found = Vec::new();
+    for entry in answer.as_array().map(Vec::as_slice).unwrap_or_default() {
+        let Some(title) = entry.get(key) else { continue };
+        let Some(imdb) = title.get("ids").and_then(|ids| ids.get("imdb")).and_then(Value::as_str).filter(|id| is_imdb_id(id)) else {
+            continue;
+        };
+        let name = title.get("title").and_then(Value::as_str).unwrap_or_default().to_owned();
+        if !series {
+            found.push(Watched { imdb: imdb.to_owned(), title: name, episode: None, at: moment(entry.get("last_watched_at")) });
+            continue;
+        }
+        for season in entry.get("seasons").and_then(Value::as_array).map(Vec::as_slice).unwrap_or_default() {
+            let Some(number) = season.get("number").and_then(Value::as_u64) else { continue };
+            for episode in season.get("episodes").and_then(Value::as_array).map(Vec::as_slice).unwrap_or_default() {
+                let Some(episode_number) = episode.get("number").and_then(Value::as_u64) else { continue };
+                found.push(Watched {
+                    imdb: imdb.to_owned(),
+                    title: name.clone(),
+                    episode: Some((number as u32, episode_number as u32)),
+                    at: moment(episode.get("last_watched_at")),
+                });
+            }
+        }
+    }
+    found
+}
+
 fn read_listed(answer: &Value, series: bool) -> Vec<Listed> {
     let key = if series { "show" } else { "movie" };
     // Trakt answers with a list; Simkl wraps it in {"movies": […]} or {"shows": […]}.
@@ -241,7 +316,7 @@ impl Client {
                 let (status, answer) = self
                     .call(
                         service,
-                        &format!("{TRAKT}/oauth/device/code"),
+                        &format!("{}/oauth/device/code", trakt_api()),
                         &[],
                         Some(json!({ "client_id": id })),
                     )
@@ -278,6 +353,56 @@ impl Client {
         }
     }
 
+    /// The trakt.tv page where the user signs in and allows Haven; it
+    /// sends the browser back to [`TRAKT_REDIRECT`] with a code and `state`.
+    pub fn trakt_authorize_url(&self, state: &str) -> Result<String> {
+        let (id, _) = self.trakt_keys()?;
+        let mut url = reqwest::Url::parse(&format!("{}/oauth/authorize", trakt_site())).map_err(|_| Error::BadAnswer)?;
+        url.query_pairs_mut()
+            .append_pair("response_type", "code")
+            .append_pair("client_id", id)
+            .append_pair("redirect_uri", TRAKT_REDIRECT)
+            .append_pair("state", state);
+        Ok(url.to_string())
+    }
+
+    /// Trades the code trakt.tv sent back for a sign-in.
+    pub async fn trakt_exchange(&self, code: &str, now: i64) -> Result<Account> {
+        let (id, secret) = self.trakt_keys()?;
+        let (status, answer) = self
+            .call(
+                Service::Trakt,
+                &format!("{}/oauth/token", trakt_api()),
+                &[],
+                Some(json!({
+                    "code": code,
+                    "client_id": id,
+                    "client_secret": secret,
+                    "redirect_uri": TRAKT_REDIRECT,
+                    "grant_type": "authorization_code",
+                })),
+            )
+            .await?;
+        if status != 200 {
+            return Err(Error::Status(status));
+        }
+        read_trakt_token(&answer, now).ok_or(Error::BadAnswer)
+    }
+
+    /// Tells Trakt to forget the sign-in (best effort).
+    pub async fn trakt_revoke(&self, account: &Account) -> Result<()> {
+        let (id, secret) = self.trakt_keys()?;
+        let _ = self
+            .call(
+                Service::Trakt,
+                &format!("{}/oauth/revoke", trakt_api()),
+                &[],
+                Some(json!({ "token": account.token, "client_id": id, "client_secret": secret })),
+            )
+            .await?;
+        Ok(())
+    }
+
     /// Asks whether the user has approved the code yet. `now` is the time
     /// in seconds since 1970.
     pub async fn poll(&self, code: &Code, now: i64) -> Result<Option<Account>> {
@@ -287,7 +412,7 @@ impl Client {
                 let (status, answer) = self
                     .call(
                         code.service,
-                        &format!("{TRAKT}/oauth/device/token"),
+                        &format!("{}/oauth/device/token", trakt_api()),
                         &[],
                         Some(json!({
                             "code": code.device_code, "client_id": id, "client_secret": secret
@@ -333,13 +458,13 @@ impl Client {
         let (status, answer) = self
             .call(
                 account.service,
-                &format!("{TRAKT}/oauth/token"),
+                &format!("{}/oauth/token", trakt_api()),
                 &[],
                 Some(json!({
                     "refresh_token": refresh,
                     "client_id": id,
                     "client_secret": secret,
-                    "redirect_uri": "urn:ietf:wg:oauth:2.0:oob",
+                    "redirect_uri": TRAKT_REDIRECT,
                     "grant_type": "refresh_token",
                 })),
             )
@@ -351,7 +476,7 @@ impl Client {
     }
 
     async fn post(&self, account: &Account, path: &str, body: Value) -> Result<()> {
-        let base = if account.service == Service::Trakt { TRAKT } else { SIMKL };
+        let base = if account.service == Service::Trakt { trakt_api() } else { SIMKL.to_owned() };
         let (status, _) = self
             .call(account.service, &format!("{base}{path}"), &self.headers(account)?, Some(body))
             .await?;
@@ -380,6 +505,25 @@ impl Client {
         }
     }
 
+    /// What the account has watched (Trakt only; Simkl answers empty).
+    pub async fn watched(&self, account: &Account) -> Result<Vec<Watched>> {
+        if account.service != Service::Trakt {
+            return Ok(Vec::new());
+        }
+        let headers = self.headers(account)?;
+        let mut found = Vec::new();
+        for series in [false, true] {
+            let what = if series { "shows" } else { "movies" };
+            let url = format!("{}/sync/watched/{what}", trakt_api());
+            let (status, answer) = self.call(account.service, &url, &headers, None).await?;
+            if !(200..300).contains(&status) {
+                return Err(Error::Status(status));
+            }
+            found.extend(read_watched(&answer, series));
+        }
+        Ok(found)
+    }
+
     /// The films and series on the service's watchlist.
     pub async fn watchlist(&self, account: &Account) -> Result<Vec<Listed>> {
         let headers = self.headers(account)?;
@@ -387,7 +531,7 @@ impl Client {
         for series in [false, true] {
             let what = if series { "shows" } else { "movies" };
             let url = match account.service {
-                Service::Trakt => format!("{TRAKT}/sync/watchlist/{what}"),
+                Service::Trakt => format!("{}/sync/watchlist/{what}", trakt_api()),
                 Service::Simkl => format!("{SIMKL}/sync/all-items/{what}/plantowatch"),
             };
             let (status, answer) = self.call(account.service, &url, &headers, None).await?;
@@ -414,6 +558,20 @@ fn read_trakt_token(answer: &Value, now: i64) -> Option<Account> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn trakts_watched_list_is_read() {
+        let shows = json!([{ "last_watched_at": "2026-01-02T03:04:05.000Z",
+            "show": { "title": "A Show", "ids": { "imdb": "tt1" } },
+            "seasons": [{ "number": 2, "episodes": [{ "number": 5, "last_watched_at": "2026-01-02T03:04:05.000Z" }] }] },
+            { "show": { "title": "No id", "ids": {} }, "seasons": [] }]);
+        let found = read_watched(&shows, true);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].episode, Some((2, 5)));
+        assert!(found[0].at > 0);
+        let films = json!([{ "movie": { "title": "F", "ids": { "imdb": "tt2" } } }]);
+        assert_eq!(read_watched(&films, false)[0].episode, None);
+    }
 
     #[test]
     fn subjects_need_an_imdb_id() {

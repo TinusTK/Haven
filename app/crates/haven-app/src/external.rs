@@ -305,3 +305,20 @@ mod tests {
         assert_eq!(ios_link(3, address), format!("outplayer://{address}"));
     }
 }
+
+/// Shows a folder in the computer's file browser (Finder, Explorer, the
+/// desktop's own). Nothing on a phone.
+pub(crate) fn open_path(path: &std::path::Path) {
+    let program = if cfg!(target_os = "macos") {
+        "open"
+    } else if cfg!(windows) {
+        "explorer"
+    } else if cfg!(target_os = "linux") {
+        "xdg-open"
+    } else {
+        return;
+    };
+    if let Err(err) = std::process::Command::new(program).arg(path).spawn() {
+        eprintln!("haven: could not show {}: {err}", path.display());
+    }
+}

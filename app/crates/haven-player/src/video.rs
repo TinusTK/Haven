@@ -365,6 +365,20 @@ impl Video {
                 let _ = init.set_property("sub-auto", "no");
                 let _ = init.set_property("audio-display", "no");
                 let _ = init.set_property("network-timeout", "30");
+                // Fetch the whole film, not just the next minutes: the
+                // read-ahead goes to a file on disk (removed when the
+                // film closes) instead of a small memory buffer, and
+                // what has been watched is kept for going back.
+                let _ = init.set_property("cache", "yes");
+                let _ = init.set_property("cache-on-disk", "yes");
+                let _ = init.set_property(
+                    "demuxer-cache-dir",
+                    std::env::temp_dir().join("haven-stream").display().to_string(),
+                );
+                let _ = init.set_property("demuxer-max-bytes", "200GiB");
+                let _ = init.set_property("demuxer-max-back-bytes", "200GiB");
+                let _ = init.set_property("cache-secs", "1000000");
+                let _ = init.set_property("demuxer-readahead-secs", "1000000");
                 if cfg!(debug_assertions) {
                     let _ = init.set_property("terminal", "yes");
                     let _ = init.set_property("msg-level", "all=warn");

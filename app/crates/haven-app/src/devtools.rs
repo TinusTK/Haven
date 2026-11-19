@@ -23,7 +23,8 @@
 //!   `checkservers`, `xtream <server> <user> <password>`,
 //!   `explore <source> <kind> <genre>` (genre -1 for all), `more`,
 //!   `explorestate`, `shelves` (print Home's shelves), `sources` (print
-//!   the places to watch), `snap <file.png>`, `wheel <x> <y> <dy>`, `settingsy <y>`, `state` (print the
+//!   the places to watch), `librarytab <n>`, `section <n>`, `band <n>`,
+//!   `week <0|1>`, `download <row>`, `snap <file.png>`, `wheel <x> <y> <dy>`, `settingsy <y>`, `state` (print the
 //!   player's state).
 //! - `HAVEN_TMDB_API=<address>` with `HAVEN_TMDB_IMAGES=<address>`: ask a
 //!   stand-in for TMDB (read in `library.rs`).
@@ -286,6 +287,25 @@ fn act(ui: &AppWindow, action: &str) {
         }
         // settingsy <y>: scrolls the Settings page down that far.
         "settingsy" => ui.set_settings_scroll(-number),
+        // librarytab <0|1|2>, section <0..6> (a part of Settings),
+        // band <0|1> (Live TV or Radio), week <0|1> (the calendar).
+        "librarytab" => ui.set_library_tab(number as i32),
+        "section" => {
+            ui.set_settings_section(number as i32);
+            ui.set_settings_picking(false);
+        }
+        "band" => ui.set_live_band(number as i32),
+        "week" => ui.invoke_calendar_week(number > 0.0),
+        "download" => ui.invoke_download_stream(number as i32),
+        "downloads" => eprintln!(
+            "haven-downloads: [{}]",
+            ui.get_download_rows()
+                .iter()
+                .map(|row| format!("{}|{}|{}|{}|{}", row.section, row.group, row.title, row.status, row.done))
+                .collect::<Vec<_>>()
+                .join(" ; ")
+        ),
+        "undownload" => ui.invoke_download_remove(number as i32),
         "streamgroup" => ui.set_stream_group(rest.trim().into()),
         "volume" => ui.invoke_player_set_volume(number),
         "mute" => ui.invoke_player_toggle_mute(),
@@ -455,9 +475,11 @@ fn act(ui: &AppWindow, action: &str) {
                 .join(" | "),
         ),
         "connect" => ui.invoke_tracking_connect(number as i32),
+        "unlink" => ui.invoke_tracking_disconnect(number as i32),
         "tracking" => eprintln!(
-            "haven-tracking: status=\"{}\" keys=\"{}\" rows=[{}]",
+            "haven-tracking: status=\"{}\" link=\"{}\" keys=\"{}\" rows=[{}]",
             ui.get_tracking_status(),
+            ui.get_tracking_link(),
             ui.get_keys_status(),
             ui.get_tracking()
                 .iter()

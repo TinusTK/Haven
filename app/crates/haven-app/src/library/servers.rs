@@ -499,6 +499,10 @@ pub fn open_in_browser(link: &str) {
     if haven_core::http::web_url(link).is_err() {
         return;
     }
+    // Unattended checks: say it instead of opening a browser.
+    if cfg!(debug_assertions) && std::env::var_os("HAVEN_NO_BROWSER").is_some() {
+        return eprintln!("haven: would open {link}");
+    }
     // A phone has no programs to start: the system opens the address.
     #[cfg(target_os = "ios")]
     {

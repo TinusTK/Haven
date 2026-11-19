@@ -1957,6 +1957,7 @@ dependencies = [
  "serde_json",
  "slint",
  "slint-build",
+ "sys-locale",
  "tokio",
  "webbrowser",
  "winresource",
@@ -2034,6 +2035,7 @@ dependencies = [
 name = "haven-tracking"
 version = "0.1.9"
 dependencies = [
+ "chrono",
  "haven-core",
  "reqwest",
  "serde",

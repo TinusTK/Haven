@@ -8,8 +8,8 @@ use std::{
 };
 
 use haven_addons::MetaDetail;
-use haven_core::{settings::Keys, storage::Saved};
-use haven_tracking::{Account, Client, Service, Subject, subject};
+use haven_core::settings::Keys;
+use haven_tracking::{Account, Client, Service};
 use slint::{ModelRc, VecModel};
 
 use super::{BACKGROUND_SIZE, CAST_SHOWN, DetailImage, Library, POSTER_SIZE, on_ui, servers::open_in_browser};
@@ -61,7 +61,7 @@ impl Library {
         self.show_tracking();
     }
 
-    fn tracker(&self) -> Client {
+    pub(super) fn tracker(&self) -> Client {
         Client::new(self.http.clone(), self.keys.borrow().clone())
     }
 
@@ -69,7 +69,7 @@ impl Library {
         self.accounts.borrow().iter().find(|account| account.service == service).cloned()
     }
 
-    fn save_accounts(&self) {
+    pub(super) fn save_accounts(&self) {
         if let Err(err) = self.store.put(ACCOUNTS, &*self.accounts.borrow()) {
             eprintln!("haven: could not save the tracking sign-ins: {err}");
         }
@@ -95,13 +95,15 @@ impl Library {
                     service: index as i32,
                     name: service.label().into(),
                     state: if connected {
-                        "Connected: what you finish is marked watched, and your watchlist is passed on."
+                        "Linked: what you finish is marked watched, and your watchlist is passed on."
+                    } else if has_keys && service == Service::Trakt {
+                        "Not linked. Link opens trakt.tv to sign in, then comes back to Haven."
                     } else if has_keys {
-                        "Not connected."
+                        "Not linked. Link shows a code to enter on simkl.com."
                     } else if service == Service::Trakt {
-                        "Add a Trakt client ID and secret below to connect."
+                        "Not available in this copy of Haven yet (no Trakt app key)."
                     } else {
-                        "Add a Simkl client ID below to connect."
+                        "Not available in this copy of Haven yet (no Simkl app key)."
                     }
                     .into(),
                     connected,
@@ -110,6 +112,8 @@ impl Library {
             })
             .collect();
         ui.set_tracking(ModelRc::new(VecModel::from(rows)));
+        drop(ui);
+        self.show_sync();
     }
 
     fn save_keys(&self) {
@@ -136,6 +140,9 @@ impl Library {
     /// Starts a sign-in: shows the code, opens the service's page and
     /// waits for the user to approve it there.
     fn tracking_connect(&self, service: Service) {
+        if service == Service::Trakt {
+            return self.trakt_link();
+        }
         let attempt = self.tracking_attempt.fetch_add(1, Ordering::SeqCst) + 1;
         let attempts = self.tracking_attempt.clone();
         let tracker = self.tracker();
@@ -187,6 +194,78 @@ impl Library {
         });
     }
 
+    /// Links Trakt through its website: opens trakt.tv's sign-in page in
+    /// the web browser and waits for trakt.tv to send the browser back to
+    /// Haven (a listener on this computer) with a code, which is traded
+    /// for a sign-in. Nothing to type.
+    fn trakt_link(&self) {
+        let attempt = self.tracking_attempt.fetch_add(1, Ordering::SeqCst) + 1;
+        let attempts = self.tracking_attempt.clone();
+        let tracker = self.tracker();
+        let state = random_state();
+        let link = match tracker.trakt_authorize_url(&state) {
+            Ok(link) => link,
+            Err(_) => {
+                return self.tracking_status(
+                    "This copy of Haven has no Trakt app set up yet, so it cannot link to Trakt.",
+                );
+            }
+        };
+        if let Some(ui) = self.ui.upgrade() {
+            ui.set_tracking_busy(true);
+            ui.set_tracking_link(link.as_str().into());
+        }
+        self.tracking_status("Sign in to Trakt in your web browser and choose Yes to link Haven. Haven carries on by itself.");
+        self.tasks.spawn(async move {
+            let current = || attempts.load(Ordering::SeqCst) == attempt;
+            // A link tried a moment ago may still hold the port: it lets
+            // go within a second of being replaced.
+            let mut tries = 0;
+            let listener = loop {
+                match tokio::net::TcpListener::bind(("127.0.0.1", haven_tracking::TRAKT_REDIRECT_PORT)).await {
+                    Ok(listener) => break listener,
+                    Err(_) if tries < 8 && current() => {
+                        tries += 1;
+                        tokio::time::sleep(Duration::from_millis(500)).await;
+                    }
+                    Err(err) => {
+                        if !current() {
+                            return;
+                        }
+                        let err = format!("Haven could not wait for Trakt's answer ({err})");
+                        return on_ui(move |library| library.tracking_connected(Service::Trakt, Err(err)));
+                    }
+                }
+            };
+            on_ui(move |_| open_in_browser(&link));
+            let started = std::time::Instant::now();
+            let code = loop {
+                if !current() {
+                    return;
+                }
+                if started.elapsed() > Duration::from_secs(15 * 60) {
+                    break Err(haven_tracking::Error::Expired.to_string());
+                }
+                let Ok(Ok((stream, _))) = tokio::time::timeout(Duration::from_secs(1), listener.accept()).await else {
+                    continue;
+                };
+                match answer_redirect(stream, &state).await {
+                    Some(Ok(code)) => break Ok(code),
+                    Some(Err(why)) => break Err(why),
+                    None => continue,
+                }
+            };
+            drop(listener);
+            let result = match code {
+                Ok(code) => tracker.trakt_exchange(&code, now()).await.map_err(|err| err.to_string()),
+                Err(err) => Err(err),
+            };
+            if current() {
+                on_ui(move |library| library.tracking_connected(Service::Trakt, result));
+            }
+        });
+    }
+
     fn tracking_cancel(&self) {
         self.tracking_attempt.fetch_add(1, Ordering::SeqCst);
         self.tracking_idle();
@@ -208,85 +287,43 @@ impl Library {
                 self.accounts.borrow_mut().retain(|known| known.service != service);
                 self.accounts.borrow_mut().push(account);
                 self.save_accounts();
-                self.tracking_status(&format!("Connected to {}.", service.label()));
+                self.tracking_status(&format!("Linked to {}.", service.label()));
+                // Bring in what the new account holds, and send what waits.
+                self.run_sync(true);
             }
             Err(err) => {
-                self.tracking_status(&format!("Could not connect to {}: {err}.", service.label()))
+                self.tracking_status(&format!("Could not link {}: {err}.", service.label()))
             }
         }
         self.show_tracking();
     }
 
     fn tracking_disconnect(&self, service: Service) {
+        // Tell Trakt too, so the link is gone on its side as well.
+        if let Some(account) = self.account(service).filter(|_| service == Service::Trakt) {
+            let tracker = self.tracker();
+            self.tasks.spawn(async move {
+                let _ = tracker.trakt_revoke(&account).await;
+            });
+        }
         self.accounts.borrow_mut().retain(|account| account.service != service);
         self.save_accounts();
         self.tracking_status(&format!(
-            "Disconnected from {}. Haven has forgotten the sign-in.",
+            "Unlinked from {}. Haven has forgotten the sign-in.",
             service.label()
         ));
         self.show_tracking();
     }
 
-    /// Runs `work` for every connected service, off the UI thread, with a
-    /// token that is still good.
-    fn with_accounts<Work, Fut>(&self, what: &'static str, work: Work)
-    where
-        Work: Fn(Client, Account) -> Fut + Send + 'static,
-        Fut: Future<Output = haven_tracking::Result<()>> + Send,
-    {
-        let accounts = self.accounts.borrow().clone();
-        if accounts.is_empty() {
-            return;
-        }
-        let tracker = self.tracker();
-        self.tasks.spawn(async move {
-            for account in accounts {
-                let account = match tracker.renewed(&account, now()).await {
-                    Ok(Some(renewed)) => {
-                        let keep = renewed.clone();
-                        on_ui(move |library| {
-                            let mut accounts = library.accounts.borrow_mut();
-                            accounts.retain(|known| known.service != keep.service);
-                            accounts.push(keep);
-                            drop(accounts);
-                            library.save_accounts();
-                        });
-                        renewed
-                    }
-                    Ok(None) => account,
-                    Err(err) => {
-                        eprintln!("haven: {} sign-in could not be renewed: {err}", account.service.label());
-                        continue;
-                    }
-                };
-                let service = account.service;
-                if let Err(err) = work(tracker.clone(), account).await {
-                    eprintln!("haven: could not {what} on {}: {err}", service.label());
-                }
-            }
-        });
-    }
-
-    /// Passes a watchlist change on to the connected services.
+    /// Notes a Watchlist change for the linked accounts (sent by sync).
     pub(super) fn track_watchlist(&self, kind: &str, title_id: &str, on: bool) {
-        let Some(subject) = subject(kind, title_id, None) else { return };
-        self.with_accounts("change the watchlist", move |tracker, account| {
-            let subject: Subject = subject.clone();
-            async move { tracker.set_watchlist(&account, &subject, on).await }
-        });
+        let what = if on { "watchlist_add" } else { "watchlist_remove" };
+        self.queue_sync(what, kind, title_id, "");
     }
 
-    /// Marks a finished film or episode as watched on the connected services.
+    /// Notes a finished film or episode for the linked accounts (sent by sync).
     pub(super) fn track_watched(&self, kind: &str, title_id: &str, video_id: &str) {
-        let Some(subject) = subject(kind, title_id, Some(video_id)) else { return };
-        // A series without a known episode cannot be marked.
-        if subject.series && subject.episode.is_none() {
-            return;
-        }
-        self.with_accounts("mark this watched", move |tracker, account| {
-            let subject: Subject = subject.clone();
-            async move { tracker.mark_watched(&account, &subject).await }
-        });
+        self.queue_sync("watched", kind, title_id, video_id);
     }
 
     /// Copies a service's watchlist into Haven's.
@@ -306,25 +343,7 @@ impl Library {
                         ));
                     }
                 };
-                let mut added = 0;
-                // Oldest first, so the list keeps the service's order.
-                for (place, title) in listed.iter().rev().enumerate() {
-                    let kind = if title.series { "series" } else { "movie" };
-                    if library.store.in_watchlist(kind, &title.imdb).unwrap_or(true) {
-                        continue;
-                    }
-                    let saved = library.store.add_to_watchlist(&Saved {
-                        kind: kind.to_owned(),
-                        title_id: title.imdb.clone(),
-                        title: title.title.clone(),
-                        year: title.year.clone(),
-                        poster: None,
-                        added_at: now() * 1000 + place as i64,
-                    });
-                    if saved.is_ok() {
-                        added += 1;
-                    }
-                }
+                let added = library.add_listed(&listed);
                 library.reload_watchlist();
                 library.tracking_status(&format!(
                     "{} of {} titles from {} were new and are now on your Watchlist.",
@@ -392,5 +411,73 @@ impl Library {
                 }
             });
         });
+    }
+}
+
+/// A hard-to-guess word that trakt.tv sends back, so only the answer to
+/// Haven's own request is taken.
+fn random_state() -> String {
+    use ring::rand::SecureRandom;
+    let mut bytes = [0u8; 16];
+    let _ = ring::rand::SystemRandom::new().fill(&mut bytes);
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// Reads one browser request to the listener. `None` for anything that
+/// is not trakt.tv's answer (a favicon, a stray visit); else the code, or
+/// why there is none (the user said no).
+async fn answer_redirect(mut stream: tokio::net::TcpStream, state: &str) -> Option<Result<String, String>> {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let mut buffer = vec![0u8; 8192];
+    let read = tokio::time::timeout(Duration::from_secs(5), stream.read(&mut buffer)).await.ok()?.ok()?;
+    let request = String::from_utf8_lossy(&buffer[..read]);
+    let target = request.lines().next()?.split_whitespace().nth(1)?.to_owned();
+    let found = trakt_redirect_answer(&target, state);
+    let (title, body) = match &found {
+        Some(Ok(_)) => ("Haven is linked to Trakt", "You can close this tab and go back to Haven."),
+        Some(Err(_)) => ("Haven was not linked", "Trakt did not allow it. Go back to Haven to try again."),
+        None => ("Haven", "Nothing to see here."),
+    };
+    let page = format!(
+        "<!doctype html><meta charset=utf-8><title>{title}</title>\
+         <body style=\"font-family:system-ui;background:#0d0f14;color:#eef0f6;display:grid;place-items:center;height:90vh\">\
+         <div style=\"text-align:center\"><h1 style=\"color:#f2c66d\">{title}</h1><p>{body}</p></div>"
+    );
+    let reply = format!(
+        "HTTP/1.1 {}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{page}",
+        if found.is_some() { "200 OK" } else { "404 Not Found" },
+        page.len()
+    );
+    let _ = stream.write_all(reply.as_bytes()).await;
+    let _ = stream.shutdown().await;
+    found
+}
+
+/// What the address trakt.tv sent the browser to says: `/trakt?code=…&state=…`.
+fn trakt_redirect_answer(target: &str, state: &str) -> Option<Result<String, String>> {
+    let url = reqwest::Url::parse(&format!("http://127.0.0.1{target}")).ok()?;
+    if url.path() != "/trakt" {
+        return None;
+    }
+    let pairs: std::collections::HashMap<String, String> = url.query_pairs().into_owned().collect();
+    if pairs.get("state").map(String::as_str) != Some(state) {
+        return None;
+    }
+    match pairs.get("code") {
+        Some(code) if !code.is_empty() => Some(Ok(code.clone())),
+        _ => Some(Err("Trakt did not allow it".to_owned())),
+    }
+}
+
+#[cfg(test)]
+mod link_tests {
+    use super::trakt_redirect_answer;
+
+    #[test]
+    fn only_trakts_answer_to_this_request_is_taken() {
+        assert_eq!(trakt_redirect_answer("/trakt?code=abc&state=s1", "s1"), Some(Ok("abc".into())));
+        assert_eq!(trakt_redirect_answer("/trakt?code=abc&state=other", "s1"), None);
+        assert_eq!(trakt_redirect_answer("/favicon.ico", "s1"), None);
+        assert!(matches!(trakt_redirect_answer("/trakt?error=access_denied&state=s1", "s1"), Some(Err(_))));
     }
 }

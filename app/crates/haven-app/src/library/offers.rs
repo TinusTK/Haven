@@ -29,45 +29,76 @@ fn country_name(code: &str) -> &str {
     COUNTRIES.iter().find(|(known, _)| *known == code).map_or(code, |(_, name)| name)
 }
 
-/// The country the computer is set to, from the usual environment
-/// settings ("en_AU.UTF-8" gives AU); the United States if they do not say.
-fn computer_country() -> String {
-    ["LC_ALL", "LC_MESSAGES", "LANG"]
-        .iter()
-        .filter_map(|name| std::env::var(name).ok())
-        .find_map(|locale| {
-            let region = locale.split('.').next()?.split(['_', '-']).nth(1)?.to_uppercase();
-            COUNTRIES.iter().any(|(code, _)| *code == region).then_some(region)
-        })
+/// The region part of a locale such as "en-AU", "en_AU.UTF-8" or
+/// "zh-Hant-HK", if it is one of the countries offered.
+fn region_of(locale: &str) -> Option<String> {
+    let locale = locale.split(['.', '@']).next()?;
+    locale
+        .split(['_', '-'])
+        .skip(1)
+        .map(str::to_uppercase)
+        .find(|part| part.len() == 2 && COUNTRIES.iter().any(|(code, _)| code == part))
+}
+
+/// The country this device is set to: the system's own region and
+/// language settings (macOS and iOS, Windows, Android), then the usual
+/// environment settings (Linux); the United States if none says.
+fn device_country() -> String {
+    sys_locale::get_locales()
+        .chain(["LC_ALL", "LC_MESSAGES", "LANG"].iter().filter_map(|name| std::env::var(name).ok()))
+        .find_map(|locale| region_of(&locale))
         .unwrap_or_else(|| "US".to_owned())
 }
 
 impl Library {
-    /// The chosen country's code.
-    fn country(&self) -> String {
+    /// The country the user picked, if they did.
+    fn chosen_country(&self) -> Option<String> {
         self.store
             .get::<String>(COUNTRY)
             .ok()
             .flatten()
             .filter(|code| COUNTRIES.iter().any(|(known, _)| known == code))
-            .unwrap_or_else(computer_country)
+    }
+
+    /// The country in use: the user's pick, else the device's own
+    /// (looked at each time, so it follows the device until one is picked).
+    fn country(&self) -> String {
+        self.chosen_country().unwrap_or_else(device_country)
+    }
+
+    /// The list in Settings: "Automatic (the device's country)" first,
+    /// then every country; and which line is chosen.
+    fn show_countries(&self) {
+        let Some(ui) = self.ui.upgrade() else { return };
+        let detected = device_country();
+        let mut names: Vec<SharedString> =
+            vec![format!("Automatic ({})", country_name(&detected)).into()];
+        names.extend(COUNTRIES.iter().map(|(_, name)| SharedString::from(*name)));
+        ui.set_countries(ModelRc::new(VecModel::from(names)));
+        let index = match self.chosen_country() {
+            Some(code) => COUNTRIES.iter().position(|(known, _)| *known == code).map_or(0, |at| at + 1),
+            None => 0,
+        };
+        ui.set_country_index(index as i32);
     }
 
     pub(super) fn start_offers(self: &std::rc::Rc<Self>, ui: &AppWindow) {
-        let names: Vec<SharedString> = COUNTRIES.iter().map(|(_, name)| (*name).into()).collect();
-        ui.set_countries(ModelRc::new(VecModel::from(names)));
-        let country = self.country();
-        ui.set_country_index(
-            COUNTRIES.iter().position(|(code, _)| *code == country).unwrap_or(0) as i32,
-        );
+        self.show_countries();
         ui.on_country_selected({
             let library = self.clone();
             move |index| {
-                if let Some((code, _)) = COUNTRIES.get(index.max(0) as usize) {
-                    if let Err(err) = library.store.put(COUNTRY, &(*code).to_owned()) {
-                        eprintln!("haven: could not save the country: {err}");
-                    }
+                // Line 0 is Automatic: forget the pick and follow the device.
+                let saved = match index {
+                    0 => library.store.remove(COUNTRY),
+                    _ => match COUNTRIES.get(index.max(1) as usize - 1) {
+                        Some((code, _)) => library.store.put(COUNTRY, &(*code).to_owned()),
+                        None => Ok(()),
+                    },
+                };
+                if let Err(err) = saved {
+                    eprintln!("haven: could not save the country: {err}");
                 }
+                library.show_countries();
             }
         });
     }
@@ -153,5 +184,19 @@ impl Library {
                 }
             });
         });
+    }
+}
+
+#[cfg(test)]
+mod country_tests {
+    use super::region_of;
+
+    #[test]
+    fn the_region_comes_from_any_way_of_writing_a_locale() {
+        assert_eq!(region_of("en-AU").as_deref(), Some("AU"));
+        assert_eq!(region_of("en_GB.UTF-8").as_deref(), Some("GB"));
+        assert_eq!(region_of("zh-Hant-HK").as_deref(), Some("HK"));
+        assert_eq!(region_of("en"), None);
+        assert_eq!(region_of("C.UTF-8"), None);
     }
 }

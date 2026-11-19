@@ -55,7 +55,97 @@ const MIGRATIONS: &[&str] = &[
         token   TEXT NOT NULL,
         UNIQUE (kind, address, user_id)
     ) STRICT;",
+    "CREATE TABLE downloads (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        kind       TEXT NOT NULL,
+        title_id   TEXT NOT NULL,
+        video_id   TEXT NOT NULL,
+        title      TEXT NOT NULL,
+        detail     TEXT NOT NULL,
+        season     INTEGER,
+        episode    INTEGER,
+        poster     TEXT,
+        url        TEXT NOT NULL,
+        path       TEXT NOT NULL,
+        size       INTEGER NOT NULL,
+        received   INTEGER NOT NULL,
+        state      TEXT NOT NULL,
+        added_at   INTEGER NOT NULL
+    ) STRICT;",
+    "CREATE TABLE sync_queue (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        what       TEXT NOT NULL,
+        kind       TEXT NOT NULL,
+        title_id   TEXT NOT NULL,
+        video_id   TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+    ) STRICT;",
 ];
+
+/// A change made in Haven that is still to be sent to the linked
+/// accounts: "watched", "watchlist_add" or "watchlist_remove".
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Change {
+    pub id: i64,
+    pub what: String,
+    pub kind: String,
+    pub title_id: String,
+    pub video_id: String,
+    pub created_at: i64,
+}
+
+/// A film or episode saved to this device, or on its way.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Download {
+    /// Its number here; 0 before it is saved.
+    pub id: i64,
+    /// "movie" or "series".
+    pub kind: String,
+    pub title_id: String,
+    /// The film's or episode's own id.
+    pub video_id: String,
+    /// The film's or series' name.
+    pub title: String,
+    /// For an episode, which one ("S1 E2 · Name"); empty for a film.
+    pub detail: String,
+    pub season: Option<u32>,
+    pub episode: Option<u32>,
+    pub poster: Option<String>,
+    /// Where it is fetched from.
+    pub url: String,
+    /// The file it is saved to.
+    pub path: String,
+    /// Its whole size in bytes; 0 while unknown.
+    pub size: i64,
+    /// Bytes saved so far.
+    pub received: i64,
+    /// "waiting", "loading", "done", "failed" or "paused".
+    pub state: String,
+    /// In milliseconds since 1970.
+    pub added_at: i64,
+}
+
+const DOWNLOAD_COLUMNS: &str = "id, kind, title_id, video_id, title, detail, season, episode, poster, url, path, size, received, state, added_at";
+
+fn download_from(row: &rusqlite::Row<'_>) -> rusqlite::Result<Download> {
+    Ok(Download {
+        id: row.get(0)?,
+        kind: row.get(1)?,
+        title_id: row.get(2)?,
+        video_id: row.get(3)?,
+        title: row.get(4)?,
+        detail: row.get(5)?,
+        season: row.get(6)?,
+        episode: row.get(7)?,
+        poster: row.get(8)?,
+        url: row.get(9)?,
+        path: row.get(10)?,
+        size: row.get(11)?,
+        received: row.get(12)?,
+        state: row.get(13)?,
+        added_at: row.get(14)?,
+    })
+}
 
 /// An installed add-on as kept in the database: where it lives and the
 /// manifest it served when it was installed, as raw JSON.
@@ -432,6 +522,136 @@ impl Store {
         )?)
     }
 
+    /// Everything watched, newest first: for each title the film or
+    /// episode watched last, finished or not.
+    pub fn history(&self, limit: u32) -> Result<Vec<Progress>> {
+        let mut query = self.conn.prepare(&format!(
+            "SELECT {PROGRESS_COLUMNS} FROM progress AS p
+             WHERE NOT EXISTS (
+                   SELECT 1 FROM progress AS q
+                   WHERE q.kind = p.kind AND q.title_id = p.title_id
+                     AND (q.updated_at > p.updated_at
+                          OR (q.updated_at = p.updated_at AND q.video_id > p.video_id)))
+             ORDER BY updated_at DESC, title_id
+             LIMIT ?1"
+        ))?;
+        let rows = query.query_map([limit], progress_from)?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// The films and episodes of one title watched to the end.
+    pub fn finished_videos(&self, kind: &str, title_id: &str) -> Result<Vec<String>> {
+        let mut query = self.conn.prepare(
+            "SELECT video_id FROM progress WHERE kind = ?1 AND title_id = ?2 AND finished = 1",
+        )?;
+        let rows = query.query_map([kind, title_id], |row| row.get(0))?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// Records something watched elsewhere (brought in from a tracking
+    /// service) unless Haven already has a record of it.
+    pub fn add_watched_elsewhere(&self, progress: &Progress) -> Result<bool> {
+        let added = self.conn.execute(
+            "INSERT OR IGNORE INTO progress (kind, title_id, video_id, title, detail, poster,
+                                   position, duration, finished, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 1, ?9)",
+            rusqlite::params![
+                progress.kind, progress.title_id, progress.video_id, progress.title, progress.detail,
+                progress.poster, progress.position, progress.duration, progress.updated_at,
+            ],
+        )?;
+        Ok(added > 0)
+    }
+
+    /// Notes a change to send. A Watchlist change cancels a waiting
+    /// opposite one for the same title; the same change is kept once.
+    pub fn queue_change(&self, change: &Change) -> Result<()> {
+        if change.what.starts_with("watchlist_") {
+            self.conn.execute(
+                "DELETE FROM sync_queue WHERE what LIKE 'watchlist_%' AND kind = ?1 AND title_id = ?2",
+                [&change.kind, &change.title_id],
+            )?;
+        } else {
+            self.conn.execute(
+                "DELETE FROM sync_queue WHERE what = ?1 AND kind = ?2 AND title_id = ?3 AND video_id = ?4",
+                [&change.what, &change.kind, &change.title_id, &change.video_id],
+            )?;
+        }
+        self.conn.execute(
+            "INSERT INTO sync_queue (what, kind, title_id, video_id, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+            rusqlite::params![change.what, change.kind, change.title_id, change.video_id, change.created_at],
+        )?;
+        Ok(())
+    }
+
+    /// The changes still to send, oldest first.
+    pub fn queued_changes(&self) -> Result<Vec<Change>> {
+        let mut query = self.conn.prepare(
+            "SELECT id, what, kind, title_id, video_id, created_at FROM sync_queue ORDER BY id",
+        )?;
+        let rows = query.query_map([], |row| {
+            Ok(Change {
+                id: row.get(0)?,
+                what: row.get(1)?,
+                kind: row.get(2)?,
+                title_id: row.get(3)?,
+                video_id: row.get(4)?,
+                created_at: row.get(5)?,
+            })
+        })?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    pub fn remove_change(&self, id: i64) -> Result<()> {
+        self.conn.execute("DELETE FROM sync_queue WHERE id = ?1", [id])?;
+        Ok(())
+    }
+
+    /// Every download, films and series by name, episodes in order.
+    pub fn downloads(&self) -> Result<Vec<Download>> {
+        let mut query = self.conn.prepare(&format!(
+            "SELECT {DOWNLOAD_COLUMNS} FROM downloads
+             ORDER BY kind, title COLLATE NOCASE, title_id, season, episode, added_at"
+        ))?;
+        let rows = query.query_map([], download_from)?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// Adds a download; returns its number.
+    pub fn add_download(&self, d: &Download) -> Result<i64> {
+        Ok(self.conn.query_row(
+            "INSERT INTO downloads (kind, title_id, video_id, title, detail, season, episode,
+                                    poster, url, path, size, received, state, added_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+             RETURNING id",
+            rusqlite::params![
+                d.kind, d.title_id, d.video_id, d.title, d.detail, d.season, d.episode,
+                d.poster, d.url, d.path, d.size, d.received, d.state, d.added_at
+            ],
+            |row| row.get(0),
+        )?)
+    }
+
+    /// Records how far a download has got, and its state.
+    pub fn update_download(&self, id: i64, size: i64, received: i64, state: &str) -> Result<()> {
+        self.conn.execute(
+            "UPDATE downloads SET size = ?2, received = ?3, state = ?4 WHERE id = ?1",
+            rusqlite::params![id, size, received, state],
+        )?;
+        Ok(())
+    }
+
+    /// Changes where a download is saved (once its file type is known).
+    pub fn set_download_path(&self, id: i64, path: &str) -> Result<()> {
+        self.conn.execute("UPDATE downloads SET path = ?2 WHERE id = ?1", rusqlite::params![id, path])?;
+        Ok(())
+    }
+
+    pub fn remove_download(&self, id: i64) -> Result<()> {
+        self.conn.execute("DELETE FROM downloads WHERE id = ?1", [id])?;
+        Ok(())
+    }
+
     /// Forgets everything watched of one title (all its episodes).
     pub fn remove_progress(&self, kind: &str, title_id: &str) -> Result<()> {
         self.conn.execute(
@@ -460,6 +680,43 @@ fn migrate(conn: &mut Connection) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn changes_wait_in_order_and_cancel_out() {
+        let store = Store::in_memory().unwrap();
+        let change = |what: &str, title: &str| Change {
+            id: 0, what: what.into(), kind: "movie".into(), title_id: title.into(),
+            video_id: title.into(), created_at: 1,
+        };
+        store.queue_change(&change("watched", "tt1")).unwrap();
+        store.queue_change(&change("watched", "tt1")).unwrap();
+        store.queue_change(&change("watchlist_add", "tt2")).unwrap();
+        store.queue_change(&change("watchlist_remove", "tt2")).unwrap();
+        let waiting = store.queued_changes().unwrap();
+        assert_eq!(waiting.iter().map(|c| c.what.as_str()).collect::<Vec<_>>(), vec!["watched", "watchlist_remove"]);
+        store.remove_change(waiting[0].id).unwrap();
+        assert_eq!(store.queued_changes().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn downloads_are_kept_and_sorted() {
+        let store = Store::in_memory().unwrap();
+        let base = Download {
+            id: 0, kind: "series".into(), title_id: "tt1".into(), video_id: "tt1:1:2".into(),
+            title: "Show".into(), detail: "S1 E2".into(), season: Some(1), episode: Some(2),
+            poster: None, url: "https://x/2.mkv".into(), path: "/d/2.mkv".into(), size: 0,
+            received: 0, state: "waiting".into(), added_at: 1,
+        };
+        let two = store.add_download(&base).unwrap();
+        store.add_download(&Download { video_id: "tt1:1:1".into(), episode: Some(1), ..base.clone() }).unwrap();
+        store.add_download(&Download { kind: "movie".into(), title: "Film".into(), season: None, episode: None, ..base.clone() }).unwrap();
+        store.update_download(two, 100, 50, "loading").unwrap();
+        let all = store.downloads().unwrap();
+        assert_eq!(all.iter().map(|d| d.episode).collect::<Vec<_>>(), vec![None, Some(1), Some(2)]);
+        assert_eq!((all[2].size, all[2].received, all[2].state.as_str()), (100, 50, "loading"));
+        store.remove_download(two).unwrap();
+        assert_eq!(store.downloads().unwrap().len(), 2);
+    }
 
     #[test]
     fn new_database_is_at_the_latest_schema() {

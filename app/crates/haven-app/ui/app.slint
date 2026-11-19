@@ -122,6 +122,70 @@ export struct AgendaRow {
     entry: CalendarEntry,
 }
 
+// A film or episode in the Library's Downloads. `section` ("Films" or
+// "Series") and `group` (a series' name) are set on the first row under
+// them only.
+export struct DownloadRow {
+    id: int,
+    section: string,
+    group: string,
+    title: string,
+    status: string,
+    progress: float,
+    done: bool,
+    running: bool,
+    failed: bool,
+}
+
+// A title in Home's banner.
+export struct HeroSlide {
+    id: string,
+    kind: string,
+    title: string,
+    // "★ 8.2  •  2026  •  Horror, Thriller  •  Film".
+    facts: string,
+    description: string,
+    image: image,
+    has-image: bool,
+}
+
+// A film or episode to carry on with, in Home's Continue Watching row.
+export struct ContinueCard {
+    id: string,
+    kind: string,
+    video: string,
+    title: string,
+    // The episode's name (or its number); empty for a film.
+    episode: string,
+    // "S03E06"; empty for a film.
+    badge: string,
+    // Aired episodes still to watch, from this one on; 0 shows nothing.
+    left: int,
+    // How much of it has been watched, 0 to 1.
+    progress: float,
+    image: image,
+    has-image: bool,
+}
+
+// Something coming out soon, in Home's Upcoming row.
+export struct UpcomingCard {
+    id: string,
+    kind: string,
+    // The episode's id, to open it by; empty for a film.
+    video: string,
+    title: string,
+    // The episode's name (or its number).
+    episode: string,
+    // "S01E01"; empty for a film.
+    badge: string,
+    // "Today", "In 6 days", "Dec 25".
+    when: string,
+    // Within a week: the date shows in the accent colour.
+    soon: bool,
+    image: image,
+    has-image: bool,
+}
+
 // A provider of places to watch, with how many it gave.
 export struct StreamGroup {
     name: string,
@@ -248,69 +312,305 @@ export global Theme {
     out property <string> heading-font: "Pixelify Sans";
 }
 
-component NavItem inherits Rectangle {
+
+
+// A line icon drawn on a 24-unit square, by name.
+component Icon inherits Rectangle {
+    in property <string> name;
+    in property <color> tint: Theme.text;
+    in property <length> size: 24px;
+    in property <length> stroke: 2px;
+    width: root.size;
+    height: root.size;
+    accessible-role: none;
+    Path {
+        width: 100%;
+        height: 100%;
+        viewbox-width: 24;
+        viewbox-height: 24;
+        stroke: root.tint;
+        stroke-width: root.stroke;
+        fill: root.name == "play" ? root.tint : transparent;
+        commands: root.name == "home" ? "M3 10.5 L12 3 L21 10.5 M5.5 9 V20 a1 1 0 0 0 1 1 H10 V15 H14 V21 H17.5 a1 1 0 0 0 1 -1 V9" : root.name == "explore" ? "M12 2.5 a9.5 9.5 0 1 0 0 19 a9.5 9.5 0 1 0 0 -19 Z M15.8 8.2 L13.6 13.6 L8.2 15.8 L10.4 10.4 Z" : root.name == "library" ? "M4 4 H8 V20 H4 Z M10 4 H14 V20 H10 Z M15.6 5.2 L19.4 4.2 L22 19 L18.2 20 Z" : root.name == "livetv" ? "M3 7 H21 a1 1 0 0 1 1 1 V18 a1 1 0 0 1 -1 1 H3 a1 1 0 0 1 -1 -1 V8 a1 1 0 0 1 1 -1 Z M8 3 L12 7 L16 3" : root.name == "calendar" ? "M4 5 H20 a1 1 0 0 1 1 1 V20 a1 1 0 0 1 -1 1 H4 a1 1 0 0 1 -1 -1 V6 a1 1 0 0 1 1 -1 Z M3 10 H21 M8 3 V7 M16 3 V7" : root.name == "search" ? "M10.5 3.5 a7 7 0 1 0 0 14 a7 7 0 1 0 0 -14 Z M15.5 15.5 L21 21" : root.name == "settings" ? "M18.88 9.87 L21.66 10.34 L21.66 13.66 L18.88 14.13 L18.37 15.36 L20.00 17.66 L17.66 20.00 L15.36 18.37 L14.13 18.88 L13.66 21.66 L10.34 21.66 L9.87 18.88 L8.64 18.37 L6.34 20.00 L4.00 17.66 L5.63 15.36 L5.12 14.13 L2.34 13.66 L2.34 10.34 L5.12 9.87 L5.63 8.64 L4.00 6.34 L6.34 4.00 L8.64 5.63 L9.87 5.12 L10.34 2.34 L13.66 2.34 L14.13 5.12 L15.36 5.63 L17.66 4.00 L20.00 6.34 L18.37 8.64 Z M12 9 a3 3 0 1 0 0 6 a3 3 0 1 0 0 -6 Z" : root.name == "download" ? "M12 3 V15 M7 10 L12 15 L17 10 M4 20 H20" : root.name == "trash" ? "M4 7 H20 M9 7 V4 H15 V7 M6 7 L7 21 H17 L18 7" : root.name == "play" ? "M7 4 L20 12 L7 20 Z" : root.name == "pause" ? "M8 5 V19 M16 5 V19" : root.name == "folder" ? "M3 6 a1 1 0 0 1 1 -1 H9 L11 7 H20 a1 1 0 0 1 1 1 V18 a1 1 0 0 1 -1 1 H4 a1 1 0 0 1 -1 -1 Z" : root.name == "check" ? "M5 12.5 L10 17.5 L19 7" : root.name == "close" ? "M6 6 L18 18 M18 6 L6 18" : root.name == "back" ? "M15 5 L8 12 L15 19" : root.name == "forward" ? "M9 5 L16 12 L9 19" : root.name == "radio" ? "M4 9 H20 a1 1 0 0 1 1 1 V19 a1 1 0 0 1 -1 1 H4 a1 1 0 0 1 -1 -1 V10 a1 1 0 0 1 1 -1 Z M6 9 L17 4 M15.5 12.5 a2.5 2.5 0 1 0 0 5 a2.5 2.5 0 1 0 0 -5 Z M6 13 H11 M6 16 H11" : root.name == "account" ? "M12 4 a4 4 0 1 0 0 8 a4 4 0 1 0 0 -8 Z M4 21 a8 8 0 0 1 16 0" : root.name == "server" ? "M4 4 H20 V10 H4 Z M4 14 H20 V20 H4 Z M7 7 H8 M7 17 H8" : root.name == "addon" ? "M5 8 H9 a2 2 0 1 1 4 0 H17 V12 a2 2 0 1 1 0 4 V20 H5 Z" : root.name == "info" ? "M12 3 a9 9 0 1 0 0 18 a9 9 0 1 0 0 -18 Z M12 11 V16 M12 7.5 V8" : root.name == "general" ? "M4 6 H20 M4 12 H20 M4 18 H20 M9 4 V8 M15 10 V14 M7 16 V20" : root.name == "storage" ? "M4 5 H20 V19 H4 Z M4 14 H20 M7 16.5 H8" : root.name == "paste" ? "M8 5 H6 a1 1 0 0 0 -1 1 V20 a1 1 0 0 0 1 1 H18 a1 1 0 0 0 1 -1 V6 a1 1 0 0 0 -1 -1 H16 M9 3 H15 V7 H9 Z M9 12 H15 M9 16 H13" : root.name == "sync" ? "M20 11 a8 8 0 0 0 -14.5 -4.5 M4 4 V8 H8 M4 13 a8 8 0 0 0 14.5 4.5 M20 20 V16 H16" : root.name == "plus" ? "M12 5 V19 M5 12 H19" : root.name == "link" ? "M10 14 L14 10 M8.5 11.5 L6.5 13.5 a3 3 0 0 0 4 4 L12.5 15.5 M15.5 12.5 L17.5 10.5 a3 3 0 0 0 -4 -4 L11.5 8.5" : root.name == "player" ? "M3 5 H21 V19 H3 Z M10 9 L15 12 L10 15 Z" : "";
+    }
+}
+
+// One button of the navigation bar: an icon over its name, on a
+// rounded highlight when it is the page showing.
+component NavButton inherits Rectangle {
+    in property <string> icon;
     in property <string> label;
     in property <bool> selected;
     callback clicked();
 
-    height: 38px;
-    border-radius: 8px;
-    background: selected ? Theme.selected : touch.has-hover || focus.has-focus ? Theme.hover : transparent;
+    height: 56px;
+    border-radius: 28px;
+    background: root.selected ? Theme.selected : touch.has-hover ? Theme.hover : transparent;
     accessible-role: button;
-    accessible-label: label;
+    accessible-label: root.label;
     accessible-action-default => { root.clicked(); }
+    animate background { duration: 150ms; }
 
-    focus := FocusScope {
-        key-pressed(event) => {
-            if (event.text == Key.Return || event.text == " ") {
-                root.clicked();
-                return accept;
-            }
-            return reject;
-        }
-    }
     touch := TouchArea {
+        mouse-cursor: pointer;
         clicked => { root.clicked(); }
     }
-    Rectangle {
-        x: 0;
-        width: 3px;
-        height: 18px;
-        border-radius: 1.5px;
-        background: selected ? Theme.accent : transparent;
-    }
-    Text {
-        x: 16px;
-        width: parent.width - 28px;
-        text: root.label;
-        font-family: Theme.heading-font;
-        color: selected ? Theme.text : Theme.text-dim;
-        font-size: 15px;
-        font-weight: selected ? 700 : 500;
-        vertical-alignment: center;
-        overflow: elide;
+    VerticalLayout {
+        alignment: center;
+        spacing: 3px;
+        HorizontalLayout {
+            alignment: center;
+            Icon {
+                name: root.icon;
+                size: 22px;
+                tint: root.selected ? Theme.text : Theme.text-dim;
+            }
+        }
+        if root.label != "": Text {
+            text: root.label;
+            color: root.selected ? Theme.text : Theme.text-dim;
+            font-size: 11px;
+            font-weight: 700;
+            horizontal-alignment: center;
+        }
     }
 }
 
-component EmptyPage inherits VerticalLayout {
+// A round button with an icon (and a name for screen readers).
+component IconButton inherits Rectangle {
+    in property <string> icon;
+    in property <string> label;
+    in property <bool> active;
+    in property <length> size: 36px;
+    callback clicked();
+
+    width: root.size;
+    height: root.size;
+    border-radius: root.size / 2;
+    background: root.active || touch.has-hover ? Theme.accent : Theme.selected;
+    accessible-role: button;
+    accessible-label: root.label;
+    accessible-action-default => { root.clicked(); }
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+    Icon {
+        name: root.icon;
+        size: root.size * 0.5;
+        tint: root.active || touch.has-hover ? (Theme.dark ? #171a22 : #ffffff) : Theme.accent;
+    }
+}
+
+// A segmented switch of two to four choices, like Month / Week.
+component Segments inherits Rectangle {
+    in property <[string]> labels;
+    in-out property <int> current;
+    callback chosen(int);
+    height: 34px;
+    width: root.labels.length * 92px + 8px;
+    border-radius: 17px;
+    background: Theme.surface;
+    border-width: 1px;
+    border-color: Theme.border;
+    for label[index] in root.labels: Rectangle {
+        x: 4px + index * 92px;
+        y: 3px;
+        width: 92px;
+        height: parent.height - 6px;
+        border-radius: self.height / 2;
+        background: index == root.current ? Theme.accent : seg-touch.has-hover ? Theme.hover : transparent;
+        accessible-role: button;
+        accessible-label: label;
+        seg-touch := TouchArea {
+            mouse-cursor: pointer;
+            clicked => {
+                root.current = index;
+                root.chosen(index);
+            }
+        }
+        Text {
+            text: label;
+            color: index == root.current ? (Theme.dark ? #171a22 : #ffffff) : Theme.text;
+            font-size: 13px;
+            font-weight: 600;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+}
+
+// A group of settings on one card, with a heading over it.
+component SettingsCard inherits VerticalLayout {
     in property <string> title;
-    in property <string> hint;
-
-    padding: 32px;
+    in property <string> note;
     spacing: 8px;
-    alignment: start;
-
-    Text {
+    if root.title != "": Text {
         text: root.title;
-        color: Theme.text;
-        font-size: 26px;
+        color: Theme.text-dim;
+        font-size: 12px;
         font-weight: 700;
     }
-    Text {
-        text: root.hint;
+    Rectangle {
+        border-radius: 14px;
+        background: Theme.surface;
+        border-width: 1px;
+        border-color: Theme.border;
+        VerticalLayout {
+            padding: 16px;
+            spacing: 12px;
+            @children
+        }
+    }
+    if root.note != "": Text {
+        text: root.note;
         color: Theme.text-dim;
-        font-size: 14px;
+        font-size: 12px;
         wrap: word-wrap;
+    }
+}
+
+// One film or episode in the Library's Downloads.
+component DownloadItem inherits Rectangle {
+    in property <DownloadRow> item;
+    callback play();
+    callback toggle();
+    callback remove();
+    height: 64px;
+    border-radius: 12px;
+    background: touch.has-hover && root.item.done ? Theme.hover : Theme.surface;
+    border-width: 1px;
+    border-color: touch.has-hover && root.item.done ? Theme.accent : Theme.border;
+    touch := TouchArea {
+        mouse-cursor: root.item.done ? pointer : default;
+        clicked => {
+            if (root.item.done) {
+                root.play();
+            }
+        }
+    }
+    HorizontalLayout {
+        padding-left: 16px;
+        padding-right: 12px;
+        spacing: 12px;
+        VerticalLayout {
+            horizontal-stretch: 1;
+            alignment: center;
+            spacing: 5px;
+            Text {
+                text: root.item.title;
+                color: Theme.text;
+                font-size: 14px;
+                font-weight: 600;
+                overflow: elide;
+            }
+            Text {
+                text: root.item.status;
+                color: root.item.failed ? (Theme.dark ? #ff8b8b : #b3261e) : Theme.text-dim;
+                font-size: 12px;
+                overflow: elide;
+            }
+            if !root.item.done: Rectangle {
+                height: 4px;
+                border-radius: 2px;
+                background: Theme.border;
+                Rectangle {
+                    x: 0;
+                    width: parent.width * clamp(root.item.progress, 0, 1);
+                    border-radius: 2px;
+                    background: Theme.accent;
+                }
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            HorizontalLayout {
+                spacing: 8px;
+                if root.item.done: IconButton {
+                    icon: "play";
+                    label: "Play " + root.item.title;
+                    clicked => { root.play(); }
+                }
+                if !root.item.done: IconButton {
+                    icon: root.item.running ? "pause" : "download";
+                    label: root.item.running ? "Pause" : "Carry on";
+                    clicked => { root.toggle(); }
+                }
+                IconButton {
+                    icon: "trash";
+                    label: "Delete " + root.item.title;
+                    clicked => { root.remove(); }
+                }
+            }
+        }
+    }
+}
+
+
+// The main button of a form, in Haven's own accent colour.
+component PrimaryButton inherits Rectangle {
+    in property <string> text;
+    in property <bool> enabled: true;
+    callback clicked();
+    min-width: pb-label.preferred-width + 36px;
+    height: 34px;
+    border-radius: 17px;
+    background: !root.enabled ? Theme.selected : pb-touch.pressed ? Theme.accent.darker(0.15) : pb-touch.has-hover ? Theme.accent.brighter(0.08) : Theme.accent;
+    accessible-role: button;
+    accessible-label: root.text;
+    accessible-enabled: root.enabled;
+    accessible-action-default => { if (root.enabled) { root.clicked(); } }
+    pb-touch := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: root.enabled ? pointer : default;
+        clicked => { root.clicked(); }
+    }
+    pb-label := Text {
+        text: root.text;
+        color: root.enabled ? (Theme.dark ? #171a22 : #ffffff) : Theme.text-dim;
+        font-size: 13px;
+        font-weight: 700;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+}
+
+// What kind of screen Haven runs on, for parts deep inside components.
+export global Device {
+    // A phone or tablet: no keyboard shortcuts, so fields get a Paste button.
+    in-out property <bool> touch;
+}
+
+// A one-line text field. On a phone or tablet it has a Paste button,
+// since the system's own paste menu does not reach Haven's fields there.
+component Field inherits HorizontalLayout {
+    in-out property <string> text <=> edit.text;
+    in property <string> placeholder-text;
+    in property <bool> enabled: true;
+    in property <InputType> input-type: InputType.text;
+    callback accepted(string);
+    callback edited(string);
+    spacing: 6px;
+    // The label goes to the field inside, for screen readers.
+    accessible-role: none;
+    edit := LineEdit {
+        horizontal-stretch: 1;
+        placeholder-text: root.placeholder-text;
+        enabled: root.enabled;
+        input-type: root.input-type;
+        accessible-label: root.accessible-label;
+        accepted(text) => { root.accepted(text); }
+        edited(text) => { root.edited(text); }
+    }
+    if Device.touch && root.enabled: IconButton {
+        y: (parent.height - self.height) / 2;
+        icon: "paste";
+        label: "Paste";
+        size: 34px;
+        clicked => {
+            edit.paste();
+            root.edited(edit.text);
+        }
     }
 }
 
@@ -561,6 +861,7 @@ component EpisodeItem inherits Rectangle {
 component SourceCard inherits Rectangle {
     in property <StreamRow> stream;
     callback play();
+    callback download();
 
     height: 88px;
     border-radius: 12px;
@@ -624,6 +925,15 @@ component SourceCard inherits Rectangle {
                 color: Theme.text-dim;
                 font-size: 11px;
                 overflow: elide;
+            }
+        }
+        if root.stream.playable && root.stream.kind == "Direct": VerticalLayout {
+            alignment: center;
+            IconButton {
+                icon: "download";
+                label: "Download " + root.stream.name;
+                size: 38px;
+                clicked => { root.download(); }
             }
         }
         VerticalLayout {
@@ -1742,6 +2052,9 @@ component ChannelsPage inherits VerticalLayout {
     // A phone's screen: the categories show instead of the channels
     // when asked for, not beside them.
     in property <bool> compact;
+    // Which of television (0) and radio (1) shows.
+    in-out property <int> band;
+    callback band-chosen(int);
     private property <bool> picking;
     private property <string> new-group;
     // The words to look for, and the category's key.
@@ -1758,13 +2071,25 @@ component ChannelsPage inherits VerticalLayout {
     padding-bottom: 16px;
     spacing: 12px;
 
-    PageTitle { text: root.title; }
-    @children
+    HorizontalLayout {
+        spacing: 12px;
+        PageTitle {
+            text: root.title;
+            vertical-alignment: center;
+        }
+        Rectangle { horizontal-stretch: 1; }
+        Segments {
+            labels: ["TV", "Radio"];
+            current <=> root.band;
+            chosen(index) => { root.band-chosen(index); }
+        }
+    }
     if root.total == 0: Text {
         text: root.hint;
         color: Theme.text-dim;
         wrap: word-wrap;
     }
+    @children
     if root.total > 0 && !root.can-play: Text {
         text: "The player is not available on this computer (its graphics have no usable OpenGL), so channels are listed but cannot be played.";
         color: Theme.text-dim;
@@ -1787,14 +2112,14 @@ component ChannelsPage inherits VerticalLayout {
             min-width: root.compact ? 0px : 270px;
             max-width: root.compact ? (root.picking ? 10000px : 0px) : 270px;
             spacing: 8px;
-            LineEdit {
+            Field {
                 placeholder-text: "Find a category";
                 accessible-label: "Find a category";
                 edited(text) => { root.filter-categories(text); }
             }
             HorizontalLayout {
                 spacing: 6px;
-                LineEdit {
+                Field {
                     text <=> root.new-group;
                     placeholder-text: "New Favourites group";
                     accessible-label: "Name of a new Favourites group";
@@ -1837,7 +2162,7 @@ component ChannelsPage inherits VerticalLayout {
             spacing: 8px;
             HorizontalLayout {
                 spacing: 12px;
-                LineEdit {
+                Field {
                     text <=> root.words;
                     placeholder-text: "Filter by name";
                     accessible-label: "Filter by name";
@@ -1873,15 +2198,12 @@ component SettingsRow inherits Rectangle {
     in property <string> label;
     in property <string> detail;
 
-    height: 64px;
+    height: 56px;
     border-radius: 10px;
-    background: Theme.surface;
-    border-width: 1px;
-    border-color: Theme.border;
 
     HorizontalLayout {
-        padding-left: 16px;
-        padding-right: 16px;
+        padding-left: 0px;
+        padding-right: 0px;
         spacing: 16px;
         VerticalLayout {
             horizontal-stretch: 1;
@@ -1926,17 +2248,7 @@ export component AppWindow inherits Window {
     in property <[SharedAddonRow]> shared-addons;
     // How many pictures are kept on this computer, in words.
     in property <string> cache-status;
-    in property <[string]> pages: ["Home", "Explore", "Search", "Live TV", "Radio", "Watchlist", "Calendar", "Add-ons", "Settings"];
-    private property <[string]> hints: [
-        "",
-        "",
-        "",
-        "Add an M3U playlist or an Xtream Codes account in Settings.",
-        "Radio stations will show here.",
-        "Films and shows you save to watch later.",
-        "Install add-ons by address to add catalogues and streams.",
-        ""
-    ];
+    in property <[string]> pages: ["Home", "Explore", "Library", "Live TV", "Calendar", "Settings"];
 
     in property <[Shelf]> shelves;
     in property <[AddonRow]> addons;
@@ -2098,24 +2410,64 @@ export component AppWindow inherits Window {
     in-out property <int> player-menu;
     private property <int> home-page: 0;
     private property <int> explore-page: 1;
-    private property <int> search-page: 2;
+    private property <int> library-page: 2;
     private property <int> tv-page: 3;
-    private property <int> radio-page: 4;
-    private property <int> watchlist-page: 5;
-    private property <int> calendar-page: 6;
-    private property <int> addons-page: 7;
-    private property <int> settings-page: root.pages.length - 1;
+    private property <int> calendar-page: 4;
+    private property <int> settings-page: 5;
+    // The Library's part showing: 0 Downloads, 1 Watchlist, 2 History.
+    in-out property <int> library-tab;
+    // Live TV shows television (0) or radio (1).
+    in-out property <int> live-band;
+    // The part of Settings showing: 0 General, 1 Accounts, 2 Media
+    // servers, 3 Add-ons, 4 Live TV, 5 Downloads and storage, 6 About.
+    in-out property <int> settings-section;
+    // A phone: Settings shows its list of parts, not one part.
+    in-out property <bool> settings-picking: true;
+    // The advanced keys in Settings > Accounts are open.
+    in-out property <bool> keys-open;
+    // Explore is showing search results.
+    in-out property <bool> explore-searching;
+    in property <[DownloadRow]> download-rows;
+    in property <int> downloads-count;
+    in property <string> downloads-folder;
+    // Everything watched, newest first.
+    in property <[Poster]> history;
+    in property <[HeroSlide]> hero;
+    in-out property <int> hero-index;
+    in property <[UpcomingCard]> upcoming;
+    in property <[ContinueCard]> continue-cards;
+    // The calendar shows a week, not a month.
+    in property <bool> calendar-is-week;
+    callback download-stream(int);
+    callback download-remove(int);
+    callback download-toggle(int);
+    callback download-play(int);
+    callback open-downloads-folder();
+    callback calendar-week(bool);
+    // Settings > Sync options.
+    in-out property <bool> sync-watched: true;
+    in-out property <bool> sync-watchlist: true;
+    in-out property <bool> sync-pull: true;
+    in property <string> sync-status;
+    in property <string> sync-accounts;
+    in property <string> sync-note;
+    in property <bool> sync-busy;
+    in property <bool> sync-linked;
+    callback sync-now();
+    // 0 watched and progress, 1 Watchlist, 2 bring in from the accounts.
+    callback sync-option(int, bool);
     // `mobile`: a phone or tablet build. `compact`: a phone's screen,
     // where the pages are laid out for one column and the side list
     // gives way to tabs. Both are set when Haven starts.
     in property <bool> mobile;
+    changed mobile => { Device.touch = root.mobile; }
     // An iPhone or iPad.
     in property <bool> ios;
     in property <bool> compact;
-    in-out property <bool> more-open;
     // On a phone: Explore shows its list of sources, not the titles.
     in-out property <bool> explore-picking;
-    private property <length> sidebar-width: root.compact ? 0px : 252px;
+    // The navigation bar along the bottom.
+    private property <length> nav-height: root.player-open ? 0px : (root.compact ? 78px : 92px) + root.safe-area-insets.bottom;
     // Something fills Home: a media server, an add-on or the TMDB catalogue.
     private property <bool> home-has-sources: root.addons.length > 0 || root.servers.length > 0 || root.catalog-shelves.length > 0;
 
@@ -2262,6 +2614,7 @@ export component AppWindow inherits Window {
     default-font-family: "Figtree";
 
     init => {
+        Device.touch = root.mobile;
         Palette.color-scheme = root.dark ? ColorScheme.dark : ColorScheme.light;
     }
     changed dark => {
@@ -2273,88 +2626,6 @@ export component AppWindow inherits Window {
         padding-top: root.player-open ? 0px : root.safe-area-insets.top;
     HorizontalLayout {
         vertical-stretch: 1;
-        Rectangle {
-            // Hidden, not removed, under the player: pages keep their place.
-            visible: !root.player-open && !root.compact;
-            width: root.sidebar-width;
-            background: Theme.surface;
-
-            VerticalLayout {
-                padding: 12px;
-                spacing: 4px;
-                alignment: start;
-
-                HorizontalLayout {
-                    height: 136px;
-                    spacing: 4px;
-                    alignment: start;
-                    // The brand: the full-size halo painting, scaled down.
-                    Image {
-                        width: 128px;
-                        height: 128px;
-                        y: 4px;
-                        source: @image-url("../../../assets/icon/haven.png");
-                        image-fit: contain;
-                        image-rendering: smooth;
-                        accessible-role: none;
-                    }
-                    Text {
-                        text: "Haven";
-                        font-family: Theme.heading-font;
-                        color: Theme.text;
-                        font-size: 26px;
-                        font-weight: 700;
-                        vertical-alignment: center;
-                    }
-                }
-                for label[index] in root.pages: NavItem {
-                    // A phone build has no Add-ons page.
-                    visible: !(root.addons-hidden && index == root.addons-page);
-                    height: self.visible ? 42px : 0px;
-                    label: label;
-                    selected: root.page == index;
-                    clicked => {
-                        root.close-detail();
-                        root.page = index;
-                        root.page-selected(index);
-                    }
-                }
-                if root.update-version != "": Rectangle {
-                    height: 54px;
-                    Rectangle {
-                        x: 12px;
-                        y: 10px;
-                        width: parent.width - 24px;
-                        height: 40px;
-                        border-radius: 10px;
-                        background: update-touch.has-hover ? Theme.accent : Theme.accent.with-alpha(0.16);
-                        border-width: 1px;
-                        border-color: Theme.accent;
-                        accessible-role: button;
-                        accessible-label: "Install Haven " + root.update-version;
-                        update-touch := TouchArea {
-                            mouse-cursor: pointer;
-                            enabled: !root.update-busy;
-                            clicked => { root.install-update(); }
-                        }
-                        Text {
-                            text: root.update-busy ? "Updating…" : "Install update  ·  " + root.update-version;
-                            color: update-touch.has-hover ? (Theme.dark ? #171a22 : #ffffff) : Theme.accent;
-                            font-size: 13px;
-                            font-weight: 600;
-                            horizontal-alignment: center;
-                            vertical-alignment: center;
-                        }
-                    }
-                }
-            }
-            Rectangle {
-                x: parent.width - 1px;
-                width: 1px;
-                background: Theme.border;
-            }
-        }
-
         Rectangle {
             visible: !root.player-open;
             horizontal-stretch: 1;
@@ -2519,7 +2790,7 @@ export component AppWindow inherits Window {
                                 }
                             }
                         }
-                        if root.seasons.length > 0: LineEdit {
+                        if root.seasons.length > 0: Field {
                             placeholder-text: "Filter episodes";
                             text <=> root.episode-filter;
                             edited(text) => { root.filter-episodes(text); }
@@ -2647,6 +2918,7 @@ export component AppWindow inherits Window {
                                         height: 88px;
                                         stream: stream;
                                         play => { root.play-stream(index); }
+                                        download => { root.download-stream(index); }
                                     }
                                     if stream-slot.shown && stream.more > 0: Chip {
                                         x: 0;
@@ -2743,65 +3015,125 @@ export component AppWindow inherits Window {
                 }
             }
 
-            if !root.detail-open && root.page == root.search-page: search-view := ScrollView {
-                content-width: self.visible-width;
-                content-height: search-content.preferred-height;
+            if !root.detail-open && root.page == root.library-page: VerticalLayout {
+                padding-left: root.compact ? 16px : 32px;
+                padding-right: root.compact ? 16px : 32px;
+                padding-top: root.compact ? 16px : 32px;
+                spacing: 16px;
 
-                search-content := VerticalLayout {
-                    width: search-view.visible-width;
-                    padding: 32px;
-                    spacing: 20px;
-                    alignment: start;
-
-                    PageTitle { text: "Search"; }
-                    HorizontalLayout {
-                        spacing: 8px;
-                        LineEdit {
-                            text <=> root.search-query;
-                            placeholder-text: "Films and series";
-                            accessible-label: "Search";
-                            accepted(text) => { root.search(text); }
-                        }
-                        Button {
-                            text: "Search";
-                            primary: true;
-                            enabled: root.search-query != "";
-                            clicked => { root.search(root.search-query); }
-                        }
+                HorizontalLayout {
+                    spacing: 12px;
+                    PageTitle {
+                        text: "Library";
+                        vertical-alignment: center;
                     }
-                    if root.search-note != "": Text {
-                        text: root.search-note;
+                    Rectangle { horizontal-stretch: 1; }
+                    Segments {
+                        labels: ["Downloads", "Watchlist", "History"];
+                        current <=> root.library-tab;
+                    }
+                }
+
+                // ---- Downloads: films, then series by name.
+                if root.library-tab == 0: HorizontalLayout {
+                    spacing: 10px;
+                    Icon {
+                        name: "folder";
+                        size: 18px;
+                        tint: Theme.text-dim;
+                        y: (parent.height - self.height) / 2;
+                    }
+                    Text {
+                        horizontal-stretch: 1;
+                        text: "Saved in " + root.downloads-folder;
+                        color: Theme.text-dim;
+                        font-size: 12px;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+                    if !root.mobile: Button {
+                        text: "Show folder";
+                        clicked => { root.open-downloads-folder(); }
+                    }
+                }
+                if root.library-tab == 0 && root.download-rows.length == 0: VerticalLayout {
+                    vertical-stretch: 1;
+                    alignment: start;
+                    Text {
+                        text: "Nothing downloaded yet. On a film's or an episode's page, press the download button beside a place to watch: it is saved to this device and shows here, sorted into films and series.";
                         color: Theme.text-dim;
                         wrap: word-wrap;
                     }
-                    for shelf in root.search-shelves: ShelfRow {
-                        shelf: shelf;
-                        open(poster) => { root.open-title(poster); }
+                }
+                if root.library-tab == 0 && root.download-rows.length > 0: dl-scroll := ScrollView {
+                    vertical-stretch: 1;
+                    content-width: self.visible-width;
+                    content-height: dl-list.preferred-height;
+                    dl-list := VerticalLayout {
+                        width: dl-scroll.visible-width;
+                        alignment: start;
+                        spacing: 8px;
+                        padding-bottom: 16px;
+                        for row in root.download-rows: VerticalLayout {
+                            spacing: 8px;
+                            if row.section != "": Text {
+                                text: row.section;
+                                font-family: Theme.heading-font;
+                                color: Theme.text;
+                                font-size: 18px;
+                                font-weight: 700;
+                            }
+                            if row.group != "": Text {
+                                text: row.group;
+                                color: Theme.accent;
+                                font-size: 13px;
+                                font-weight: 700;
+                            }
+                            DownloadItem {
+                                item: row;
+                                play => { root.download-play(row.id); }
+                                toggle => { root.download-toggle(row.id); }
+                                remove => { root.download-remove(row.id); }
+                            }
+                        }
                     }
                 }
-            }
 
-            if !root.detail-open && root.page == root.watchlist-page && root.watchlist.length == 0: EmptyPage {
-                title: "Watchlist";
-                hint: "Nothing saved yet. Open a film or series and choose Add to Watchlist.";
-            }
-            if !root.detail-open && root.page == root.watchlist-page && root.watchlist.length > 0: watchlist-view := ScrollView {
-                private property <length> step: 162px;
-                private property <length> line: 286px;
-                private property <int> columns: max(1, floor((self.visible-width - 64px + 12px) / self.step));
-                content-width: self.visible-width;
-                content-height: 32px + 62px + ceil(root.watchlist.length / self.columns) * self.line + 32px;
-
-                PageTitle {
-                    x: 32px;
-                    y: 32px;
-                    text: "Watchlist";
+                // ---- Watchlist and History: posters.
+                if root.library-tab == 1 && root.watchlist.length == 0: VerticalLayout {
+                    vertical-stretch: 1;
+                    alignment: start;
+                    Text {
+                        text: "Nothing saved yet. Open a film or series and choose Add to Watchlist.";
+                        color: Theme.text-dim;
+                        wrap: word-wrap;
+                    }
                 }
-                for poster[index] in root.watchlist: PosterCard {
-                    x: 32px + mod(index, watchlist-view.columns) * watchlist-view.step;
-                    y: 32px + 62px + floor(index / watchlist-view.columns) * watchlist-view.line;
-                    poster: poster;
-                    clicked => { root.open-title(poster); }
+                if root.library-tab == 2 && root.history.length == 0: VerticalLayout {
+                    vertical-stretch: 1;
+                    alignment: start;
+                    Text {
+                        text: "Nothing watched yet. Films and episodes you play show here, newest first.";
+                        color: Theme.text-dim;
+                        wrap: word-wrap;
+                    }
+                }
+                if (root.library-tab == 1 && root.watchlist.length > 0) || (root.library-tab == 2 && root.history.length > 0): grid-view := ScrollView {
+                    private property <[Poster]> items: root.library-tab == 1 ? root.watchlist : root.history;
+                    private property <length> step: 162px;
+                    private property <length> line: 286px;
+                    private property <int> columns: max(1, floor((self.visible-width + 12px) / self.step));
+                    vertical-stretch: 1;
+                    content-width: self.visible-width;
+                    content-height: ceil(self.items.length / self.columns) * self.line + 16px;
+                    for poster[index] in grid-view.items: PosterCard {
+                        x: mod(index, grid-view.columns) * grid-view.step;
+                        y: floor(index / grid-view.columns) * grid-view.line;
+                        poster: poster;
+                        remove-label: root.library-tab == 2 ? "Remove from History" : "";
+                        clicked => { root.open-title(poster); }
+                        remove => { root.remove-continue(poster); }
+                    }
                 }
             }
 
@@ -2818,15 +3150,22 @@ export component AppWindow inherits Window {
                         text: "Calendar";
                         vertical-alignment: center;
                     }
+                    if !root.compact: Rectangle { width: 12px; }
+                    if !root.compact: Segments {
+                        y: (parent.height - self.height) / 2;
+                        labels: ["Month", "Week"];
+                        current: root.calendar-is-week ? 1 : 0;
+                        chosen(index) => { root.calendar-week(index == 1); }
+                    }
                     Rectangle { horizontal-stretch: 1; }
-                    Chip {
-                        width: 36px;
-                        label: "‹";
-                        accessible-label: "The month before";
+                    IconButton {
+                        y: (parent.height - self.height) / 2;
+                        icon: "back";
+                        label: root.calendar-is-week ? "The week before" : "The month before";
                         clicked => { root.calendar-step(-1); }
                     }
                     Text {
-                        width: 170px;
+                        width: 230px;
                         text: root.calendar-title;
                         font-family: Theme.heading-font;
                         color: Theme.text;
@@ -2835,13 +3174,16 @@ export component AppWindow inherits Window {
                         horizontal-alignment: center;
                         vertical-alignment: center;
                     }
-                    Chip {
-                        width: 36px;
-                        label: "›";
-                        accessible-label: "The month after";
+                    IconButton {
+                        y: (parent.height - self.height) / 2;
+                        icon: "forward";
+                        label: root.calendar-is-week ? "The week after" : "The month after";
                         clicked => { root.calendar-step(1); }
                     }
                     Chip {
+                        y: (parent.height - self.height) / 2;
+                        height: 36px;
+                        border-radius: 18px;
                         label: "Today";
                         clicked => { root.calendar-step(0); }
                     }
@@ -2856,7 +3198,9 @@ export component AppWindow inherits Window {
                         max-width: root.compact ? 0px : 10000px;
                         horizontal-stretch: root.compact ? 0 : 1;
                         private property <length> across: self.width / 7;
-                        private property <length> line: (self.height - 28px) / 6;
+                        private property <length> line: root.calendar-is-week ? self.height - 28px : (self.height - 28px) / 6;
+                        // A week's squares are tall: each release gets two lines.
+                        private property <length> entry-step: root.calendar-is-week ? 46px : 19px;
                         for name[index] in ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]: Text {
                             x: index * month-grid.across + 8px;
                             y: 0;
@@ -2888,9 +3232,9 @@ export component AppWindow inherits Window {
                             }
                             for entry[line] in day.entries: Rectangle {
                                 x: 5px;
-                                y: 26px + line * 19px;
+                                y: 26px + line * month-grid.entry-step;
                                 width: parent.width - 10px;
-                                height: 17px;
+                                height: month-grid.entry-step - 2px;
                                 border-radius: 4px;
                                 background: entry-touch.has-hover ? Theme.accent : Theme.accent.with-alpha(0.16);
                                 opacity: day.in-month ? 1 : 0.55;
@@ -2900,10 +3244,23 @@ export component AppWindow inherits Window {
                                 }
                                 Text {
                                     x: 5px;
+                                    y: root.calendar-is-week ? 4px : 0px;
                                     width: parent.width - 10px;
-                                    height: parent.height;
+                                    height: root.calendar-is-week ? 18px : parent.height;
                                     text: entry.title;
                                     color: entry-touch.has-hover ? (Theme.dark ? #171a22 : #ffffff) : Theme.text;
+                                    font-size: root.calendar-is-week ? 12px : 11px;
+                                    font-weight: root.calendar-is-week ? 600 : 400;
+                                    vertical-alignment: center;
+                                    overflow: elide;
+                                }
+                                if root.calendar-is-week: Text {
+                                    x: 5px;
+                                    y: 22px;
+                                    width: parent.width - 10px;
+                                    height: 16px;
+                                    text: (entry.time != "" ? entry.time + "  " : "") + (entry.label != "" ? entry.label : "Film");
+                                    color: entry-touch.has-hover ? (Theme.dark ? #171a22 : #ffffff) : Theme.text-dim;
                                     font-size: 11px;
                                     vertical-alignment: center;
                                     overflow: elide;
@@ -2911,7 +3268,7 @@ export component AppWindow inherits Window {
                             }
                             if day.more > 0: Text {
                                 x: 8px;
-                                y: 26px + day.entries.length * 19px;
+                                y: 26px + day.entries.length * month-grid.entry-step;
                                 text: "+" + day.more + " more";
                                 color: Theme.text-dim;
                                 font-size: 11px;
@@ -2933,7 +3290,7 @@ export component AppWindow inherits Window {
                             padding: 16px;
                             spacing: 8px;
                             Text {
-                                text: "This month";
+                                text: root.calendar-is-week ? "This week" : "This month";
                                 font-family: Theme.heading-font;
                                 color: Theme.text;
                                 font-size: 16px;
@@ -3022,10 +3379,11 @@ export component AppWindow inherits Window {
                 }
             }
 
-            if !root.detail-open && root.page == root.tv-page: ChannelsPage {
+            if !root.detail-open && root.page == root.tv-page && root.live-band == 0: ChannelsPage {
                 title: "Live TV";
+                band <=> root.live-band;
                 compact: root.compact;
-                hint: "Add an M3U playlist or an Xtream Codes account in Settings, under Live TV, to see the channels here.";
+                hint: "Add an M3U playlist or an Xtream Codes account in Settings, under Connections > Live TV, to see the channels here.";
                 channels: root.tv-channels;
                 categories: root.tv-categories;
                 total: root.tv-total;
@@ -3041,18 +3399,20 @@ export component AppWindow inherits Window {
 
                 if root.tv-total == 0: HorizontalLayout {
                     alignment: start;
-                    Button {
+                    PrimaryButton {
                         text: "Open Settings";
-                        primary: true;
                         clicked => {
+                            root.settings-section = 4;
+                            root.settings-picking = false;
                             root.page = root.settings-page;
                             root.page-selected(root.settings-page);
                         }
                     }
                 }
             }
-            if !root.detail-open && root.page == root.radio-page: ChannelsPage {
-                title: "Radio";
+            if !root.detail-open && root.page == root.tv-page && root.live-band == 1: ChannelsPage {
+                title: "Live TV";
+                band <=> root.live-band;
                 compact: root.compact;
                 hint: "Stations marked as radio in your Live TV sources show here.";
                 channels: root.radio-channels;
@@ -3067,11 +3427,6 @@ export component AppWindow inherits Window {
                 star(index) => { root.fav-pick(true, index); }
                 make-group(name) => { root.fav-new-group(name); }
                 delete-group(name) => { root.fav-delete-group(name); }
-            }
-
-            if !root.detail-open && root.page != root.home-page && root.page != root.search-page && root.page != root.explore-page && root.page != root.tv-page && root.page != root.radio-page && root.page != root.watchlist-page && root.page != root.calendar-page && root.page != root.addons-page && root.page != root.settings-page: EmptyPage {
-                title: root.pages[root.page];
-                hint: root.hints[root.page];
             }
 
             if !root.detail-open && root.page == root.home-page && !root.home-has-sources: VerticalLayout {
@@ -3090,19 +3445,20 @@ export component AppWindow inherits Window {
                 HorizontalLayout {
                     alignment: start;
                     spacing: 8px;
-                    Button {
+                    PrimaryButton {
                         text: "Open Settings";
-                        primary: true;
                         clicked => {
                             root.page = root.settings-page;
                             root.page-selected(root.settings-page);
                         }
                     }
                     if !root.addons-hidden: Button {
-                        text: "Open Add-ons";
+                        text: "Add-ons";
                         clicked => {
-                            root.page = root.addons-page;
-                            root.page-selected(root.addons-page);
+                            root.settings-section = 3;
+                            root.settings-picking = false;
+                            root.page = root.settings-page;
+                            root.page-selected(root.settings-page);
                         }
                     }
                 }
@@ -3114,21 +3470,452 @@ export component AppWindow inherits Window {
                 }
             }
             if !root.detail-open && root.page == root.home-page && root.home-has-sources: home := ScrollView {
+                // Two wide cards across a phone, as in Strand.
+                private property <length> card-w: root.compact ? (self.visible-width - 32px - 14px) / 2 : 328px;
+                private property <length> card-h: home.card-w * 0.5625;
                 content-width: self.visible-width;
                 content-height: home-content.preferred-height;
 
                 home-content := VerticalLayout {
                     width: home.visible-width;
-                    padding: 32px;
+                    padding: root.compact ? 16px : 32px;
+                    padding-top: root.compact ? 12px : 24px;
                     spacing: 28px;
                     alignment: start;
 
-                    PageTitle { text: "Home"; }
-                    if root.continue-shelf.items.length > 0: ShelfRow {
-                        shelf: root.continue-shelf;
-                        remove-label: "Remove from Continue Watching";
-                        open(poster) => { root.open-title(poster); }
-                        remove(poster) => { root.remove-continue(poster); }
+                    // ---- The banner: a few titles in turn, large.
+                    if root.hero.length > 0: VerticalLayout {
+                        spacing: 14px;
+                        hero-card := Rectangle {
+                            private property <HeroSlide> slide: root.hero[root.hero-index];
+                            // A phone gets a tall card, as in Strand.
+                            height: root.compact ? clamp(home.visible-width * 1.2, 420px, 560px) : clamp(home.visible-width * 0.40, 340px, 580px);
+                            border-radius: 24px;
+                            clip: true;
+                            background: Theme.surface;
+                            border-width: 1px;
+                            border-color: Theme.border;
+                            accessible-role: button;
+                            accessible-label: self.slide.title;
+                            hero-touch := TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => {
+                                    root.open-title({ id: hero-card.slide.id, kind: hero-card.slide.kind, title: hero-card.slide.title });
+                                }
+                            }
+                            if hero-card.slide.has-image: Image {
+                                width: 100%;
+                                height: 100%;
+                                source: hero-card.slide.image;
+                                image-fit: cover;
+                            }
+                            Rectangle {
+                                background: @linear-gradient(180deg, transparent 35%, #0d0f14e6 100%);
+                            }
+                            Rectangle {
+                                background: @linear-gradient(90deg, #0d0f14b3 0%, transparent 60%);
+                            }
+                            VerticalLayout {
+                                x: root.compact ? 20px : 40px;
+                                width: root.compact ? parent.width - 40px : min(parent.width - 80px, 720px);
+                                padding-bottom: root.compact ? 22px : 34px;
+                                spacing: 10px;
+                                alignment: end;
+                                Text {
+                                    text: hero-card.slide.title;
+                                    color: #ffffff;
+                                    font-size: root.compact ? 30px : clamp(hero-card.height * 0.11, 34px, 60px);
+                                    font-weight: 800;
+                                    wrap: word-wrap;
+                                    overflow: elide;
+                                    max-height: root.compact ? 76px : 150px;
+                                    horizontal-alignment: root.compact ? center : left;
+                                }
+                                if hero-card.slide.facts != "": Text {
+                                    text: hero-card.slide.facts;
+                                    color: #f2f3f7;
+                                    horizontal-alignment: root.compact ? center : left;
+                                    font-size: root.compact ? 13px : 15px;
+                                    font-weight: 600;
+                                }
+                                if hero-card.slide.description != "": Text {
+                                    text: hero-card.slide.description;
+                                    color: #d5d8e0;
+                                    font-size: root.compact ? 13px : 14px;
+                                    wrap: word-wrap;
+                                    overflow: elide;
+                                    max-height: 40px;
+                                    horizontal-alignment: root.compact ? center : left;
+                                }
+                                HorizontalLayout {
+                                    alignment: root.compact ? center : start;
+                                    padding-top: 6px;
+                                    Rectangle {
+                                        width: more-label.preferred-width + 76px;
+                                        height: 42px;
+                                        border-radius: 21px;
+                                        background: more-touch.has-hover ? Theme.accent.brighter(0.1) : Theme.accent;
+                                        accessible-role: button;
+                                        accessible-label: "Info about " + hero-card.slide.title;
+                                        more-touch := TouchArea {
+                                            mouse-cursor: pointer;
+                                            clicked => {
+                                                root.open-title({ id: hero-card.slide.id, kind: hero-card.slide.kind, title: hero-card.slide.title });
+                                            }
+                                        }
+                                        Icon {
+                                            x: 20px;
+                                            name: "info";
+                                            size: 18px;
+                                            tint: #171a22;
+                                        }
+                                        more-label := Text {
+                                            x: 46px;
+                                            text: "Info";
+                                            color: #171a22;
+                                            font-size: 14px;
+                                            font-weight: 700;
+                                        }
+                                    }
+                                }
+                            }
+                            if root.hero.length > 1 && !root.compact: IconButton {
+                                x: parent.width - 2 * 44px - 28px;
+                                y: parent.height - 44px - 30px;
+                                size: 44px;
+                                icon: "back";
+                                label: "The title before";
+                                clicked => { root.hero-index = mod(root.hero-index - 1 + root.hero.length, root.hero.length); }
+                            }
+                            if root.hero.length > 1 && !root.compact: IconButton {
+                                x: parent.width - 44px - 20px;
+                                y: parent.height - 44px - 30px;
+                                size: 44px;
+                                icon: "forward";
+                                label: "The next title";
+                                clicked => { root.hero-index = mod(root.hero-index + 1, root.hero.length); }
+                            }
+                            Timer {
+                                interval: 9s;
+                                running: root.home-showing && root.hero.length > 1 && !hero-touch.has-hover;
+                                triggered => { root.hero-index = mod(root.hero-index + 1, root.hero.length); }
+                            }
+                        }
+                        // Which title shows, as dots.
+                        HorizontalLayout {
+                            alignment: center;
+                            spacing: 8px;
+                            for slide[index] in root.hero: Rectangle {
+                                width: index == root.hero-index ? 30px : 8px;
+                                height: 8px;
+                                border-radius: 4px;
+                                background: index == root.hero-index ? Theme.text : Theme.text-dim.with-alpha(0.5);
+                                animate width { duration: 200ms; }
+                                TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => { root.hero-index = index; }
+                                }
+                            }
+                        }
+                    }
+
+                    // ---- Upcoming: what comes out from the Watchlist.
+                    if root.upcoming.length > 0: VerticalLayout {
+                        spacing: 12px;
+                        HorizontalLayout {
+                            alignment: start;
+                            spacing: 6px;
+                            Text {
+                                text: "Upcoming";
+                                font-family: Theme.heading-font;
+                                color: Theme.text;
+                                font-size: 20px;
+                                font-weight: 700;
+                            }
+                            Rectangle {
+                                width: 26px;
+                                accessible-role: button;
+                                accessible-label: "Open the Calendar";
+                                TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => {
+                                        root.page = root.calendar-page;
+                                        root.page-selected(root.calendar-page);
+                                    }
+                                }
+                                Icon {
+                                    name: "forward";
+                                    size: 18px;
+                                    tint: Theme.text-dim;
+                                }
+                            }
+                        }
+                        Rectangle {
+                            height: home.card-h + 64px;
+                            Flickable {
+                                width: parent.width;
+                                height: parent.height;
+                                content-width: root.upcoming.length * (home.card-w + 16px);
+                                content-height: self.height;
+                                for card[index] in root.upcoming: Rectangle {
+                                    x: index * (home.card-w + 16px);
+                                    width: home.card-w;
+                                    height: home.card-h + 64px;
+                                    accessible-role: button;
+                                    accessible-label: card.title + ", " + card.episode + ", " + card.when;
+                                    card-touch := TouchArea {
+                                        mouse-cursor: pointer;
+                                        clicked => {
+                                            root.open-title({ id: card.id, kind: card.kind, title: card.title, video: card.video });
+                                        }
+                                    }
+                                    Rectangle {
+                                        y: 0;
+                                        height: home.card-h;
+                                        border-radius: 16px;
+                                        clip: true;
+                                        background: Theme.surface;
+                                        border-width: card-touch.has-hover ? 2px : 1px;
+                                        border-color: card-touch.has-hover ? Theme.accent : Theme.border;
+                                        if card.has-image: Image {
+                                            width: 100%;
+                                            height: 100%;
+                                            source: card.image;
+                                            image-fit: cover;
+                                        }
+                                        Rectangle {
+                                            background: @linear-gradient(180deg, transparent 50%, #00000099 100%);
+                                        }
+                                        if card.badge != "": Text {
+                                            x: 16px;
+                                            y: parent.height - (root.compact ? 30px : 38px);
+                                            text: card.badge;
+                                            color: #ffffff;
+                                            font-size: root.compact ? 12px : 15px;
+                                            font-weight: 800;
+                                        }
+                                        Rectangle {
+                                            x: parent.width - self.width - 12px;
+                                            y: parent.height - (root.compact ? 32px : 40px);
+                                            width: when-label.preferred-width + (root.compact ? 14px : 24px);
+                                            height: root.compact ? 24px : 28px;
+                                            border-radius: self.height / 2;
+                                            background: card.soon ? Theme.accent : #000000a0;
+                                            when-label := Text {
+                                                text: card.when;
+                                                color: card.soon ? #171a22 : #ffffff;
+                                                font-size: root.compact ? 11px : 13px;
+                                                font-weight: 700;
+                                            }
+                                        }
+                                    }
+                                    Text {
+                                        y: home.card-h + 10px;
+                                        width: 100%;
+                                        text: card.title;
+                                        color: Theme.text;
+                                        font-size: 15px;
+                                        font-weight: 600;
+                                        overflow: elide;
+                                    }
+                                    Text {
+                                        y: home.card-h + 34px;
+                                        width: 100%;
+                                        text: card.episode;
+                                        color: Theme.text-dim;
+                                        font-size: 13px;
+                                        overflow: elide;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+
+                    // ---- Continue Watching: wide cards, as Upcoming.
+                    if root.continue-cards.length > 0: VerticalLayout {
+                        spacing: 12px;
+                        HorizontalLayout {
+                            alignment: start;
+                            spacing: 6px;
+                            Text {
+                                text: "Continue Watching";
+                                font-family: Theme.heading-font;
+                                color: Theme.text;
+                                font-size: 20px;
+                                font-weight: 700;
+                            }
+                            Rectangle {
+                                width: 26px;
+                                accessible-role: button;
+                                accessible-label: "Open your History";
+                                TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => {
+                                        root.library-tab = 2;
+                                        root.page = root.library-page;
+                                        root.page-selected(root.library-page);
+                                    }
+                                }
+                                Icon {
+                                    name: "forward";
+                                    size: 18px;
+                                    tint: Theme.text-dim;
+                                }
+                            }
+                        }
+                        Rectangle {
+                            height: home.card-h + 64px;
+                            Flickable {
+                                width: parent.width;
+                                height: parent.height;
+                                content-width: root.continue-cards.length * (home.card-w + 16px);
+                                content-height: self.height;
+                                for card[index] in root.continue-cards: Rectangle {
+                                    x: index * (home.card-w + 16px);
+                                    width: home.card-w;
+                                    height: home.card-h + 64px;
+                                    accessible-role: button;
+                                    accessible-label: card.title + (card.episode != "" ? ", " + card.episode : "");
+                                    cw-touch := TouchArea {
+                                        mouse-cursor: pointer;
+                                        clicked => {
+                                            root.open-title({ id: card.id, kind: card.kind, title: card.title, video: card.video });
+                                        }
+                                    }
+                                    ContextMenuArea {
+                                        Menu {
+                                            MenuItem {
+                                                title: "Remove from Continue Watching";
+                                                activated => { root.remove-continue({ id: card.id, kind: card.kind }); }
+                                            }
+                                        }
+                                    }
+                                    Rectangle {
+                                        y: 0;
+                                        height: home.card-h;
+                                        border-radius: 16px;
+                                        clip: true;
+                                        background: Theme.surface;
+                                        border-width: cw-touch.has-hover ? 2px : 1px;
+                                        border-color: cw-touch.has-hover ? Theme.accent : Theme.border;
+                                        if card.has-image: Image {
+                                            width: 100%;
+                                            height: 100%;
+                                            source: card.image;
+                                            image-fit: cover;
+                                        }
+                                        Rectangle {
+                                            background: @linear-gradient(180deg, transparent 50%, #000000a6 100%);
+                                        }
+                                        if card.badge != "": Text {
+                                            x: 16px;
+                                            y: parent.height - (root.compact ? 32px : 42px);
+                                            text: card.badge;
+                                            color: #ffffff;
+                                            font-size: root.compact ? 12px : 15px;
+                                            font-weight: 800;
+                                        }
+                                        if card.left > 0: Rectangle {
+                                            x: parent.width - self.width - 12px;
+                                            y: 12px;
+                                            width: max(28px, left-label.preferred-width + 16px);
+                                            height: 28px;
+                                            border-radius: 14px;
+                                            background: #000000b3;
+                                            accessible-role: text;
+                                            accessible-label: card.left == 1 ? "1 episode left" : card.left + " episodes left";
+                                            left-label := Text {
+                                                text: card.left;
+                                                color: #ffffff;
+                                                font-size: 13px;
+                                                font-weight: 800;
+                                            }
+                                        }
+                                        // How far it was watched.
+                                        Rectangle {
+                                            x: 12px;
+                                            y: parent.height - 12px;
+                                            width: parent.width - 24px;
+                                            height: 4px;
+                                            border-radius: 2px;
+                                            background: #ffffff40;
+                                            Rectangle {
+                                                x: 0;
+                                                width: parent.width * clamp(card.progress, 0, 1);
+                                                border-radius: 2px;
+                                                background: Theme.accent;
+                                            }
+                                        }
+                                    }
+                                    Text {
+                                        y: home.card-h + 10px;
+                                        width: 100%;
+                                        text: card.title;
+                                        color: Theme.text;
+                                        font-size: 15px;
+                                        font-weight: 600;
+                                        overflow: elide;
+                                    }
+                                    Text {
+                                        y: home.card-h + 34px;
+                                        width: 100%;
+                                        text: card.episode;
+                                        color: Theme.text-dim;
+                                        font-size: 13px;
+                                        overflow: elide;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // ---- Watchlist: posters.
+                    if root.watchlist.length > 0: VerticalLayout {
+                        spacing: 12px;
+                        HorizontalLayout {
+                            alignment: start;
+                            spacing: 6px;
+                            Text {
+                                text: "Watchlist";
+                                font-family: Theme.heading-font;
+                                color: Theme.text;
+                                font-size: 20px;
+                                font-weight: 700;
+                            }
+                            Rectangle {
+                                width: 26px;
+                                accessible-role: button;
+                                accessible-label: "Open your Watchlist";
+                                TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => {
+                                        root.library-tab = 1;
+                                        root.page = root.library-page;
+                                        root.page-selected(root.library-page);
+                                    }
+                                }
+                                Icon {
+                                    name: "forward";
+                                    size: 18px;
+                                    tint: Theme.text-dim;
+                                }
+                            }
+                        }
+                        Rectangle {
+                            height: 270px;
+                            Flickable {
+                                width: parent.width;
+                                height: parent.height;
+                                content-width: root.watchlist.length * 162px;
+                                content-height: self.height;
+                                for poster[index] in root.watchlist: PosterCard {
+                                    x: index * 162px;
+                                    poster: poster;
+                                    clicked => { root.open-title(poster); }
+                                }
+                            }
+                        }
                     }
                     if root.shelves.length == 0 && root.server-shelves.length == 0 && root.catalog-shelves.length == 0: Text {
                         text: root.servers.length > 0 ? "Waiting for your media servers…" : root.addons-hidden ? "Nothing to show here yet." : "Your add-ons have no catalogues to show here.";
@@ -3158,8 +3945,117 @@ export component AppWindow inherits Window {
                 padding-top: root.compact ? 16px : 32px;
                 spacing: 12px;
 
-                PageTitle { text: "Explore"; }
-                if root.explore-count > 0 && root.compact: HorizontalLayout {
+                HorizontalLayout {
+                    spacing: 16px;
+                    PageTitle {
+                        text: "Explore";
+                        vertical-alignment: center;
+                    }
+                    Rectangle {
+                        horizontal-stretch: 1;
+                        max-width: 560px;
+                        height: 40px;
+                        y: (parent.height - self.height) / 2;
+                        border-radius: 20px;
+                        background: Theme.surface;
+                        border-width: 1px;
+                        border-color: search-box.has-focus ? Theme.accent : Theme.border;
+                        Icon {
+                            x: 14px;
+                            name: "search";
+                            size: 18px;
+                            tint: Theme.text-dim;
+                        }
+                        search-box := TextInput {
+                            x: 42px;
+                            width: parent.width - 42px - (root.explore-searching || Device.touch ? 40px : 16px);
+                            height: parent.height;
+                            text <=> root.search-query;
+                            color: Theme.text;
+                            font-size: 14px;
+                            vertical-alignment: center;
+                            single-line: true;
+                            accessible-role: text-input;
+                            accessible-label: "Search films and series";
+                            accepted => {
+                                root.explore-searching = self.text != "";
+                                root.search(self.text);
+                            }
+                        }
+                        if root.search-query == "": Text {
+                            x: 42px;
+                            text: "Search films and series";
+                            color: Theme.text-dim;
+                            font-size: 14px;
+                            vertical-alignment: center;
+                        }
+                        if Device.touch && root.search-query == "": Rectangle {
+                            x: parent.width - 36px;
+                            width: 28px;
+                            height: 28px;
+                            border-radius: 14px;
+                            accessible-role: button;
+                            accessible-label: "Paste";
+                            TouchArea {
+                                clicked => {
+                                    search-box.paste();
+                                    if (search-box.text != "") {
+                                        root.explore-searching = true;
+                                        root.search(search-box.text);
+                                    }
+                                }
+                            }
+                            Icon {
+                                name: "paste";
+                                size: 16px;
+                                tint: Theme.text-dim;
+                            }
+                        }
+                        if root.explore-searching || root.search-query != "": Rectangle {
+                            x: parent.width - 36px;
+                            width: 28px;
+                            height: 28px;
+                            border-radius: 14px;
+                            background: clear-touch.has-hover ? Theme.hover : transparent;
+                            accessible-role: button;
+                            accessible-label: "Clear the search";
+                            clear-touch := TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => {
+                                    root.search-query = "";
+                                    root.explore-searching = false;
+                                    root.search("");
+                                }
+                            }
+                            Icon {
+                                name: "close";
+                                size: 14px;
+                                tint: Theme.text-dim;
+                            }
+                        }
+                    }
+                }
+                if root.explore-searching: search-view := ScrollView {
+                    vertical-stretch: 1;
+                    content-width: self.visible-width;
+                    content-height: search-content.preferred-height;
+                    search-content := VerticalLayout {
+                        width: search-view.visible-width;
+                        spacing: 20px;
+                        padding-bottom: 16px;
+                        alignment: start;
+                        if root.search-note != "": Text {
+                            text: root.search-note;
+                            color: Theme.text-dim;
+                            wrap: word-wrap;
+                        }
+                        for shelf in root.search-shelves: ShelfRow {
+                            shelf: shelf;
+                            open(poster) => { root.open-title(poster); }
+                        }
+                    }
+                }
+                if !root.explore-searching && root.explore-count > 0 && root.compact: HorizontalLayout {
                     alignment: start;
                     Chip {
                         label: root.explore-picking ? "‹  Back to the titles" : "Sources  ›";
@@ -3167,15 +4063,15 @@ export component AppWindow inherits Window {
                         clicked => { root.explore-picking = !root.explore-picking; }
                     }
                 }
-                if root.explore-count == 0: Text {
+                if !root.explore-searching && root.explore-count == 0: Text {
                     text: root.addons-hidden
                         ? "Explore browses everything you can watch. Add a media server or a TMDB key in Settings and it shows here."
                         : "Explore browses everything you can watch. Add a media server or a TMDB key in Settings, or install an add-on, and it shows here.";
                     color: Theme.text-dim;
                     wrap: word-wrap;
                 }
-                if root.explore-count == 0: Rectangle { vertical-stretch: 1; }
-                if root.explore-count > 0: HorizontalLayout {
+                if !root.explore-searching && root.explore-count == 0: Rectangle { vertical-stretch: 1; }
+                if !root.explore-searching && root.explore-count > 0: HorizontalLayout {
                     vertical-stretch: 1;
                     spacing: root.compact ? 0px : 20px;
                     // Where to browse: every source, under where it comes from.
@@ -3186,7 +4082,7 @@ export component AppWindow inherits Window {
                         max-width: root.compact ? (root.explore-picking ? 10000px : 0px) : 270px;
                         spacing: 8px;
                         padding-bottom: 16px;
-                        LineEdit {
+                        Field {
                             placeholder-text: "Find a source";
                             accessible-label: "Find a source";
                             edited(text) => { root.explore-filter(text); }
@@ -3282,94 +4178,133 @@ export component AppWindow inherits Window {
                 }
             }
 
-            if !root.detail-open && root.page == root.addons-page: addons-view := ScrollView {
-                content-width: self.visible-width;
-                content-height: addons-content.preferred-height;
+            if !root.detail-open && root.page == root.settings-page: HorizontalLayout {
+                padding-left: root.compact ? 16px : 32px;
+                padding-top: root.compact ? 16px : 32px;
+                spacing: root.compact ? 0px : 28px;
 
-                addons-content := VerticalLayout {
-                    width: addons-view.visible-width;
-                    padding: 32px;
-                    spacing: 12px;
+                // The parts of Settings, under their groups.
+                VerticalLayout {
+                    visible: !root.compact || root.settings-picking;
+                    horizontal-stretch: root.compact && root.settings-picking ? 1 : 0;
+                    min-width: root.compact ? 0px : 230px;
+                    max-width: root.compact ? (root.settings-picking ? 10000px : 0px) : 230px;
+                    padding-right: root.compact ? 16px : 0px;
+                    spacing: 2px;
                     alignment: start;
-
-                    PageTitle { text: "Add-ons"; }
-                    Text {
-                        text: "Paste an add-on's address to install it. Its catalogues show up as shelves on Home. Cinemeta, a free catalogue of films and series, comes installed; switch it off or remove it if you do not want it.";
-                        color: Theme.text-dim;
-                        wrap: word-wrap;
-                    }
-                    HorizontalLayout {
-                        spacing: 8px;
-                        LineEdit {
-                            text <=> root.addon-address;
-                            placeholder-text: "https://…/manifest.json";
-                            enabled: !root.addon-busy;
-                            accessible-label: "Add-on address";
-                            accepted(text) => { root.install-addon(text); }
+                    PageTitle { text: "Settings"; }
+                    Rectangle { height: 10px; }
+                    for item in [
+                        { head: "General", icon: "", label: "", index: -1 },
+                        { head: "", icon: "general", label: "General", index: 0 },
+                        { head: "", icon: "storage", label: "Downloads & storage", index: 5 },
+                        { head: "Connections", icon: "", label: "", index: -1 },
+                        { head: "", icon: "account", label: "Accounts", index: 1 },
+                        { head: "", icon: "sync", label: "Sync options", index: 7 },
+                        { head: "", icon: "server", label: "Media servers", index: 2 },
+                        { head: "", icon: "addon", label: "Add-ons", index: 3 },
+                        { head: "", icon: "livetv", label: "Live TV", index: 4 },
+                        { head: "Haven", icon: "", label: "", index: -1 },
+                        { head: "", icon: "info", label: "About", index: 6 },
+                    ]: item-slot := Rectangle {
+                        private property <bool> listed: !(root.addons-hidden && item.index == 3);
+                        private property <bool> on: !root.compact && item.index == root.settings-section;
+                        height: !self.listed ? 0px : item.head != "" ? 36px : 42px;
+                        if item.head != "": Text {
+                            x: 12px;
+                            y: 16px;
+                            text: item.head;
+                            color: Theme.text-dim;
+                            font-size: 11px;
+                            font-weight: 700;
                         }
-                        Button {
-                            text: root.addon-busy ? "Installing…" : "Install";
-                            primary: true;
-                            enabled: !root.addon-busy && root.addon-address != "";
-                            clicked => { root.install-addon(root.addon-address); }
-                        }
-                    }
-                    if root.addon-status != "": Text {
-                        text: root.addon-status;
-                        color: root.addon-status-is-error ? (Theme.dark ? #ff8b8b : #b3261e) : Theme.text-dim;
-                        wrap: word-wrap;
-                    }
-                    Rectangle { height: 4px; }
-                    if root.addons.length == 0: Text {
-                        text: "No add-ons installed yet.";
-                        color: Theme.text-dim;
-                    }
-                    for addon in root.addons: AddonCard {
-                        addon: addon;
-                        remove => { root.remove-addon(addon.url); }
-                        switched(on) => { root.set-addon-enabled(addon.url, on); }
-                    }
-                    if root.shared-addons.length > 0: Rectangle { height: 8px; }
-                    if root.shared-addons.length > 0: SectionTitle { text: "From your media servers"; }
-                    if root.shared-addons.length > 0: Text {
-                        text: "These add-ons are set up on a media server of yours. The server already uses them for what it shows and plays in Haven. Install one here as well if you want Haven to ask it directly.";
-                        color: Theme.text-dim;
-                        wrap: word-wrap;
-                    }
-                    if root.shared-addons.length > 0: HorizontalLayout {
-                        alignment: start;
-                        Button {
-                            text: "Install all";
-                            enabled: !root.addon-busy;
-                            clicked => { root.install-shared(-1); }
-                        }
-                    }
-                    for shared in root.shared-addons: SettingsRow {
-                        label: shared.name;
-                        detail: "On " + shared.server;
-                        Button {
-                            text: shared.installed ? "Installed" : "Install";
-                            enabled: !shared.installed && !root.addon-busy;
-                            accessible-label: "Install " + shared.name;
-                            clicked => { root.install-shared(shared.index); }
+                        if item.head == "" && item-slot.listed: Rectangle {
+                            border-radius: 10px;
+                            background: item-slot.on ? Theme.selected : item-touch.has-hover ? Theme.hover : transparent;
+                            accessible-role: button;
+                            accessible-label: item.label;
+                            item-touch := TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => {
+                                    root.settings-section = item.index;
+                                    root.settings-picking = false;
+                                    root.settings-scroll = 0px;
+                                }
+                            }
+                            Rectangle {
+                                x: 0;
+                                width: 3px;
+                                height: 18px;
+                                border-radius: 1.5px;
+                                background: item-slot.on ? Theme.accent : transparent;
+                            }
+                            HorizontalLayout {
+                                padding-left: 14px;
+                                padding-right: 10px;
+                                spacing: 12px;
+                                Icon {
+                                    y: (parent.height - self.height) / 2;
+                                    name: item.icon;
+                                    size: 18px;
+                                    tint: item-slot.on ? Theme.accent : Theme.text-dim;
+                                }
+                                Text {
+                                    horizontal-stretch: 1;
+                                    text: item.label;
+                                    color: item-slot.on ? Theme.text : Theme.text-dim;
+                                    font-size: 14px;
+                                    font-weight: item-slot.on ? 700 : 500;
+                                    vertical-alignment: center;
+                                }
+                                if root.compact: Icon {
+                                    y: (parent.height - self.height) / 2;
+                                    name: "forward";
+                                    size: 16px;
+                                    tint: Theme.text-dim;
+                                }
+                            }
                         }
                     }
                 }
-            }
 
-            if !root.detail-open && root.page == root.settings-page: settings-view := ScrollView {
-                content-y <=> root.settings-scroll;
-                content-width: self.visible-width;
-                content-height: settings-content.preferred-height;
+                // The part chosen.
+                settings-view := ScrollView {
+                    visible: !root.compact || !root.settings-picking;
+                    horizontal-stretch: 1;
+                    max-width: root.compact && root.settings-picking ? 0px : 100000px;
+                    content-y <=> root.settings-scroll;
+                    content-width: self.visible-width;
+                    content-height: settings-content.preferred-height;
 
-                settings-content := VerticalLayout {
-                    width: settings-view.visible-width;
-                    padding: root.compact ? 16px : 32px;
-                    spacing: 12px;
-                    alignment: start;
+                    settings-content := VerticalLayout {
+                        width: settings-view.visible-width;
+                        padding-right: root.compact ? 16px : 32px;
+                        padding-bottom: 24px;
+                        spacing: 16px;
+                        alignment: start;
 
-                    PageTitle { text: "Settings"; }
-                    Rectangle { height: 8px; }
+                        if root.compact: HorizontalLayout {
+                            alignment: start;
+                            Chip {
+                                label: "‹  Settings";
+                                clicked => { root.settings-picking = true; }
+                            }
+                        }
+                        Text {
+                            text: ["General", "Accounts", "Media servers", "Add-ons", "Live TV", "Downloads & storage", "About", "Sync options"][root.settings-section];
+                            font-family: Theme.heading-font;
+                            color: Theme.text;
+                            font-size: root.compact ? 22px : 26px;
+                            font-weight: 700;
+                            height: root.compact ? 30px : 46px;
+                            vertical-alignment: center;
+                        }
+
+                        // ---- General
+                        if root.settings-section == 0: VerticalLayout {
+                            spacing: 20px;
+                            SettingsCard {
+                                title: "Appearance";
                     SettingsRow {
                         label: "Dark theme";
                         detail: "Switch between the dark and light look.";
@@ -3382,9 +4317,288 @@ export component AppWindow inherits Window {
                             }
                         }
                     }
+                            }
+                            SettingsCard {
+                                title: "Where to watch";
+                    SettingsRow {
+                        label: "Country";
+                        detail: "Set from this device's region unless you pick one. A title's page lists the streaming services and shops that have it in this country; if none does, Haven looks in the United States, the United Kingdom, Canada and Australia.";
+                        ComboBox {
+                            width: 240px;
+                            model: root.countries;
+                            current-index: root.country-index;
+                            accessible-label: "Country";
+                            selected => {
+                                root.country-index = self.current-index;
+                                root.country-selected(self.current-index);
+                            }
+                        }
+                    }
+                            }
+                            SettingsCard {
+                                title: "Player";
+                    if !root.mobile: SettingsRow {
+                        label: "Play videos with";
+                        detail: root.player-own-works || root.player-choice != 0
+                            ? "Haven's own player keeps your place and plays the next episode; another program does not."
+                            : "Haven's own player cannot run on this computer, so VLC is used.";
+                        ComboBox {
+                            width: 190px;
+                            model: ["Haven's own player", "VLC", "mpv", "Another program"];
+                            current-index: root.player-choice;
+                            selected => {
+                                root.player-choice = self.current-index;
+                                root.set-player-choice(self.current-index);
+                            }
+                        }
+                    }
+                    if !root.mobile && root.player-choice == 3: Field {
+                        placeholder-text: "The program, for example C:\\Program Files\\MPC-HC\\mpc-hc64.exe";
+                        text: root.player-program;
+                        accessible-label: "The program to play videos with";
+                        edited(text) => { root.set-player-program(text); }
+                    }
+                    if root.mobile && !root.ios: Text {
+                        text: "Videos open in a player app on this device, such as VLC or mpv. Android asks which one the first time.";
+                        color: Theme.text-dim;
+                        wrap: word-wrap;
+                    }
+                    if root.ios: SettingsRow {
+                        label: "Play videos with";
+                        detail: "Videos open in this app, which has to be installed.";
+                        ComboBox {
+                            width: 150px;
+                            model: ["VLC", "Infuse", "Outplayer"];
+                            current-index: max(0, root.player-choice - 1);
+                            selected => {
+                                root.player-choice = self.current-index + 1;
+                                root.set-player-choice(self.current-index + 1);
+                            }
+                        }
+                    }
+                    SettingsRow {
+                        label: "Send surround sound to a receiver untouched";
+                        detail: "For an AV receiver or soundbar on HDMI: needed for Dolby Atmos and DTS:X.";
+                        Switch {
+                            checked: root.player-passthrough;
+                            accessible-label: "Send surround sound to a receiver untouched";
+                            toggled => { root.player-set-passthrough(self.checked); }
+                        }
+                    }
+                    Text {
+                        text: "Off, Haven decodes the sound itself and plays it on whatever this computer has, in surround where the device can. On, Dolby Digital, Dolby TrueHD and DTS sound is passed on as it is in the file for the receiver to decode. Turn it on only with a receiver or soundbar that takes those; without one there may be no sound.";
+                        color: Theme.text-dim;
+                        font-size: 12px;
+                        wrap: word-wrap;
+                    }
+                            }
+                        }
 
-                    Rectangle { height: 8px; }
-                    SectionTitle { text: "Media servers"; }
+                        // ---- Accounts: Trakt and Simkl, and your own keys.
+                        if root.settings-section == 1: VerticalLayout {
+                            spacing: 20px;
+                            SettingsCard {
+                                title: "Tracking";
+                                note: "Link Trakt and Haven marks what you finish as watched there and keeps your watchlist in step. Linking opens trakt.tv in your web browser: sign in, choose Yes, and Haven picks it up by itself.";
+                    for row in root.tracking: SettingsRow {
+                        label: row.name;
+                        detail: row.state;
+                        HorizontalLayout {
+                            spacing: 8px;
+                            if row.connected: Button {
+                                text: "Import watchlist";
+                                enabled: !root.tracking-busy;
+                                clicked => { root.tracking-import(row.service); }
+                            }
+                            if row.connected: Button {
+                                text: "Unlink";
+                                enabled: !root.tracking-busy;
+                                clicked => { root.tracking-disconnect(row.service); }
+                            }
+                            if !row.connected: PrimaryButton {
+                                text: "Link";
+                                enabled: row.can-connect && !root.tracking-busy;
+                                clicked => { root.tracking-connect(row.service); }
+                            }
+                        }
+                    }
+                    if root.tracking-busy: HorizontalLayout {
+                        spacing: 12px;
+                        alignment: start;
+                        if root.tracking-code != "": Text {
+                            text: "Code: " + root.tracking-code;
+                            color: Theme.accent;
+                            font-size: 16px;
+                            font-weight: 700;
+                            vertical-alignment: center;
+                        }
+                        if root.tracking-link != "": Button {
+                            text: "Open the sign-in page again";
+                            clicked => { root.open-link(root.tracking-link); }
+                        }
+                        Button {
+                            text: "Cancel";
+                            clicked => { root.tracking-cancel(); }
+                        }
+                    }
+                    if root.tracking-status != "": Text {
+                        text: root.tracking-status;
+                        color: Theme.text-dim;
+                        wrap: word-wrap;
+                    }
+                            }
+                            HorizontalLayout {
+                                alignment: start;
+                                Chip {
+                                    label: root.keys-open ? "Hide your own keys" : "Advanced: use your own keys";
+                                    selected: root.keys-open;
+                                    clicked => { root.keys-open = !root.keys-open; }
+                                }
+                            }
+                            if root.keys-open: SettingsCard {
+                                title: "Your own keys";
+                    Text {
+                        text: (root.tmdb-built-in
+                            ? "Your own keys for outside services. Haven comes with its own TMDB key for the catalogue (shelves on Home, the TMDB source in Explore, posters and pictures), so you can leave the TMDB box empty, or put your own key in to use that instead. A key is free from themoviedb.org: either the API key or the API read access token works."
+                            : "Your own keys for outside services. A TMDB key turns on the built-in catalogue (shelves on Home, the TMDB source in Explore, posters and pictures) and fills in missing details. It is free from themoviedb.org: either the API key or the API read access token works.")
+                            + " You do not need Trakt or Simkl keys to link those accounts: only fill them in to use an app of your own.";
+                        color: Theme.text-dim;
+                        wrap: word-wrap;
+                    }
+                    GridLayout {
+                        spacing: 8px;
+                        Row {
+                            Text {
+                                text: "TMDB API key";
+                                color: Theme.text;
+                                vertical-alignment: center;
+                            }
+                            Field {
+                                text <=> root.keys-tmdb;
+                                input-type: password;
+                                accessible-label: "TMDB API key";
+                            }
+                        }
+                        Row {
+                            Text {
+                                text: "Trakt client ID";
+                                color: Theme.text;
+                                vertical-alignment: center;
+                            }
+                            Field {
+                                text <=> root.keys-trakt-id;
+                                accessible-label: "Trakt client ID";
+                            }
+                        }
+                        Row {
+                            Text {
+                                text: "Trakt client secret";
+                                color: Theme.text;
+                                vertical-alignment: center;
+                            }
+                            Field {
+                                text <=> root.keys-trakt-secret;
+                                input-type: password;
+                                accessible-label: "Trakt client secret";
+                            }
+                        }
+                        Row {
+                            Text {
+                                text: "Simkl client ID";
+                                color: Theme.text;
+                                vertical-alignment: center;
+                            }
+                            Field {
+                                text <=> root.keys-simkl-id;
+                                accessible-label: "Simkl client ID";
+                            }
+                        }
+                    }
+                    HorizontalLayout {
+                        spacing: 12px;
+                        alignment: start;
+                        PrimaryButton {
+                            text: "Save keys";
+                            clicked => { root.save-keys(); }
+                        }
+                        Text {
+                            text: root.keys-status;
+                            color: Theme.text-dim;
+                            vertical-alignment: center;
+                        }
+                    }
+                            }
+                        }
+
+                        // ---- Sync options
+                        if root.settings-section == 7: VerticalLayout {
+                            spacing: 20px;
+                            SettingsCard {
+                                title: "Status";
+                                note: root.sync-note;
+                                SettingsRow {
+                                    label: root.sync-busy ? "Syncing…" : "Sync";
+                                    detail: root.sync-status;
+                                    PrimaryButton {
+                                        text: root.sync-busy ? "Syncing…" : "Sync now";
+                                        enabled: root.sync-linked && !root.sync-busy;
+                                        clicked => { root.sync-now(); }
+                                    }
+                                }
+                                Text {
+                                    text: root.sync-accounts;
+                                    color: Theme.text-dim;
+                                    font-size: 12px;
+                                    wrap: word-wrap;
+                                }
+                                if !root.sync-linked: HorizontalLayout {
+                                    alignment: start;
+                                    Chip {
+                                        label: "Go to Accounts  ›";
+                                        clicked => {
+                                            root.settings-section = 1;
+                                            root.settings-scroll = 0px;
+                                        }
+                                    }
+                                }
+                            }
+                            SettingsCard {
+                                title: "What syncs";
+                                note: "Playback positions also go back to your media servers when you stop a film or episode.";
+                                SettingsRow {
+                                    label: "Watched and progress";
+                                    detail: "Films and episodes you finish are marked watched on your accounts.";
+                                    Switch {
+                                        checked <=> root.sync-watched;
+                                        accessible-label: "Sync watched and progress";
+                                        toggled => { root.sync-option(0, self.checked); }
+                                    }
+                                }
+                                SettingsRow {
+                                    label: "Watchlist";
+                                    detail: "Adding or removing a title changes it on your accounts too.";
+                                    Switch {
+                                        checked <=> root.sync-watchlist;
+                                        accessible-label: "Sync the Watchlist";
+                                        toggled => { root.sync-option(1, self.checked); }
+                                    }
+                                }
+                                SettingsRow {
+                                    label: "Bring in from your accounts";
+                                    detail: "Their Watchlist, and what you watched on Trakt, come into Haven too.";
+                                    Switch {
+                                        checked <=> root.sync-pull;
+                                        accessible-label: "Bring in from your accounts";
+                                        toggled => { root.sync-option(2, self.checked); }
+                                    }
+                                }
+                            }
+                        }
+
+                        // ---- Media servers
+                        if root.settings-section == 2: VerticalLayout {
+                            spacing: 20px;
+                            SettingsCard {
                     Text {
                         text: "Sign in to your own Jellyfin, Emby or Plex server. Its libraries then show as shelves on Home, in Explore and in Search, and it is offered as a place to watch whatever it holds.";
                         color: Theme.text-dim;
@@ -3405,21 +4619,21 @@ export component AppWindow inherits Window {
                     }
                     if !root.compact && (root.server-kind != 2): HorizontalLayout {
                         spacing: 8px;
-                        LineEdit {
+                        Field {
                             horizontal-stretch: 3;
                             text <=> root.server-address;
                             placeholder-text: "Server address, for example 192.168.1.10:8096";
                             enabled: !root.server-busy;
                             accessible-label: "Server address";
                         }
-                        LineEdit {
+                        Field {
                             horizontal-stretch: 2;
                             text <=> root.server-user;
                             placeholder-text: "User name";
                             enabled: !root.server-busy;
                             accessible-label: "User name";
                         }
-                        LineEdit {
+                        Field {
                             horizontal-stretch: 2;
                             text <=> root.server-password;
                             placeholder-text: "Password";
@@ -3428,28 +4642,27 @@ export component AppWindow inherits Window {
                             accessible-label: "Password";
                             accepted => { root.server-sign-in(root.server-kind, root.server-address, root.server-user, root.server-password); }
                         }
-                        Button {
+                        PrimaryButton {
                             text: root.server-busy ? "Signing in…" : "Sign in";
-                            primary: true;
                             enabled: !root.server-busy && root.server-address != "" && root.server-user != "";
                             clicked => { root.server-sign-in(root.server-kind, root.server-address, root.server-user, root.server-password); }
                         }
                     }
                     if root.compact && (root.server-kind != 2): VerticalLayout {
                         spacing: 8px;
-                        LineEdit {
+                        Field {
                             text <=> root.server-address;
                             placeholder-text: "Server address, for example 192.168.1.10:8096";
                             enabled: !root.server-busy;
                             accessible-label: "Server address";
                         }
-                        LineEdit {
+                        Field {
                             text <=> root.server-user;
                             placeholder-text: "User name";
                             enabled: !root.server-busy;
                             accessible-label: "User name";
                         }
-                        LineEdit {
+                        Field {
                             text <=> root.server-password;
                             placeholder-text: "Password";
                             input-type: password;
@@ -3457,9 +4670,8 @@ export component AppWindow inherits Window {
                             accessible-label: "Password";
                             accepted => { root.server-sign-in(root.server-kind, root.server-address, root.server-user, root.server-password); }
                         }
-                        Button {
+                        PrimaryButton {
                             text: root.server-busy ? "Signing in…" : "Sign in";
-                            primary: true;
                             enabled: !root.server-busy && root.server-address != "" && root.server-user != "";
                             clicked => { root.server-sign-in(root.server-kind, root.server-address, root.server-user, root.server-password); }
                         }
@@ -3467,9 +4679,8 @@ export component AppWindow inherits Window {
                     if root.server-kind == 2: HorizontalLayout {
                         spacing: 12px;
                         alignment: start;
-                        Button {
+                        PrimaryButton {
                             text: root.server-busy ? "Waiting for Plex…" : "Sign in with Plex";
-                            primary: true;
                             enabled: !root.server-busy;
                             clicked => { root.plex-sign-in(); }
                         }
@@ -3541,9 +4752,78 @@ export component AppWindow inherits Window {
                             clicked => { root.check-servers(); }
                         }
                     }
+                            }
+                        }
 
-                    Rectangle { height: 8px; }
-                    SectionTitle { text: "Live TV"; }
+                        // ---- Add-ons
+                        if root.settings-section == 3: VerticalLayout {
+                            spacing: 12px;
+                    Text {
+                        text: "Paste an add-on's address to install it. Its catalogues show up as shelves on Home. Cinemeta, a free catalogue of films and series, comes installed; switch it off or remove it if you do not want it.";
+                        color: Theme.text-dim;
+                        wrap: word-wrap;
+                    }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Field {
+                            text <=> root.addon-address;
+                            placeholder-text: "https://…/manifest.json";
+                            enabled: !root.addon-busy;
+                            accessible-label: "Add-on address";
+                            accepted(text) => { root.install-addon(text); }
+                        }
+                        PrimaryButton {
+                            text: root.addon-busy ? "Installing…" : "Install";
+                            enabled: !root.addon-busy && root.addon-address != "";
+                            clicked => { root.install-addon(root.addon-address); }
+                        }
+                    }
+                    if root.addon-status != "": Text {
+                        text: root.addon-status;
+                        color: root.addon-status-is-error ? (Theme.dark ? #ff8b8b : #b3261e) : Theme.text-dim;
+                        wrap: word-wrap;
+                    }
+                    Rectangle { height: 4px; }
+                    if root.addons.length == 0: Text {
+                        text: "No add-ons installed yet.";
+                        color: Theme.text-dim;
+                    }
+                    for addon in root.addons: AddonCard {
+                        addon: addon;
+                        remove => { root.remove-addon(addon.url); }
+                        switched(on) => { root.set-addon-enabled(addon.url, on); }
+                    }
+                    if root.shared-addons.length > 0: Rectangle { height: 8px; }
+                    if root.shared-addons.length > 0: SectionTitle { text: "From your media servers"; }
+                    if root.shared-addons.length > 0: Text {
+                        text: "These add-ons are set up on a media server of yours. The server already uses them for what it shows and plays in Haven. Install one here as well if you want Haven to ask it directly.";
+                        color: Theme.text-dim;
+                        wrap: word-wrap;
+                    }
+                    if root.shared-addons.length > 0: HorizontalLayout {
+                        alignment: start;
+                        Button {
+                            text: "Install all";
+                            enabled: !root.addon-busy;
+                            clicked => { root.install-shared(-1); }
+                        }
+                    }
+                    for shared in root.shared-addons: SettingsRow {
+                        label: shared.name;
+                        detail: "On " + shared.server;
+                        Button {
+                            text: shared.installed ? "Installed" : "Install";
+                            enabled: !shared.installed && !root.addon-busy;
+                            accessible-label: "Install " + shared.name;
+                            clicked => { root.install-shared(shared.index); }
+                        }
+                    }
+                        }
+
+                        // ---- Live TV sources
+                        if root.settings-section == 4: VerticalLayout {
+                            spacing: 20px;
+                            SettingsCard {
                     Text {
                         text: "Add your TV provider's channels, either as the address of an M3U playlist or as an Xtream Codes account (server address, user name and password). The channels then show on the Live TV tab, and radio stations on Radio.";
                         color: Theme.text-dim;
@@ -3551,16 +4831,15 @@ export component AppWindow inherits Window {
                     }
                     HorizontalLayout {
                         spacing: 8px;
-                        LineEdit {
+                        Field {
                             text <=> root.tv-address;
                             placeholder-text: "M3U playlist address, for example https://…/playlist.m3u";
                             enabled: !root.tv-busy;
                             accessible-label: "M3U playlist address";
                             accepted(text) => { root.add-tv-source(text); }
                         }
-                        Button {
+                        PrimaryButton {
                             text: root.tv-busy ? "Adding…" : "Add playlist";
-                            primary: true;
                             enabled: !root.tv-busy && root.tv-address != "";
                             clicked => { root.add-tv-source(root.tv-address); }
                         }
@@ -3572,21 +4851,21 @@ export component AppWindow inherits Window {
                     }
                     if !root.compact: HorizontalLayout {
                         spacing: 8px;
-                        LineEdit {
+                        Field {
                             horizontal-stretch: 3;
                             text <=> root.xtream-server;
                             placeholder-text: "Server address, for example http://tv.example.com:8080";
                             enabled: !root.xtream-busy;
                             accessible-label: "Xtream Codes server address";
                         }
-                        LineEdit {
+                        Field {
                             horizontal-stretch: 2;
                             text <=> root.xtream-user;
                             placeholder-text: "User name";
                             enabled: !root.xtream-busy;
                             accessible-label: "Xtream Codes user name";
                         }
-                        LineEdit {
+                        Field {
                             horizontal-stretch: 2;
                             text <=> root.xtream-password;
                             placeholder-text: "Password";
@@ -3595,28 +4874,27 @@ export component AppWindow inherits Window {
                             accessible-label: "Xtream Codes password";
                             accepted => { root.add-xtream(root.xtream-server, root.xtream-user, root.xtream-password); }
                         }
-                        Button {
+                        PrimaryButton {
                             text: root.xtream-busy ? "Adding…" : "Add account";
-                            primary: true;
                             enabled: !root.xtream-busy && root.xtream-server != "" && root.xtream-user != "" && root.xtream-password != "";
                             clicked => { root.add-xtream(root.xtream-server, root.xtream-user, root.xtream-password); }
                         }
                     }
                     if root.compact: VerticalLayout {
                         spacing: 8px;
-                        LineEdit {
+                        Field {
                             text <=> root.xtream-server;
                             placeholder-text: "Server address, for example http://tv.example.com:8080";
                             enabled: !root.xtream-busy;
                             accessible-label: "Xtream Codes server address";
                         }
-                        LineEdit {
+                        Field {
                             text <=> root.xtream-user;
                             placeholder-text: "User name";
                             enabled: !root.xtream-busy;
                             accessible-label: "Xtream Codes user name";
                         }
-                        LineEdit {
+                        Field {
                             text <=> root.xtream-password;
                             placeholder-text: "Password";
                             input-type: password;
@@ -3624,9 +4902,8 @@ export component AppWindow inherits Window {
                             accessible-label: "Xtream Codes password";
                             accepted => { root.add-xtream(root.xtream-server, root.xtream-user, root.xtream-password); }
                         }
-                        Button {
+                        PrimaryButton {
                             text: root.xtream-busy ? "Adding…" : "Add account";
-                            primary: true;
                             enabled: !root.xtream-busy && root.xtream-server != "" && root.xtream-user != "" && root.xtream-password != "";
                             clicked => { root.add-xtream(root.xtream-server, root.xtream-user, root.xtream-password); }
                         }
@@ -3672,207 +4949,38 @@ export component AppWindow inherits Window {
                             }
                         }
                     }
+                            }
+                        }
 
-                    Rectangle { height: 8px; }
-                    SectionTitle { text: "Where to watch"; }
-                    SettingsRow {
-                        label: "Country";
-                        detail: "A title's page lists the streaming services and shops that have it in this country. If none does, Haven looks in the United States, the United Kingdom, Canada and Australia.";
-                        ComboBox {
-                            width: 220px;
-                            model: root.countries;
-                            current-index: root.country-index;
-                            accessible-label: "Country";
-                            selected => {
-                                root.country-index = self.current-index;
-                                root.country-selected(self.current-index);
+                        // ---- Downloads and storage
+                        if root.settings-section == 5: VerticalLayout {
+                            spacing: 20px;
+                            SettingsCard {
+                                title: "Downloads";
+                                note: "Films are saved in Movies and series in Series, one folder per show and season. Deleting a download in Haven deletes its file too.";
+                                SettingsRow {
+                                    label: "Downloads folder";
+                                    detail: root.downloads-folder;
+                                    if !root.mobile: Button {
+                                        text: "Show folder";
+                                        clicked => { root.open-downloads-folder(); }
+                                    }
+                                }
+                                SettingsRow {
+                                    label: "Downloads";
+                                    detail: root.downloads-count == 1 ? "1 film or episode" : root.downloads-count + " films and episodes";
+                                    Button {
+                                        text: "Open in Library";
+                                        clicked => {
+                                            root.library-tab = 0;
+                                            root.page = root.library-page;
+                                            root.page-selected(root.library-page);
+                                        }
+                                    }
+                                }
                             }
-                        }
-                    }
-
-                    Rectangle { height: 8px; }
-                    SectionTitle { text: "Player"; }
-                    if !root.mobile: SettingsRow {
-                        label: "Play videos with";
-                        detail: root.player-own-works || root.player-choice != 0
-                            ? "Haven's own player keeps your place and plays the next episode; another program does not."
-                            : "Haven's own player cannot run on this computer, so VLC is used.";
-                        ComboBox {
-                            width: 190px;
-                            model: ["Haven's own player", "VLC", "mpv", "Another program"];
-                            current-index: root.player-choice;
-                            selected => {
-                                root.player-choice = self.current-index;
-                                root.set-player-choice(self.current-index);
-                            }
-                        }
-                    }
-                    if !root.mobile && root.player-choice == 3: LineEdit {
-                        placeholder-text: "The program, for example C:\\Program Files\\MPC-HC\\mpc-hc64.exe";
-                        text: root.player-program;
-                        accessible-label: "The program to play videos with";
-                        edited(text) => { root.set-player-program(text); }
-                    }
-                    if root.mobile && !root.ios: Text {
-                        text: "Videos open in a player app on this device, such as VLC or mpv. Android asks which one the first time.";
-                        color: Theme.text-dim;
-                        wrap: word-wrap;
-                    }
-                    if root.ios: SettingsRow {
-                        label: "Play videos with";
-                        detail: "Videos open in this app, which has to be installed.";
-                        ComboBox {
-                            width: 150px;
-                            model: ["VLC", "Infuse", "Outplayer"];
-                            current-index: max(0, root.player-choice - 1);
-                            selected => {
-                                root.player-choice = self.current-index + 1;
-                                root.set-player-choice(self.current-index + 1);
-                            }
-                        }
-                    }
-                    SettingsRow {
-                        label: "Send surround sound to a receiver untouched";
-                        detail: "For an AV receiver or soundbar on HDMI: needed for Dolby Atmos and DTS:X.";
-                        Switch {
-                            checked: root.player-passthrough;
-                            accessible-label: "Send surround sound to a receiver untouched";
-                            toggled => { root.player-set-passthrough(self.checked); }
-                        }
-                    }
-                    Text {
-                        text: "Off, Haven decodes the sound itself and plays it on whatever this computer has, in surround where the device can. On, Dolby Digital, Dolby TrueHD and DTS sound is passed on as it is in the file for the receiver to decode. Turn it on only with a receiver or soundbar that takes those; without one there may be no sound.";
-                        color: Theme.text-dim;
-                        font-size: 12px;
-                        wrap: word-wrap;
-                    }
-
-                    Rectangle { height: 8px; }
-                    SectionTitle { text: "Tracking"; }
-                    for row in root.tracking: SettingsRow {
-                        label: row.name;
-                        detail: row.state;
-                        HorizontalLayout {
-                            spacing: 8px;
-                            if row.connected: Button {
-                                text: "Import watchlist";
-                                enabled: !root.tracking-busy;
-                                clicked => { root.tracking-import(row.service); }
-                            }
-                            if row.connected: Button {
-                                text: "Disconnect";
-                                enabled: !root.tracking-busy;
-                                clicked => { root.tracking-disconnect(row.service); }
-                            }
-                            if !row.connected: Button {
-                                text: "Connect";
-                                primary: true;
-                                enabled: row.can-connect && !root.tracking-busy;
-                                clicked => { root.tracking-connect(row.service); }
-                            }
-                        }
-                    }
-                    if root.tracking-busy: HorizontalLayout {
-                        spacing: 12px;
-                        alignment: start;
-                        if root.tracking-code != "": Text {
-                            text: "Code: " + root.tracking-code;
-                            color: Theme.accent;
-                            font-size: 16px;
-                            font-weight: 700;
-                            vertical-alignment: center;
-                        }
-                        if root.tracking-link != "": Button {
-                            text: "Open the page again";
-                            clicked => { root.open-link(root.tracking-link); }
-                        }
-                        Button {
-                            text: "Cancel";
-                            clicked => { root.tracking-cancel(); }
-                        }
-                    }
-                    if root.tracking-status != "": Text {
-                        text: root.tracking-status;
-                        color: Theme.text-dim;
-                        wrap: word-wrap;
-                    }
-
-                    Rectangle { height: 8px; }
-                    SectionTitle { text: "Keys"; }
-                    Text {
-                        text: (root.tmdb-built-in
-                            ? "Your own keys for outside services. Haven comes with its own TMDB key for the catalogue (shelves on Home, the TMDB source in Explore, posters and pictures), so you can leave the TMDB box empty, or put your own key in to use that instead. A key is free from themoviedb.org: either the API key or the API read access token works."
-                            : "Your own keys for outside services. A TMDB key turns on the built-in catalogue (shelves on Home, the TMDB source in Explore, posters and pictures) and fills in missing details. It is free from themoviedb.org: either the API key or the API read access token works.")
-                            + " Trakt and Simkl keys let you connect those accounts under Tracking.";
-                        color: Theme.text-dim;
-                        wrap: word-wrap;
-                    }
-                    GridLayout {
-                        spacing: 8px;
-                        Row {
-                            Text {
-                                text: "TMDB API key";
-                                color: Theme.text;
-                                vertical-alignment: center;
-                            }
-                            LineEdit {
-                                text <=> root.keys-tmdb;
-                                input-type: password;
-                                accessible-label: "TMDB API key";
-                            }
-                        }
-                        Row {
-                            Text {
-                                text: "Trakt client ID";
-                                color: Theme.text;
-                                vertical-alignment: center;
-                            }
-                            LineEdit {
-                                text <=> root.keys-trakt-id;
-                                accessible-label: "Trakt client ID";
-                            }
-                        }
-                        Row {
-                            Text {
-                                text: "Trakt client secret";
-                                color: Theme.text;
-                                vertical-alignment: center;
-                            }
-                            LineEdit {
-                                text <=> root.keys-trakt-secret;
-                                input-type: password;
-                                accessible-label: "Trakt client secret";
-                            }
-                        }
-                        Row {
-                            Text {
-                                text: "Simkl client ID";
-                                color: Theme.text;
-                                vertical-alignment: center;
-                            }
-                            LineEdit {
-                                text <=> root.keys-simkl-id;
-                                accessible-label: "Simkl client ID";
-                            }
-                        }
-                    }
-                    HorizontalLayout {
-                        spacing: 12px;
-                        alignment: start;
-                        Button {
-                            text: "Save keys";
-                            primary: true;
-                            clicked => { root.save-keys(); }
-                        }
-                        Text {
-                            text: root.keys-status;
-                            color: Theme.text-dim;
-                            vertical-alignment: center;
-                        }
-                    }
-
-                    Rectangle { height: 8px; }
-                    SectionTitle { text: "Storage"; }
+                            SettingsCard {
+                                title: "Storage";
                     SettingsRow {
                         label: "Picture cache";
                         detail: root.cache-status;
@@ -3887,9 +4995,13 @@ export component AppWindow inherits Window {
                         font-size: 12px;
                         wrap: word-wrap;
                     }
+                            }
+                        }
 
-                    Rectangle { height: 8px; }
-                    SectionTitle { text: "About"; }
+                        // ---- About
+                        if root.settings-section == 6: VerticalLayout {
+                            spacing: 20px;
+                            SettingsCard {
                     SettingsRow {
                         label: "Data folder";
                         detail: root.data-path;
@@ -3905,9 +5017,8 @@ export component AppWindow inherits Window {
                     if !root.mobile: Rectangle {
                         height: 64px;
                         border-radius: 10px;
-                        background: Theme.surface;
-                        border-width: 1px;
-                        border-color: root.update-version != "" ? Theme.accent : Theme.border;
+                        background: transparent;
+                        border-width: 0px;
                         HorizontalLayout {
                             padding-left: 16px;
                             padding-right: 16px;
@@ -3932,9 +5043,8 @@ export component AppWindow inherits Window {
                                 alignment: center;
                                 HorizontalLayout {
                                     spacing: 8px;
-                                    if root.update-version != "": Button {
+                                    if root.update-version != "": PrimaryButton {
                                         text: "Install Haven " + root.update-version;
-                                        primary: true;
                                         enabled: !root.update-busy;
                                         clicked => { root.install-update(); }
                                     }
@@ -3949,9 +5059,8 @@ export component AppWindow inherits Window {
                     }
                     if !root.mobile && root.update-notes.length > 0: Rectangle {
                         border-radius: 10px;
-                        background: Theme.surface;
-                        border-width: 1px;
-                        border-color: Theme.border;
+                        background: transparent;
+                        border-width: 0px;
                         VerticalLayout {
                             padding: 16px;
                             spacing: 8px;
@@ -3981,9 +5090,8 @@ export component AppWindow inherits Window {
                     if !root.mobile: Rectangle {
                         height: 52px;
                         border-radius: 10px;
-                        background: Theme.surface;
-                        border-width: 1px;
-                        border-color: Theme.border;
+                        background: transparent;
+                        border-width: 0px;
                         HorizontalLayout {
                             padding-left: 16px;
                             padding-right: 16px;
@@ -4006,9 +5114,8 @@ export component AppWindow inherits Window {
                     Rectangle {
                         height: 52px;
                         border-radius: 10px;
-                        background: Theme.surface;
-                        border-width: 1px;
-                        border-color: Theme.border;
+                        background: transparent;
+                        border-width: 0px;
                         HorizontalLayout {
                             padding-left: 16px;
                             padding-right: 16px;
@@ -4050,102 +5157,136 @@ export component AppWindow inherits Window {
                         font-size: 12px;
                         wrap: word-wrap;
                     }
-                }
-            }
-        }
-    }
-        // A phone has no room for the list at the side: the main pages
-        // are tabs along the bottom, the rest are under "More".
-        if root.compact && !root.player-open: Rectangle {
-            height: 56px + root.safe-area-insets.bottom;
-            background: Theme.surface;
-            Rectangle {
-                y: 0;
-                height: 1px;
-                background: Theme.border;
-            }
-            HorizontalLayout {
-                height: 56px;
-                for tab in [
-                    { label: "Home", page: root.home-page },
-                    { label: "Explore", page: root.explore-page },
-                    { label: "Search", page: root.search-page },
-                    { label: "Live TV", page: root.tv-page },
-                    { label: "More", page: -1 },
-                ]: Rectangle {
-                    private property <bool> on: tab.page < 0
-                        ? root.more-open || (!root.detail-open && root.page > root.tv-page)
-                        : !root.more-open && !root.detail-open && root.page == tab.page;
-                    horizontal-stretch: 1;
-                    accessible-role: button;
-                    accessible-label: tab.label;
-                    TouchArea {
-                        clicked => {
-                            if (tab.page < 0) {
-                                root.more-open = !root.more-open;
-                            } else {
-                                root.more-open = false;
-                                root.close-detail();
-                                root.page = tab.page;
-                                root.page-selected(tab.page);
                             }
                         }
                     }
-                    Rectangle {
-                        y: 0;
-                        width: 36px;
-                        height: 3px;
-                        border-radius: 1.5px;
-                        background: parent.on ? Theme.accent : transparent;
-                    }
-                    Text {
-                        text: tab.label;
-                        font-family: Theme.heading-font;
-                        color: parent.on ? Theme.text : Theme.text-dim;
-                        font-size: 14px;
-                        font-weight: parent.on ? 700 : 500;
-                        horizontal-alignment: center;
-                        vertical-alignment: center;
-                    }
                 }
             }
         }
     }
-
-    // "More" on a phone: the pages that have no tab of their own.
-    if root.compact && root.more-open && !root.player-open: Rectangle {
-        background: #00000090;
-        TouchArea {
-            clicked => { root.more-open = false; }
-        }
-        Rectangle {
-            x: 12px;
-            y: parent.height - self.height - 56px - root.safe-area-insets.bottom - 10px;
-            width: parent.width - 24px;
-            height: more-list.preferred-height;
-            border-radius: 16px;
-            background: Theme.surface;
-            border-width: 1px;
-            border-color: Theme.border;
-            clip: true;
-            TouchArea { }
-            more-list := VerticalLayout {
-                padding: 8px;
-                spacing: 4px;
-                for label[index] in root.pages: more-slot := Rectangle {
-                    private property <bool> listed: index > root.tv-page && !(root.addons-hidden && index == root.addons-page);
-                    height: self.listed ? 48px : 0px;
-                    if more-slot.listed: NavItem {
-                        height: 44px;
-                        label: label;
+        // Along the bottom: Haven's pages as icon buttons on a floating
+        // bar, and Settings as a round button beside it.
+        if !root.player-open: nav-strip := Rectangle {
+            height: root.nav-height;
+            background: Theme.background;
+            if !root.compact && self.width > 1080px: HorizontalLayout {
+                x: 24px;
+                y: 18px;
+                height: 56px;
+                spacing: 8px;
+                Image {
+                    width: 48px;
+                    height: 48px;
+                    y: 4px;
+                    source: @image-url("../../../assets/icon/haven.png");
+                    image-fit: contain;
+                    image-rendering: smooth;
+                    accessible-role: none;
+                }
+                Text {
+                    text: "Haven";
+                    font-family: Theme.heading-font;
+                    color: Theme.text;
+                    font-size: 22px;
+                    font-weight: 700;
+                    vertical-alignment: center;
+                }
+            }
+            nav-bar := Rectangle {
+                private property <int> count: root.compact ? 6 : 5;
+                private property <length> button: root.compact ? (parent.width - 24px - 10px) / 6 : 92px;
+                width: self.count * self.button + 10px;
+                height: 66px;
+                x: root.compact ? 12px : (parent.width - self.width - 78px) / 2;
+                y: root.compact ? 6px : 13px;
+                border-radius: 33px;
+                background: Theme.surface;
+                border-width: 1px;
+                border-color: Theme.border;
+                drop-shadow-blur: 22px;
+                drop-shadow-offset-y: 6px;
+                drop-shadow-color: Theme.dark ? #00000080 : #00000026;
+                HorizontalLayout {
+                    padding: 5px;
+                    for tab[index] in [
+                        { icon: "home", label: "Home" },
+                        { icon: "explore", label: "Explore" },
+                        { icon: "library", label: "Library" },
+                        { icon: "livetv", label: "Live TV" },
+                        { icon: "calendar", label: "Calendar" },
+                    ]: NavButton {
+                        width: nav-bar.button;
+                        icon: tab.icon;
+                        label: tab.label;
                         selected: !root.detail-open && root.page == index;
                         clicked => {
-                            root.more-open = false;
                             root.close-detail();
                             root.page = index;
                             root.page-selected(index);
                         }
                     }
+                    if root.compact: NavButton {
+                        width: nav-bar.button;
+                        icon: "settings";
+                        label: "Settings";
+                        selected: !root.detail-open && root.page == root.settings-page;
+                        clicked => {
+                            root.close-detail();
+                            root.page = root.settings-page;
+                            root.page-selected(root.settings-page);
+                        }
+                    }
+                }
+            }
+            if !root.compact: Rectangle {
+                x: nav-bar.x + nav-bar.width + 12px;
+                y: nav-bar.y;
+                width: 66px;
+                height: 66px;
+                border-radius: 33px;
+                background: Theme.surface;
+                border-width: 1px;
+                border-color: Theme.border;
+                drop-shadow-blur: 22px;
+                drop-shadow-offset-y: 6px;
+                drop-shadow-color: Theme.dark ? #00000080 : #00000026;
+                NavButton {
+                    x: 5px;
+                    y: 5px;
+                    width: 56px;
+                    height: 56px;
+                    icon: "settings";
+                    label: "";
+                    accessible-label: "Settings";
+                    selected: !root.detail-open && root.page == root.settings-page;
+                    clicked => {
+                        root.close-detail();
+                        root.page = root.settings-page;
+                        root.page-selected(root.settings-page);
+                    }
+                }
+            }
+            if !root.compact && root.update-version != "": Rectangle {
+                width: update-text.preferred-width + 32px;
+                height: 40px;
+                x: parent.width - self.width - 24px;
+                y: nav-bar.y + 13px;
+                border-radius: 20px;
+                background: update-touch.has-hover ? Theme.accent : Theme.accent.with-alpha(0.16);
+                border-width: 1px;
+                border-color: Theme.accent;
+                accessible-role: button;
+                accessible-label: "Install Haven " + root.update-version;
+                update-touch := TouchArea {
+                    mouse-cursor: pointer;
+                    enabled: !root.update-busy;
+                    clicked => { root.install-update(); }
+                }
+                update-text := Text {
+                    text: root.update-busy ? "Updating…" : "Update  ·  " + root.update-version;
+                    color: update-touch.has-hover ? (Theme.dark ? #171a22 : #ffffff) : Theme.accent;
+                    font-size: 13px;
+                    font-weight: 600;
                 }
             }
         }
@@ -4195,7 +5336,7 @@ export component AppWindow inherits Window {
                 }
                 HorizontalLayout {
                     spacing: 8px;
-                    LineEdit {
+                    Field {
                         text <=> root.fav-new-name;
                         placeholder-text: "New group, for example Sport";
                         accessible-label: "Name of a new Favourites group";
@@ -4209,9 +5350,8 @@ export component AppWindow inherits Window {
                 }
                 HorizontalLayout {
                     alignment: end;
-                    Button {
+                    PrimaryButton {
                         text: "Done";
-                        primary: true;
                         clicked => { root.fav-close(); }
                     }
                 }
@@ -4221,9 +5361,9 @@ export component AppWindow inherits Window {
 
     // What is playing on a Chromecast, along the bottom of every page.
     if root.casting && !root.player-open: Rectangle {
-        x: root.sidebar-width;
-        y: parent.height - self.height;
-        width: parent.width - root.sidebar-width;
+        x: 0;
+        y: parent.height - self.height - root.nav-height;
+        width: parent.width;
         height: 64px;
         background: Theme.surface;
         Rectangle {
@@ -4325,5 +5465,79 @@ export component AppWindow inherits Window {
         next => { root.player-next(); }
         cancel-next => { root.player-cancel-next(); }
         controls-shown(shown) => { root.player-controls-shown(shown); }
+    }
+
+    // ---- The loading screen, over everything while Haven starts.
+    in property <bool> splash-shown: true;
+    in property <float> splash-progress;
+    // Set once it has faded: then it is gone, and nothing keeps animating.
+    in property <bool> splash-gone;
+    if !root.splash-gone: splash := Rectangle {
+        opacity: root.splash-shown ? 1 : 0;
+        visible: self.opacity > 0;
+        animate opacity { duration: 400ms; easing: ease-out; }
+        background: Theme.background;
+        // Nothing underneath can be touched while it shows.
+        TouchArea { enabled: root.splash-shown; }
+        // A slow pulse of light behind the halo.
+        private property <float> beat: (sin(animation-tick() / 1.6s * 360deg) + 1) / 2;
+        Rectangle {
+            width: 300px;
+            height: 300px;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2 - 60px;
+            border-radius: 150px;
+            background: @radial-gradient(circle, Theme.accent.with-alpha(0.10 + 0.14 * splash.beat) 0%, transparent 70%);
+        }
+        Image {
+            width: 190px;
+            height: 190px;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2 - 60px;
+            source: @image-url("../../../assets/icon/haven.png");
+            image-fit: contain;
+            image-rendering: smooth;
+            transform-rotation: animation-tick() / 12s * 360deg;
+            opacity: 0.85 + 0.15 * splash.beat;
+            accessible-role: none;
+        }
+        Text {
+            x: 0;
+            width: parent.width;
+            y: parent.height / 2 + 62px;
+            text: "Haven";
+            font-family: Theme.heading-font;
+            color: Theme.text;
+            font-size: 30px;
+            font-weight: 700;
+            horizontal-alignment: center;
+        }
+        Rectangle {
+            width: min(parent.width - 80px, 260px);
+            height: 6px;
+            x: (parent.width - self.width) / 2;
+            y: parent.height / 2 + 118px;
+            border-radius: 3px;
+            background: Theme.border;
+            accessible-role: progress-indicator;
+            accessible-label: "Loading";
+            accessible-value: round(root.splash-progress * 100) + "%";
+            Rectangle {
+                x: 0;
+                width: parent.width * clamp(root.splash-progress, 0, 1);
+                border-radius: 3px;
+                background: Theme.accent;
+                animate width { duration: 160ms; }
+            }
+        }
+        Text {
+            x: 0;
+            width: parent.width;
+            y: parent.height / 2 + 136px;
+            text: root.splash-progress >= 1 ? "Ready" : "Loading…  " + round(root.splash-progress * 100) + "%";
+            color: Theme.text-dim;
+            font-size: 13px;
+            horizontal-alignment: center;
+        }
     }
 }

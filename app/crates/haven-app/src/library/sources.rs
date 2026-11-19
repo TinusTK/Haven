@@ -450,44 +450,65 @@ impl Library {
     }
 
     /// Plays the place to watch in that row of the list, if Haven can.
-    pub(super) fn play_stream(&self, row: i32) {
-        let Some((address, server_item)) = self
+    /// What playing row `row` of the list asks for, and the media server
+    /// item behind it, if any.
+    pub(super) fn request_for(&self, row: i32) -> Option<(PlayRequest, Option<String>)> {
+        let (address, server_item) = self
             .stream_sources
             .borrow()
             .get(row.max(0) as usize)
-            .and_then(|source| Some((source.address.clone()?, source.server_item.clone())))
-        else {
-            return;
-        };
-        let Some(ui) = self.ui.upgrade() else { return };
+            .and_then(|source| Some((source.address.clone()?, source.server_item.clone())))?;
+        let ui = self.ui.upgrade()?;
         let row_shown = self.streams.row_data(row.max(0) as usize);
-        let open = self.open.borrow().as_ref().map(|open| {
+        let (kind, title_id, poster) = self.open.borrow().as_ref().map(|open| {
             (
                 open.kind.clone(),
                 open.id.clone(),
                 open.meta.as_ref().and_then(|meta| meta.poster.clone()),
             )
-        });
-        let listed = self
+        })?;
+        let (video_id, detail) = self
             .listed
             .borrow()
             .as_ref()
-            .map(|listed| (listed.video_id.clone(), listed.detail.clone()));
-        let (Some((kind, title_id, poster)), Some((video_id, detail))) = (open, listed) else {
-            return;
+            .map(|listed| (listed.video_id.clone(), listed.detail.clone()))?;
+        Some((
+            PlayRequest {
+                address,
+                title: ui.get_detail().title.to_string(),
+                detail,
+                kind,
+                title_id,
+                video_id,
+                poster,
+                remember: true,
+                source: row_shown.as_ref().map(|row| row.source.to_string()).unwrap_or_default(),
+                next: self.next_video().map(|video| Self::episode_label(&video)),
+            },
+            server_item,
+        ))
+    }
+
+    /// The season and episode numbers of the episode listed, if it is one.
+    pub(super) fn listed_numbers(&self) -> (Option<u32>, Option<u32>) {
+        let video_id = match self.listed.borrow().as_ref() {
+            Some(listed) => listed.video_id.clone(),
+            None => return (None, None),
         };
-        let request = PlayRequest {
-            address,
-            title: ui.get_detail().title.to_string(),
-            detail,
-            kind,
-            title_id,
-            video_id,
-            poster,
-            remember: true,
-            source: row_shown.as_ref().map(|row| row.source.to_string()).unwrap_or_default(),
-            next: self.next_video().map(|video| Self::episode_label(&video)),
-        };
+        let open = self.open.borrow();
+        let video = open
+            .as_ref()
+            .and_then(|open| open.meta.as_ref())
+            .and_then(|meta| meta.videos.iter().find(|video| video.id == video_id));
+        match video {
+            Some(video) if video.season.is_some() => (video.season, video.episode),
+            _ => (None, None),
+        }
+    }
+
+    pub(super) fn play_stream(&self, row: i32) {
+        let Some((request, server_item)) = self.request_for(row) else { return };
+        let row_shown = self.streams.row_data(row.max(0) as usize);
         *self.last_played.borrow_mut() =
             row_shown.map(|row| (row.source.to_string(), row.name.to_string()));
         if let Some(device) = self.cast_target() {
