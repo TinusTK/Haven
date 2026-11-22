@@ -81,6 +81,13 @@ fn main() {
         println!("cargo:rustc-link-arg=-Wl,-rpath,@executable_path/Frameworks");
     }
 
+    // Android: Haven's library laid out for 16 KB memory pages, which
+    // Google Play requires of apps for Android 15 and newer (it runs on
+    // 4 KB phones too). Set here because cargo-apk overrides RUSTFLAGS.
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("android") {
+        println!("cargo:rustc-link-arg=-Wl,-z,max-page-size=16384");
+    }
+
     // Android: libmpv from android/fetch-libmpv.sh, packed into the APK
     // beside Haven (`runtime_libs` in Cargo.toml). Haven links against the
     // stand-in made next to it, which has only mpv's own functions.

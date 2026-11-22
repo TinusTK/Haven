@@ -101,7 +101,7 @@ runtime_libs = "../../../android/libmpv"
 
 [package.metadata.android.sdk]
 min_sdk_version = 26
-target_sdk_version = 35
+target_sdk_version = 36
 
 [package.metadata.android.application]
 label = "Haven"
