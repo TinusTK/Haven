@@ -66,6 +66,11 @@ plutil -replace DTXcode -string "$(printf '%02d%d%d' "$xcode_major" "$xcode_mino
 plutil -replace DTXcodeBuild -string "$(xcodebuild -version | awk 'NR==2 {print $3}')" "$app/Info.plist"
 plutil -replace DTCompiler -string com.apple.compilers.llvm.clang.1_0 "$app/Info.plist"
 plutil -replace BuildMachineOSBuild -string "$(sw_vers -buildVersion)" "$app/Info.plist"
+# The App Store takes each build number once per version: store builds
+# are numbered by the time they were made (UTC), e.g. 202611230130.
+if $store; then
+  plutil -replace CFBundleVersion -string "$(date -u +%Y%m%d%H%M)" "$app/Info.plist"
+fi
 plutil -convert binary1 "$app/Info.plist"
 printf 'APPL????' > "$app/PkgInfo"
 cp ../LICENSE "$app/LICENSE.txt"
@@ -93,10 +98,11 @@ for entry in 60x60@2x:120 60x60@3x:180 76x76@2x~ipad:152; do
   sips -z "$size" "$size" assets/icon/haven-tile.png --out "$app/AppIcon$name.png" >/dev/null
 done
 # The App Store takes the icon only from an asset catalog (Assets.car),
-# made from one 1024-pixel picture with no transparency.
+# made from one 1024-pixel picture with no transparency:
+# haven-store-1024.png is the tile with its see-through edge cropped off
+# and its rounded corners filled (iOS rounds them away again).
 icons="$out/icons" && rm -rf "$icons" && mkdir -p "$icons/Assets.xcassets/AppIcon.appiconset"
-sips -s format jpeg -z 1024 1024 assets/icon/haven-tile.png --out "$icons/icon.jpg" >/dev/null
-sips -s format png "$icons/icon.jpg" --out "$icons/Assets.xcassets/AppIcon.appiconset/icon.png" >/dev/null
+cp assets/icon/haven-store-1024.png "$icons/Assets.xcassets/AppIcon.appiconset/icon.png"
 printf '%s\n' '{"images":[{"filename":"icon.png","idiom":"universal","platform":"ios","size":"1024x1024"}],"info":{"author":"xcode","version":1}}' \
   > "$icons/Assets.xcassets/AppIcon.appiconset/Contents.json"
 printf '%s\n' '{"info":{"author":"xcode","version":1}}' > "$icons/Assets.xcassets/Contents.json"
