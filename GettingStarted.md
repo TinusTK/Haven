@@ -4,9 +4,13 @@
 
 1. Open **Settings** and sign in to your Jellyfin, Emby or Plex server, or
    add your IPTV playlist or Xtream Codes account under **Live TV**.
-2. Home, Explore and Search fill with what your servers hold and with the
-   built-in catalogue. Haven comes with its own TMDB key; you can put your
-   own in Settings > Keys to use that instead.
+2. Add your own **TMDB key** in **Settings › Keys**. It is free: make an
+   account at [themoviedb.org](https://www.themoviedb.org), then go to
+   Settings › API and copy the API key (or the API read access token).
+   The key turns on TMDB's shelves on Home, the TMDB source in Explore,
+   posters and pictures, and **Where to watch**. Home, Explore and Search
+   also fill with what your servers hold and with the built-in Cinemeta
+   catalogue, which needs no key.
 3. For Trakt or Simkl, add your own keys under Settings > Keys, then
    connect your account under **Tracking**.
 

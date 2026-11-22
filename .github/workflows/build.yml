@@ -15,10 +15,8 @@ env:
   # One of the libraries (Chromecast support) brings in aws-lc, which
   # otherwise wants the NASM assembler installed on Windows.
   AWS_LC_SYS_PREBUILT_NASM: 1
-  # Haven's own TMDB key, built into every copy so the catalogue works
-  # without one of your own. Empty where secrets are not shared (pull
-  # requests from forks): Haven then asks for a key in Settings.
-  HAVEN_TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
+  # No TMDB key is built in (user, 2026-11-23): everyone adds their own,
+  # free from themoviedb.org, in Settings › Keys.
   # Haven's own Trakt app (trakt.tv/oauth/applications), for Link in Settings.
   HAVEN_TRAKT_CLIENT_ID: ${{ secrets.TRAKT_CLIENT_ID }}
   HAVEN_TRAKT_CLIENT_SECRET: ${{ secrets.TRAKT_CLIENT_SECRET }}
