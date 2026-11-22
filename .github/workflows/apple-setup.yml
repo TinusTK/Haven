@@ -1,0 +1,91 @@
+# One-off, started by hand: asks Apple (with the App Store Connect key in
+# the secrets) for an Apple Distribution certificate made from the
+# certificate request given, and an App Store profile for net.haven.app.
+# Only the certificate and the profile come back; neither holds anything
+# secret (the private key never leaves the computer that made the request).
+name: Apple setup
+
+on:
+  workflow_dispatch:
+    inputs:
+      csr:
+        description: Certificate request (PEM), base64 on one line
+        required: true
+      bundle:
+        description: Bundle ID
+        default: net.haven.app
+      profile_name:
+        description: Name of the App Store profile
+        default: Haven App Store
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install PyJWT
+        run: pip install --quiet "pyjwt[crypto]"
+      - name: Ask Apple for the certificate and the profile
+        env:
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+          KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          CSR_B64: ${{ inputs.csr }}
+          BUNDLE: ${{ inputs.bundle }}
+          PROFILE_NAME: ${{ inputs.profile_name }}
+        shell: python
+        run: |
+          import base64, json, os, time, urllib.request, urllib.error
+          import jwt
+
+          now = int(time.time())
+          token = jwt.encode(
+              {"iss": os.environ["ISSUER"], "iat": now, "exp": now + 900, "aud": "appstoreconnect-v1"},
+              os.environ["APPLE_API_KEY_P8"],
+              algorithm="ES256",
+              headers={"kid": os.environ["KEY_ID"], "typ": "JWT"},
+          )
+
+          def call(method, path, body=None):
+              req = urllib.request.Request(
+                  "https://api.appstoreconnect.apple.com" + path,
+                  method=method,
+                  data=json.dumps(body).encode() if body else None,
+                  headers={"Authorization": "Bearer " + token, "Content-Type": "application/json"},
+              )
+              try:
+                  with urllib.request.urlopen(req) as res:
+                      return json.load(res)
+              except urllib.error.HTTPError as err:
+                  raise SystemExit(f"{method} {path}: {err.code} {err.read().decode()}")
+
+          bundle = os.environ["BUNDLE"]
+          found = call("GET", f"/v1/bundleIds?filter[identifier]={bundle}&limit=200")["data"]
+          match = [b for b in found if b["attributes"]["identifier"] == bundle]
+          if not match:
+              raise SystemExit(f"No App ID {bundle} on the account")
+          bundle_id = match[0]["id"]
+          print("App ID", bundle, bundle_id)
+
+          csr = base64.b64decode(os.environ["CSR_B64"]).decode()
+          cert = call("POST", "/v1/certificates", {"data": {"type": "certificates", "attributes": {
+              "certificateType": "DISTRIBUTION", "csrContent": csr}}})["data"]
+          print("Certificate", cert["id"], cert["attributes"].get("name"), cert["attributes"].get("expirationDate"))
+
+          profile = call("POST", "/v1/profiles", {"data": {"type": "profiles",
+              "attributes": {"name": os.environ["PROFILE_NAME"], "profileType": "IOS_APP_STORE"},
+              "relationships": {
+                  "bundleId": {"data": {"type": "bundleIds", "id": bundle_id}},
+                  "certificates": {"data": [{"type": "certificates", "id": cert["id"]}]},
+              }}})["data"]
+          print("Profile", profile["id"], profile["attributes"]["name"])
+
+          os.makedirs("out", exist_ok=True)
+          with open("out/dist.cer", "wb") as f:
+              f.write(base64.b64decode(cert["attributes"]["certificateContent"]))
+          with open("out/appstore.mobileprovision", "wb") as f:
+              f.write(base64.b64decode(profile["attributes"]["profileContent"]))
+      - uses: actions/upload-artifact@v4
+        with:
+          name: apple-setup
+          path: out/
+          retention-days: 1
