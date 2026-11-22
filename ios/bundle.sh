@@ -51,6 +51,21 @@ app="$out/Haven.app"
 rm -rf "$out" && mkdir -p "$app/licenses"
 cp "target/$target/release/haven" "$app/haven"
 sed -e "s/@VERSION@/$version/g" -e "s/@PLATFORM@/$platform/g" ../ios/Info.plist > "$app/Info.plist"
+# What Xcode writes about the build; the App Store reads the SDK from it.
+sdk="$(echo "$platform" | tr '[:upper:]' '[:lower:]')"
+sdk_version="$(xcrun --sdk "$sdk" --show-sdk-version)"
+xcode_version="$(xcodebuild -version | awk 'NR==1 {print $2}')"
+xcode_major="${xcode_version%%.*}"; xcode_rest="${xcode_version#*.}"; [ "$xcode_rest" = "$xcode_version" ] && xcode_rest=0
+xcode_minor="${xcode_rest%%.*}"; xcode_patch="${xcode_rest#*.}"; [ "$xcode_patch" = "$xcode_rest" ] && xcode_patch=0
+plutil -replace DTPlatformName -string "$sdk" "$app/Info.plist"
+plutil -replace DTPlatformVersion -string "$sdk_version" "$app/Info.plist"
+plutil -replace DTSDKName -string "$sdk$sdk_version" "$app/Info.plist"
+plutil -replace DTSDKBuild -string "$(xcrun --sdk "$sdk" --show-sdk-build-version)" "$app/Info.plist"
+plutil -replace DTPlatformBuild -string "$(xcrun --sdk "$sdk" --show-sdk-build-version)" "$app/Info.plist"
+plutil -replace DTXcode -string "$(printf '%02d%d%d' "$xcode_major" "$xcode_minor" "$xcode_patch")" "$app/Info.plist"
+plutil -replace DTXcodeBuild -string "$(xcodebuild -version | awk 'NR==2 {print $3}')" "$app/Info.plist"
+plutil -replace DTCompiler -string com.apple.compilers.llvm.clang.1_0 "$app/Info.plist"
+plutil -replace BuildMachineOSBuild -string "$(sw_vers -buildVersion)" "$app/Info.plist"
 plutil -convert binary1 "$app/Info.plist"
 printf 'APPL????' > "$app/PkgInfo"
 cp ../LICENSE "$app/LICENSE.txt"
@@ -77,6 +92,23 @@ for entry in 60x60@2x:120 60x60@3x:180 76x76@2x~ipad:152; do
   name="${entry%%:*}"; size="${entry##*:}"
   sips -z "$size" "$size" assets/icon/haven-tile.png --out "$app/AppIcon$name.png" >/dev/null
 done
+# The App Store takes the icon only from an asset catalog (Assets.car),
+# made from one 1024-pixel picture with no transparency.
+icons="$out/icons" && rm -rf "$icons" && mkdir -p "$icons/Assets.xcassets/AppIcon.appiconset"
+sips -s format jpeg -z 1024 1024 assets/icon/haven-tile.png --out "$icons/icon.jpg" >/dev/null
+sips -s format png "$icons/icon.jpg" --out "$icons/Assets.xcassets/AppIcon.appiconset/icon.png" >/dev/null
+printf '%s\n' '{"images":[{"filename":"icon.png","idiom":"universal","platform":"ios","size":"1024x1024"}],"info":{"author":"xcode","version":1}}' \
+  > "$icons/Assets.xcassets/AppIcon.appiconset/Contents.json"
+printf '%s\n' '{"info":{"author":"xcode","version":1}}' > "$icons/Assets.xcassets/Contents.json"
+xcrun actool "$icons/Assets.xcassets" --compile "$app" --platform "$(echo "$platform" | tr '[:upper:]' '[:lower:]')" \
+  --minimum-deployment-target "$IPHONEOS_DEPLOYMENT_TARGET" --app-icon AppIcon \
+  --target-device iphone --target-device ipad --output-format human-readable-text \
+  --output-partial-info-plist "$icons/partial.plist" >/dev/null
+for key in CFBundleIcons CFBundleIcons~ipad CFBundleIconName; do
+  /usr/libexec/PlistBuddy -c "Delete :$key" "$app/Info.plist" 2>/dev/null || true
+done
+/usr/libexec/PlistBuddy -c "Merge $icons/partial.plist" "$app/Info.plist"
+rm -rf "$icons"
 
 if $store; then
   ../app/store-check.sh "$app/haven" "$target"
@@ -100,6 +132,17 @@ elif $store; then
       /usr/libexec/PlistBuddy -c 'Delete :com.apple.developer.icloud-services' "$out/entitlements.plist"
       /usr/libexec/PlistBuddy -c 'Add :com.apple.developer.icloud-services array' \
         -c 'Add :com.apple.developer.icloud-services:0 string CloudDocuments' "$out/entitlements.plist"
+    fi
+    # What the App Store refuses in a signature, as Xcode would leave it:
+    # no development containers, no wildcards (Haven uses neither the
+    # key-value store nor a shared keychain), and the production iCloud.
+    for key in com.apple.developer.icloud-container-development-container-identifiers \
+      com.apple.developer.ubiquity-kvstore-identifier keychain-access-groups \
+      com.apple.developer.icloud-container-environment; do
+      /usr/libexec/PlistBuddy -c "Delete :$key" "$out/entitlements.plist" 2>/dev/null || true
+    done
+    if /usr/libexec/PlistBuddy -c 'Print :com.apple.developer.icloud-container-identifiers' "$out/entitlements.plist" >/dev/null 2>&1; then
+      /usr/libexec/PlistBuddy -c 'Add :com.apple.developer.icloud-container-environment string Production' "$out/entitlements.plist"
     fi
     for framework in "$app"/Frameworks/*.framework; do
       codesign --force --sign "$HAVEN_IOS_SIGN_IDENTITY" --timestamp "$framework"
