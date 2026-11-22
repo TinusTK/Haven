@@ -294,6 +294,15 @@ jobs:
           key: ios
       # Haven's own player: libmpv and FFmpeg as frameworks, from the copy
       # kept as a release of this repository.
+      # The newest Xcode on the machine: the App Store wants the newest
+      # iOS SDK (iOS 27 from April 2027).
+      - name: Use the newest Xcode
+        run: |
+          ls -d /Applications/Xcode*.app
+          newest="$(ls -d /Applications/Xcode_*.app | grep -v -i beta | sort -V | tail -1)"
+          sudo xcode-select -s "$newest/Contents/Developer"
+          xcodebuild -version
+          echo "iOS SDK $(xcrun --sdk iphoneos --show-sdk-version)"
       - name: Fetch libmpv for iOS
         run: ../ios/fetch-libmpv.sh
         env:
@@ -401,6 +410,15 @@ jobs:
         with:
           workspaces: app
           key: ios-store
+      # The newest Xcode on the machine: the App Store wants the newest
+      # iOS SDK (iOS 27 from April 2027).
+      - name: Use the newest Xcode
+        run: |
+          ls -d /Applications/Xcode*.app
+          newest="$(ls -d /Applications/Xcode_*.app | grep -v -i beta | sort -V | tail -1)"
+          sudo xcode-select -s "$newest/Contents/Developer"
+          xcodebuild -version
+          echo "iOS SDK $(xcrun --sdk iphoneos --show-sdk-version)"
       - name: Fetch libmpv for iOS
         run: ../ios/fetch-libmpv.sh
         env:
