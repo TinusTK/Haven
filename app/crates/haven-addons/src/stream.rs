@@ -22,6 +22,9 @@ pub struct Stream {
     pub yt_id: Option<String>,
     #[serde(default, rename = "infoHash")]
     pub info_hash: Option<String>,
+    /// Hints from the add-on; Haven reads `videoSize` (bytes) from them.
+    #[serde(default, rename = "behaviorHints")]
+    pub behavior_hints: Option<serde_json::Value>,
     /// Who provided the stream, when whoever hands it on says so (a
     /// media server that gathers streams names the add-on each came
     /// from). Never read from an add-on's own answer.
@@ -57,6 +60,12 @@ impl Stream {
     }
 
     /// The longer text, whichever field the add-on used.
+    /// The file's size in bytes, when the add-on gives it as a hint.
+    pub fn video_size(&self) -> Option<u64> {
+        let size = self.behavior_hints.as_ref()?.get("videoSize")?;
+        size.as_u64().or_else(|| size.as_str()?.trim().parse().ok()).filter(|bytes| *bytes > 0)
+    }
+
     pub fn details(&self) -> Option<&str> {
         self.description.as_deref().or(self.title.as_deref())
     }

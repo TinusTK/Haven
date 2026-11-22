@@ -1385,6 +1385,7 @@ impl Library {
     /// until each fresh answer replaces it.
     fn refresh_home(self: &Rc<Self>) {
         let Some(ui) = self.ui.upgrade() else { return };
+        haven_core::diag::note("home: loading afresh (pulled down)");
         ui.set_home_refreshing(true);
         self.reload_home();
         self.reload_catalog();

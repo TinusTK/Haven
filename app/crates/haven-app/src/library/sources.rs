@@ -531,7 +531,14 @@ fn stream_row(source: &str, stream: &Stream) -> Option<StreamRow> {
     // Add-ons often spread these over several lines; a row has one.
     let one_line = |text: &str| text.split_whitespace().collect::<Vec<_>>().join(" ");
     // The detail goes on two lines: the release's name, then its facts.
-    let detail = one_line(stream.details().unwrap_or_default());
+    // The file's size is taken out of it and shown on its own, so it is
+    // never cut off.
+    let mut detail = one_line(stream.details().unwrap_or_default());
+    let mut size = stream.video_size().map(size_text);
+    if let Some((text, start, end)) = size_in(&detail) {
+        size.get_or_insert(text);
+        detail = tidy(&format!("{}{}", &detail[..start], &detail[end..]));
+    }
     let parts: Vec<&str> = detail.split(" · ").collect();
     let mut first = String::new();
     let mut used = 0;
@@ -551,6 +558,7 @@ fn stream_row(source: &str, stream: &Stream) -> Option<StreamRow> {
         name: one_line(stream.name.as_deref().unwrap_or("Stream")).into(),
         detail: first.into(),
         detail2: rest.into(),
+        size: size.unwrap_or_default().into(),
         kind: kind.into(),
         playable: false,
         group: source.into(),
@@ -593,4 +601,79 @@ async fn imdb_by_name(
         }
     }
     None
+}
+
+/// A size in bytes as people read it: "12.3 GB", "850 MB".
+fn size_text(bytes: u64) -> String {
+    let gb = bytes as f64 / 1_073_741_824.0;
+    if gb >= 1.0 { format!("{gb:.1} GB") } else { format!("{:.0} MB", bytes as f64 / 1_048_576.0) }
+}
+
+/// The first size written in a text ("12.3 GB", "850MB", "1,4 GiB"), as
+/// Haven shows it, with where it starts and ends (a 💾 before it counts
+/// as part of it).
+fn size_in(text: &str) -> Option<(String, usize, usize)> {
+    const UNITS: [(&str, &str); 6] = [("TIB", "TB"), ("TB", "TB"), ("GIB", "GB"), ("GB", "GB"), ("MIB", "MB"), ("MB", "MB")];
+    let bytes = text.as_bytes();
+    let mut at = 0;
+    while at < bytes.len() {
+        let starts_number = bytes[at].is_ascii_digit() && (at == 0 || !bytes[at - 1].is_ascii_alphanumeric());
+        if !starts_number {
+            at += 1;
+            continue;
+        }
+        let mut end = at;
+        while end < bytes.len() && (bytes[end].is_ascii_digit() || ((bytes[end] == b'.' || bytes[end] == b',') && end + 1 < bytes.len() && bytes[end + 1].is_ascii_digit())) {
+            end += 1;
+        }
+        let number = text[at..end].replace(',', ".");
+        let mut unit_at = end;
+        while unit_at < bytes.len() && bytes[unit_at] == b' ' {
+            unit_at += 1;
+        }
+        let rest = text[unit_at..].to_ascii_uppercase();
+        let unit = UNITS.iter().find(|(written, _)| {
+            rest.starts_with(written) && !rest.as_bytes().get(written.len()).is_some_and(|b| b.is_ascii_alphabetic())
+        });
+        if let Some((written, shown)) = unit {
+            let mut start = at;
+            let before = text[..at].trim_end();
+            if before.ends_with('💾') {
+                start = before.len() - '💾'.len_utf8();
+            }
+            return Some((format!("{number} {shown}"), start, unit_at + written.len()));
+        }
+        at = end.max(at + 1);
+    }
+    None
+}
+
+/// Cleans up a detail line once something was taken out of it: no
+/// doubled spaces or separators, none left at either end.
+fn tidy(text: &str) -> String {
+    let joined = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let parts: Vec<&str> = joined.split(" · ").map(str::trim).filter(|part| !part.is_empty() && *part != "·").collect();
+    parts.join(" · ").trim_matches(|c: char| c == '·' || c == '|' || c.is_whitespace()).to_owned()
+}
+
+#[cfg(test)]
+mod size_tests {
+    use super::*;
+
+    #[test]
+    fn sizes_are_found_in_the_details() {
+        let (size, start, end) = size_in("Movie.2024.2160p 💾 12.3 GB 👤 50").unwrap();
+        assert_eq!(size, "12.3 GB");
+        assert_eq!(tidy(&format!("{}{}", &"Movie.2024.2160p 💾 12.3 GB 👤 50"[..start], &"Movie.2024.2160p 💾 12.3 GB 👤 50"[end..])), "Movie.2024.2160p 👤 50");
+        assert_eq!(size_in("1080p · 850MB · WEB").unwrap().0, "850 MB");
+        assert_eq!(size_in("x 1,4 GiB").unwrap().0, "1.4 GB");
+        assert_eq!(size_in("H.264 5.1 Atmos 2160p"), None);
+        assert_eq!(size_in("Show.S01E02.MBC"), None);
+    }
+
+    #[test]
+    fn byte_counts_read_well() {
+        assert_eq!(size_text(13_207_024_435), "12.3 GB");
+        assert_eq!(size_text(891_289_600), "850 MB");
+    }
 }

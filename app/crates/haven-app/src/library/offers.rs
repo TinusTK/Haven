@@ -104,16 +104,32 @@ fn justwatch_link(country: &str, title: &str) -> String {
     format!("https://www.justwatch.com/{country}/search?q={query}")
 }
 
+/// A service's name as it fits under its tile: without the company in
+/// front ("Amazon Prime Video" is "Prime Video") or " with Ads".
+fn short_name(name: &str) -> String {
+    let name = name.trim();
+    let name = name.strip_suffix(" with Ads").or_else(|| name.strip_suffix(" with ads")).unwrap_or(name);
+    let name = name.strip_prefix("Amazon ").filter(|rest| rest.starts_with("Prime")).unwrap_or(name);
+    name.to_owned()
+}
+
 /// One tile per service per group, groups in order; the first tile of
 /// each group carries the group's name.
 fn offer_rows(services: &[haven_metadata::Service]) -> Vec<OfferRow> {
     let mut rows = Vec::new();
     for (group, ways) in GROUPS {
         let mut first = true;
+        let mut shown: Vec<(String, Color)> = Vec::new();
         for service in services.iter().filter(|service| service.ways.iter().any(|way| ways.contains(way))) {
             let (letters, tint, ink) = tile_of(&service.name);
+            // Two listings of one service ("Amazon Prime Video" and "…
+            // with Ads") show once.
+            if shown.contains(&(letters.clone(), tint)) {
+                continue;
+            }
+            shown.push((letters.clone(), tint));
             rows.push(OfferRow {
-                name: service.name.as_str().into(),
+                name: short_name(&service.name).into(),
                 ways: service.ways.join(", ").into(),
                 group: if first { group.into() } else { "".into() },
                 letters: letters.into(),
@@ -300,6 +316,8 @@ mod offer_tests {
     fn offers_fall_into_their_groups_with_our_tiles() {
         let services = vec![
             haven_metadata::Service { name: "Netflix".into(), ways: vec!["Subscription"] },
+            haven_metadata::Service { name: "Amazon Prime Video".into(), ways: vec!["Subscription"] },
+            haven_metadata::Service { name: "Amazon Prime Video with Ads".into(), ways: vec!["Subscription"] },
             haven_metadata::Service { name: "Apple TV".into(), ways: vec!["Rent", "Buy"] },
             haven_metadata::Service { name: "Tubi TV".into(), ways: vec!["Free with ads"] },
             haven_metadata::Service { name: "Some Shop".into(), ways: vec!["Buy"] },
@@ -310,6 +328,7 @@ mod offer_tests {
             seen,
             vec![
                 ("Stream".into(), "Netflix".into()),
+                ("".into(), "Prime Video".into()),
                 ("Free".into(), "Tubi TV".into()),
                 ("Rent".into(), "Apple TV".into()),
                 ("Buy".into(), "Apple TV".into()),
@@ -317,7 +336,7 @@ mod offer_tests {
             ]
         );
         assert_eq!(rows[0].letters, "N");
-        assert_eq!(rows[4].letters, "S");
+        assert_eq!(rows[5].letters, "S");
     }
 
     #[test]
