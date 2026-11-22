@@ -99,6 +99,8 @@ export struct StreamRow {
     more: int,
     // The file's size ("12.3 GB"), shown beside the name; empty if unknown.
     size: string,
+    // How many are sharing it (seeders); empty if unknown.
+    seeders: string,
 }
 
 // Something coming out, on the Calendar page.
@@ -1053,6 +1055,36 @@ component SourceCard inherits Rectangle {
                         font-weight: 700;
                         horizontal-alignment: center;
                         vertical-alignment: center;
+                    }
+                  }
+                }
+                // How many are sharing it, with a people sign.
+                if root.stream.seeders != "": VerticalLayout {
+                  alignment: start;
+                  Rectangle {
+                    width: seed-row.preferred-width + 14px;
+                    height: 20px;
+                    border-radius: 10px;
+                    background: Theme.text-dim.with-alpha(0.15);
+                    accessible-role: text;
+                    accessible-label: root.stream.seeders + " seeders";
+                    seed-row := HorizontalLayout {
+                        x: 7px;
+                        spacing: 3px;
+                        Icon {
+                            y: (parent.height - self.height) / 2;
+                            name: "account";
+                            size: 12px;
+                            stroke: 2.2px;
+                            tint: Theme.text;
+                        }
+                        Text {
+                            text: root.stream.seeders;
+                            color: Theme.text;
+                            font-size: 11px;
+                            font-weight: 700;
+                            vertical-alignment: center;
+                        }
                     }
                   }
                 }

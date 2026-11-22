@@ -539,6 +539,12 @@ fn stream_row(source: &str, stream: &Stream) -> Option<StreamRow> {
         size.get_or_insert(text);
         detail = tidy(&format!("{}{}", &detail[..start], &detail[end..]));
     }
+    // So is how many are sharing it (seeders), where the source says.
+    let mut seeders = String::new();
+    if let Some((count, start, end)) = seeders_in(&detail) {
+        seeders = count;
+        detail = tidy(&format!("{}{}", &detail[..start], &detail[end..]));
+    }
     let parts: Vec<&str> = detail.split(" · ").collect();
     let mut first = String::new();
     let mut used = 0;
@@ -559,6 +565,7 @@ fn stream_row(source: &str, stream: &Stream) -> Option<StreamRow> {
         detail: first.into(),
         detail2: rest.into(),
         size: size.unwrap_or_default().into(),
+        seeders: seeders.into(),
         kind: kind.into(),
         playable: false,
         group: source.into(),
@@ -648,6 +655,34 @@ fn size_in(text: &str) -> Option<(String, usize, usize)> {
     None
 }
 
+/// How many seeders a detail line names: "👤 50", "👥 418", "Seeders: 12",
+/// "Seeds 12", with where it starts and ends.
+fn seeders_in(text: &str) -> Option<(String, usize, usize)> {
+    let number_after = |from: usize| -> Option<(String, usize)> {
+        let rest = &text[from..];
+        let skipped = rest.len() - rest.trim_start_matches([' ', ':', '\u{FE0F}']).len();
+        let digits: String = rest[skipped..].chars().take_while(|c| c.is_ascii_digit() || *c == ',').collect();
+        let count = digits.replace(',', "");
+        (!count.is_empty()).then(|| (count, from + skipped + digits.len()))
+    };
+    for mark in ["👥", "👤"] {
+        if let Some(at) = text.find(mark) {
+            if let Some((count, end)) = number_after(at + mark.len()) {
+                return Some((count, at, end));
+            }
+        }
+    }
+    let lower = text.to_lowercase();
+    for word in ["seeders", "seeds"] {
+        if let Some(at) = lower.find(word) {
+            if let Some((count, end)) = number_after(at + word.len()) {
+                return Some((count, at, end));
+            }
+        }
+    }
+    None
+}
+
 /// Cleans up a detail line once something was taken out of it: no
 /// doubled spaces or separators, none left at either end.
 fn tidy(text: &str) -> String {
@@ -669,6 +704,17 @@ mod size_tests {
         assert_eq!(size_in("x 1,4 GiB").unwrap().0, "1.4 GB");
         assert_eq!(size_in("H.264 5.1 Atmos 2160p"), None);
         assert_eq!(size_in("Show.S01E02.MBC"), None);
+    }
+
+    #[test]
+    fn seeders_are_found_in_the_details() {
+        let line = "BluRay REMUX 👥 418 🔍 The Pirate Bay";
+        let (count, start, end) = seeders_in(line).unwrap();
+        assert_eq!(count, "418");
+        assert_eq!(tidy(&format!("{}{}", &line[..start], &line[end..])), "BluRay REMUX 🔍 The Pirate Bay");
+        assert_eq!(seeders_in("x 👤 1,204 y").unwrap().0, "1204");
+        assert_eq!(seeders_in("Seeders: 12 · 1080p").unwrap().0, "12");
+        assert_eq!(seeders_in("1080p WEB-DL"), None);
     }
 
     #[test]
