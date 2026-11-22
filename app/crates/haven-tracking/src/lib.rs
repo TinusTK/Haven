@@ -11,7 +11,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 const TRAKT_API: &str = "https://api.trakt.tv";
-const TRAKT_SITE: &str = "https://trakt.tv";
+/// Where Trakt signs people in and asks them to allow an app.
+const TRAKT_SITE: &str = "https://auth.trakt.tv";
 /// Where trakt.tv sends the browser back to after the user allows Haven:
 /// a small listener Haven runs on this computer while linking. Register
 /// it (and `urn:ietf:wg:oauth:2.0:oob`) as Redirect URIs of Haven's
@@ -58,6 +59,8 @@ pub enum Error {
     BadAnswer,
     #[error("the code ran out before it was approved")]
     Expired,
+    #[error("could not reach the service: {0}")]
+    Network(String),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -247,6 +250,57 @@ pub struct Client {
     keys: Secrets,
 }
 
+/// Adds the Client Secret to a Trakt token request, when there is one.
+fn with_secret(mut body: Value, secret: Option<&str>) -> Value {
+    if let (Some(secret), Some(fields)) = (secret, body.as_object_mut()) {
+        fields.insert("client_secret".to_owned(), Value::String(secret.to_owned()));
+    }
+    body
+}
+
+/// One sign-in's PKCE pair: the verifier Haven keeps, and the challenge
+/// (its SHA-256, base64url without padding) sent to Trakt.
+#[derive(Debug, Clone)]
+pub struct Pkce {
+    pub verifier: String,
+    pub challenge: String,
+}
+
+impl Pkce {
+    pub fn new() -> Self {
+        use ring::rand::SecureRandom;
+        const LETTERS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~";
+        let mut bytes = [0u8; 64];
+        let _ = ring::rand::SystemRandom::new().fill(&mut bytes);
+        let verifier: String = bytes.iter().map(|b| LETTERS[*b as usize % LETTERS.len()] as char).collect();
+        Self::from_verifier(verifier)
+    }
+
+    pub fn from_verifier(verifier: String) -> Self {
+        let digest = ring::digest::digest(&ring::digest::SHA256, verifier.as_bytes());
+        Self { challenge: base64url(digest.as_ref()), verifier }
+    }
+}
+
+impl Default for Pkce {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Base64url without padding.
+fn base64url(bytes: &[u8]) -> String {
+    const ABC: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    let mut out = String::new();
+    for chunk in bytes.chunks(3) {
+        let n = chunk.iter().enumerate().fold(0u32, |n, (i, b)| n | (*b as u32) << (16 - 8 * i));
+        for i in 0..chunk.len() + 1 {
+            out.push(ABC[(n >> (18 - 6 * i) & 63) as usize] as char);
+        }
+    }
+    out
+}
+
 impl Client {
     pub fn new(http: reqwest::Client, keys: Secrets) -> Self {
         Self { http, keys }
@@ -255,19 +309,18 @@ impl Client {
     /// Whether the keys a service needs are set.
     pub fn has_keys(&self, service: Service) -> bool {
         match service {
-            Service::Trakt => {
-                self.keys.trakt_client_id.is_some() && self.keys.trakt_client_secret.is_some()
-            }
+            // Trakt's apps sign people in with PKCE: the Client ID is all
+            // they need (new apps get no Client Secret, 2026).
+            Service::Trakt => self.keys.trakt_client_id.is_some(),
             Service::Simkl => self.keys.simkl_client_id.is_some(),
         }
     }
 
-    fn trakt_keys(&self) -> Result<(&str, &str)> {
-        self.keys
-            .trakt_client_id
-            .as_deref()
-            .zip(self.keys.trakt_client_secret.as_deref())
-            .ok_or(Error::NoKey("Trakt"))
+    /// The Client ID, and the Client Secret if this copy has one (older
+    /// Trakt apps); a secret, if any, goes along with token requests.
+    fn trakt_keys(&self) -> Result<(&str, Option<&str>)> {
+        let id = self.keys.trakt_client_id.as_deref().ok_or(Error::NoKey("Trakt"))?;
+        Ok((id, self.keys.trakt_client_secret.as_deref()))
     }
 
     fn simkl_key(&self) -> Result<&str> {
@@ -333,18 +386,26 @@ impl Client {
                     expires_in: seconds(&answer, "expires_in", 600),
                 })
             }
+            // Simkl's AUTH V2 device sign-in: the person approves the code
+            // at simkl.com/pin (the link has it filled in).
             Service::Simkl => {
                 let id = self.simkl_key()?;
-                let (status, answer) =
-                    self.call(service, &format!("{SIMKL}/oauth/pin?client_id={id}"), &[], None).await?;
+                let (status, answer) = self
+                    .simkl_form(
+                        "/oauth2/device",
+                        &[("client_id", id), ("scope", "media:read media:write")],
+                    )
+                    .await?;
                 if status != 200 {
                     return Err(Error::Status(status));
                 }
                 let user_code = field(&answer, "user_code")?;
+                let link = field(&answer, "verification_uri_complete")
+                    .or_else(|_| field(&answer, "verification_uri"))?;
                 Ok(Code {
                     service,
-                    link: field(&answer, "verification_url")?,
-                    device_code: user_code.clone(),
+                    link,
+                    device_code: field(&answer, "device_code")?,
                     user_code,
                     interval: seconds(&answer, "interval", 5).max(1),
                     expires_in: seconds(&answer, "expires_in", 900),
@@ -355,32 +416,39 @@ impl Client {
 
     /// The trakt.tv page where the user signs in and allows Haven; it
     /// sends the browser back to [`TRAKT_REDIRECT`] with a code and `state`.
-    pub fn trakt_authorize_url(&self, state: &str) -> Result<String> {
+    /// `challenge` is the PKCE challenge of this sign-in ([`Pkce`]).
+    pub fn trakt_authorize_url(&self, state: &str, challenge: &str) -> Result<String> {
         let (id, _) = self.trakt_keys()?;
         let mut url = reqwest::Url::parse(&format!("{}/oauth/authorize", trakt_site())).map_err(|_| Error::BadAnswer)?;
         url.query_pairs_mut()
             .append_pair("response_type", "code")
             .append_pair("client_id", id)
             .append_pair("redirect_uri", TRAKT_REDIRECT)
-            .append_pair("state", state);
+            .append_pair("state", state)
+            .append_pair("code_challenge", challenge)
+            .append_pair("code_challenge_method", "S256");
         Ok(url.to_string())
     }
 
     /// Trades the code trakt.tv sent back for a sign-in.
-    pub async fn trakt_exchange(&self, code: &str, now: i64) -> Result<Account> {
+    /// `verifier` is the PKCE verifier the sign-in started with.
+    pub async fn trakt_exchange(&self, code: &str, verifier: &str, now: i64) -> Result<Account> {
         let (id, secret) = self.trakt_keys()?;
         let (status, answer) = self
             .call(
                 Service::Trakt,
                 &format!("{}/oauth/token", trakt_api()),
                 &[],
-                Some(json!({
-                    "code": code,
-                    "client_id": id,
-                    "client_secret": secret,
-                    "redirect_uri": TRAKT_REDIRECT,
-                    "grant_type": "authorization_code",
-                })),
+                Some(with_secret(
+                    json!({
+                        "code": code,
+                        "client_id": id,
+                        "code_verifier": verifier,
+                        "redirect_uri": TRAKT_REDIRECT,
+                        "grant_type": "authorization_code",
+                    }),
+                    secret,
+                )),
             )
             .await?;
         if status != 200 {
@@ -397,7 +465,7 @@ impl Client {
                 Service::Trakt,
                 &format!("{}/oauth/revoke", trakt_api()),
                 &[],
-                Some(json!({ "token": account.token, "client_id": id, "client_secret": secret })),
+                Some(with_secret(json!({ "token": account.token, "client_id": id }), secret)),
             )
             .await?;
         Ok(())
@@ -414,9 +482,7 @@ impl Client {
                         code.service,
                         &format!("{}/oauth/device/token", trakt_api()),
                         &[],
-                        Some(json!({
-                            "code": code.device_code, "client_id": id, "client_secret": secret
-                        })),
+                        Some(with_secret(json!({ "code": code.device_code, "client_id": id }), secret)),
                     )
                     .await?;
                 match status {
@@ -429,17 +495,25 @@ impl Client {
             }
             Service::Simkl => {
                 let id = self.simkl_key()?;
-                let url = format!("{SIMKL}/oauth/pin/{}?client_id={id}", code.device_code);
-                let (status, answer) = self.call(code.service, &url, &[], None).await?;
-                if status != 200 {
-                    return Err(Error::Status(status));
+                let (status, answer) = self
+                    .simkl_form(
+                        "/oauth2/token",
+                        &[
+                            ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
+                            ("client_id", id),
+                            ("device_code", &code.device_code),
+                        ],
+                    )
+                    .await?;
+                if status == 200 {
+                    return read_simkl_token(&answer, now, None).map(Some).ok_or(Error::BadAnswer);
                 }
-                Ok(answer.get("access_token").and_then(Value::as_str).map(|token| Account {
-                    service: Service::Simkl,
-                    token: token.to_owned(),
-                    refresh: None,
-                    expires_at: None,
-                }))
+                match answer.get("error").and_then(Value::as_str) {
+                    // Not approved yet (a "no" looks the same), or asked too soon.
+                    Some("authorization_pending" | "slow_down") => Ok(None),
+                    Some("expired_token" | "invalid_grant") => Err(Error::Expired),
+                    _ => Err(Error::Status(status)),
+                }
             }
         }
     }
@@ -454,19 +528,32 @@ impl Client {
         if expires_at - now > RENEW_BEFORE {
             return Ok(None);
         }
+        if account.service == Service::Simkl {
+            let id = self.simkl_key()?;
+            let (status, answer) = self
+                .simkl_form("/oauth2/token", &[("grant_type", "refresh_token"), ("client_id", id), ("refresh_token", refresh)])
+                .await?;
+            if status != 200 {
+                return Err(Error::Refused("Simkl"));
+            }
+            // Simkl keeps the same refresh token (it may not send it again).
+            return read_simkl_token(&answer, now, Some(refresh)).map(Some).ok_or(Error::BadAnswer);
+        }
         let (id, secret) = self.trakt_keys()?;
         let (status, answer) = self
             .call(
                 account.service,
                 &format!("{}/oauth/token", trakt_api()),
                 &[],
-                Some(json!({
-                    "refresh_token": refresh,
-                    "client_id": id,
-                    "client_secret": secret,
-                    "redirect_uri": TRAKT_REDIRECT,
-                    "grant_type": "refresh_token",
-                })),
+                Some(with_secret(
+                    json!({
+                        "refresh_token": refresh,
+                        "client_id": id,
+                        "redirect_uri": TRAKT_REDIRECT,
+                        "grant_type": "refresh_token",
+                    }),
+                    secret,
+                )),
             )
             .await?;
         if status != 200 {
@@ -475,17 +562,54 @@ impl Client {
         read_trakt_token(&answer, now).map(Some).ok_or(Error::BadAnswer)
     }
 
+    /// A form-encoded POST to Simkl's sign-in endpoints (AUTH V2).
+    async fn simkl_form(&self, path: &str, fields: &[(&str, &str)]) -> Result<(u16, Value)> {
+        let body: String = fields
+            .iter()
+            .map(|(key, value)| format!("{}={}", form_escape(key), form_escape(value)))
+            .collect::<Vec<_>>()
+            .join("&");
+        let url = simkl_url(path, self.simkl_key()?);
+        let response = self
+            .http
+            .post(&url)
+            .header("Content-Type", "application/x-www-form-urlencoded")
+            .body(body)
+            .send()
+            .await
+            .map_err(|err| Error::Network(err.without_url().to_string()))?;
+        let status = response.status().as_u16();
+        let bytes = response.bytes().await.map_err(|err| Error::Network(err.without_url().to_string()))?;
+        if bytes.len() > ANSWER_BYTES {
+            return Err(Error::BadAnswer);
+        }
+        Ok((status, serde_json::from_slice(&bytes).unwrap_or(Value::Null)))
+    }
+
+    /// Tells Simkl to forget the sign-in (best effort).
+    pub async fn simkl_revoke(&self, account: &Account) -> Result<()> {
+        let id = self.simkl_key()?;
+        let _ = self.simkl_form("/oauth2/revoke", &[("client_id", id), ("token", &account.token)]).await?;
+        Ok(())
+    }
+
     async fn post(&self, account: &Account, path: &str, body: Value) -> Result<()> {
-        let base = if account.service == Service::Trakt { trakt_api() } else { SIMKL.to_owned() };
-        let (status, _) = self
-            .call(account.service, &format!("{base}{path}"), &self.headers(account)?, Some(body))
-            .await?;
+        let url = match account.service {
+            Service::Trakt => format!("{}{path}", trakt_api()),
+            Service::Simkl => simkl_url(path, self.simkl_key()?),
+        };
+        let (status, _) = self.call(account.service, &url, &self.headers(account)?, Some(body)).await?;
         if (200..300).contains(&status) { Ok(()) } else { Err(Error::Status(status)) }
     }
 
     /// Marks a film or an episode as watched, now.
     pub async fn mark_watched(&self, account: &Account, subject: &Subject) -> Result<()> {
         self.post(account, "/sync/history", body(subject, None)).await
+    }
+
+    /// Takes a film or episode off the account's watched history.
+    pub async fn mark_unwatched(&self, account: &Account, subject: &Subject) -> Result<()> {
+        self.post(account, "/sync/history/remove", body(subject, None)).await
     }
 
     /// Puts a film or series on the service's watchlist, or takes it off.
@@ -532,7 +656,7 @@ impl Client {
             let what = if series { "shows" } else { "movies" };
             let url = match account.service {
                 Service::Trakt => format!("{}/sync/watchlist/{what}", trakt_api()),
-                Service::Simkl => format!("{SIMKL}/sync/all-items/{what}/plantowatch"),
+                Service::Simkl => simkl_url(&format!("/sync/all-items/{what}/plantowatch"), self.simkl_key()?),
             };
             let (status, answer) = self.call(account.service, &url, &headers, None).await?;
             if !(200..300).contains(&status) {
@@ -542,6 +666,45 @@ impl Client {
         }
         Ok(listed)
     }
+}
+
+/// A Simkl address with what Simkl asks every request to carry: the
+/// app's client id, name and version.
+fn simkl_url(path: &str, client_id: &str) -> String {
+    let joiner = if path.contains('?') { '&' } else { '?' };
+    format!(
+        "{SIMKL}{path}{joiner}client_id={}&app-name=haven&app-version={}",
+        form_escape(client_id),
+        env!("CARGO_PKG_VERSION")
+    )
+}
+
+/// Percent-encodes a form or query value.
+fn form_escape(text: &str) -> String {
+    text.bytes()
+        .map(|byte| {
+            if byte.is_ascii_alphanumeric() || b"-_.~".contains(&byte) {
+                (byte as char).to_string()
+            } else {
+                format!("%{byte:02X}")
+            }
+        })
+        .collect()
+}
+
+/// A Simkl sign-in from a token answer; `refresh` is kept when the answer
+/// leaves the refresh token out.
+fn read_simkl_token(answer: &Value, now: i64, refresh: Option<&str>) -> Option<Account> {
+    Some(Account {
+        service: Service::Simkl,
+        token: answer.get("access_token")?.as_str()?.to_owned(),
+        refresh: answer
+            .get("refresh_token")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .or_else(|| refresh.map(str::to_owned)),
+        expires_at: answer.get("expires_in").and_then(Value::as_i64).map(|lasts| now + lasts),
+    })
 }
 
 fn read_trakt_token(answer: &Value, now: i64) -> Option<Account> {
@@ -558,6 +721,41 @@ fn read_trakt_token(answer: &Value, now: i64) -> Option<Account> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn simkl_addresses_carry_the_apps_name_and_version() {
+        let url = simkl_url("/sync/history", "abc");
+        assert!(url.starts_with("https://api.simkl.com/sync/history?client_id=abc&app-name=haven&app-version="));
+        assert!(simkl_url("/x?y=1", "abc").contains("/x?y=1&client_id=abc"));
+        assert_eq!(form_escape("media:read media:write"), "media%3Aread%20media%3Awrite");
+    }
+
+    #[test]
+    fn a_simkl_token_keeps_its_refresh_token() {
+        let fresh = json!({"access_token": "a", "refresh_token": "r", "expires_in": 604800});
+        let account = read_simkl_token(&fresh, 100, None).unwrap();
+        assert_eq!((account.refresh.as_deref(), account.expires_at), (Some("r"), Some(604900)));
+        let renewed = read_simkl_token(&json!({"access_token": "b", "expires_in": 10}), 0, Some("r")).unwrap();
+        assert_eq!(renewed.refresh.as_deref(), Some("r"));
+    }
+
+    #[test]
+    fn the_pkce_challenge_matches_the_standards_example() {
+        // SHA-256 of "abc" (FIPS 180-2's example), in base64url without padding.
+        assert_eq!(Pkce::from_verifier("abc".to_owned()).challenge, "ungWv48Bz-pBQUDeXa4iI7ADYaOWF3qctBD_YfIAFa0");
+        // Checked against Python's hashlib and base64.
+        let pkce = Pkce::from_verifier("dBjftJeZ4CVP-mJ92K9XmLkKJCOnYO9bE-2xLRT2Y7Y".to_owned());
+        assert_eq!(pkce.challenge, "CtX1tp2zMMpagvBDrLIq_VHHJLSnmoS3HIIISV6heU0");
+        let fresh = Pkce::new();
+        assert_eq!(fresh.verifier.len(), 64);
+        assert_ne!(fresh.verifier, Pkce::new().verifier);
+    }
+
+    #[test]
+    fn a_secret_goes_along_only_when_there_is_one() {
+        assert_eq!(with_secret(json!({"a": 1}), None), json!({"a": 1}));
+        assert_eq!(with_secret(json!({"a": 1}), Some("s")), json!({"a": 1, "client_secret": "s"}));
+    }
 
     #[test]
     fn trakts_watched_list_is_read() {

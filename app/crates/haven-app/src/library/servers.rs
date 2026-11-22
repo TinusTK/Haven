@@ -200,7 +200,7 @@ impl Library {
 
     /// Asks every server for its libraries; each library then gets two
     /// shelves, the newest titles and the titles by name.
-    fn reload_server_shelves(&self) {
+    pub(super) fn reload_server_shelves(&self) {
         let generation = self.server_generation.get() + 1;
         self.server_generation.set(generation);
         let servers = self.servers.borrow().clone();
@@ -211,12 +211,33 @@ impl Library {
             self.rebuild_explore();
             return self.fill(Board::Servers, Vec::new(), None);
         }
+        // The libraries found last time: their shelves show at once.
+        let kept: Option<Vec<(haven_servers::Server, Vec<haven_servers::Library>)>> = servers
+            .iter()
+            .map(|server| {
+                self.kept::<Vec<(String, String, bool)>>(&libraries_name(server)).map(|list| {
+                    let libraries = list
+                        .into_iter()
+                        .map(|(id, name, collection)| haven_servers::Library { id, name, collection })
+                        .collect();
+                    (server.clone(), libraries)
+                })
+            })
+            .collect();
+        let kept_plans = kept.as_ref().map(|kept| {
+            let (plans, found) = library_plans(kept);
+            *self.server_libraries.borrow_mut() = found;
+            self.rebuild_explore();
+            let names: Vec<(String, String)> = plans.iter().map(|plan| (plan.title.clone(), plan.source.clone())).collect();
+            self.fill(Board::Servers, plans, None);
+            names
+        });
         let client = self.server_client.clone();
+        let dir = self.kept_dir();
         self.tasks.spawn(async move {
-            let mut plans = Vec::new();
             let mut failures = Vec::new();
-            let mut found = Vec::new();
             let mut answered = Vec::new();
+            let mut listed = Vec::new();
             for server in servers {
                 let libraries = match tokio::time::timeout(CHECK_WAIT, client.libraries(&server)).await {
                     Ok(libraries) => libraries.map_err(|err| err.to_string()),
@@ -225,31 +246,17 @@ impl Library {
                 answered.push((server.id, libraries.is_ok()));
                 match libraries {
                     Ok(libraries) => {
-                        for library in libraries {
-                            found.push((server.clone(), library.clone()));
-                            // A collection is one list: one shelf. A
-                            // library also gets a shelf of what is new.
-                            let shelves: &[bool] = if library.collection { &[false] } else { &[true, false] };
-                            for &latest in shelves {
-                                plans.push(ShelfPlan {
-                                    title: if latest {
-                                        format!("New in {}", library.name)
-                                    } else {
-                                        library.name.clone()
-                                    },
-                                    source: server.name.clone(),
-                                    from: ShelfFrom::Server {
-                                        server: server.clone(),
-                                        library: library.id.clone(),
-                                        latest,
-                                    },
-                                });
-                            }
-                        }
+                        let keep: Vec<(String, String, bool)> = libraries
+                            .iter()
+                            .map(|library| (library.id.clone(), library.name.clone(), library.collection))
+                            .collect();
+                        super::kept::write_kept(&dir, &libraries_name(&server), &keep);
+                        listed.push((server.clone(), libraries));
                     }
                     Err(err) => failures.push(format!("{}: {err}", server.name)),
                 }
             }
+            let (plans, found) = library_plans(&listed);
             on_ui(move |library| {
                 if generation != library.server_generation.get() {
                     return;
@@ -262,9 +269,15 @@ impl Library {
                     library.server_states.borrow_mut().insert(id, if fine { ONLINE } else { OFFLINE });
                 }
                 library.show_servers();
+                library.load_shared_addons();
+                // The same shelves as the kept ones on screen: keep those
+                // (each is already being fetched afresh).
+                let names: Vec<(String, String)> = plans.iter().map(|plan| (plan.title.clone(), plan.source.clone())).collect();
+                if kept_plans.as_ref() == Some(&names) {
+                    return;
+                }
                 *library.server_libraries.borrow_mut() = found;
                 library.rebuild_explore();
-                library.load_shared_addons();
                 library.fill(Board::Servers, plans, None);
             });
         });
@@ -531,4 +544,32 @@ pub fn open_in_browser(link: &str) {
     if let Err(err) = command.arg(link).spawn() {
         eprintln!("haven: could not open the web browser: {err}");
     }
+}
+
+/// The name a server's list of libraries is kept under.
+fn libraries_name(server: &haven_servers::Server) -> String {
+    format!("libraries|{}|{}", server.id, server.address)
+}
+
+/// The shelves for servers' libraries: a collection is one list, one
+/// shelf; a library also gets a shelf of what is new.
+fn library_plans(
+    listed: &[(haven_servers::Server, Vec<haven_servers::Library>)],
+) -> (Vec<ShelfPlan>, Vec<(haven_servers::Server, haven_servers::Library)>) {
+    let mut plans = Vec::new();
+    let mut found = Vec::new();
+    for (server, libraries) in listed {
+        for library in libraries {
+            found.push((server.clone(), library.clone()));
+            let shelves: &[bool] = if library.collection { &[false] } else { &[true, false] };
+            for &latest in shelves {
+                plans.push(ShelfPlan {
+                    title: if latest { format!("New in {}", library.name) } else { library.name.clone() },
+                    source: server.name.clone(),
+                    from: ShelfFrom::Server { server: server.clone(), library: library.id.clone(), latest },
+                });
+            }
+        }
+    }
+    (plans, found)
 }

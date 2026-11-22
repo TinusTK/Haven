@@ -23,6 +23,8 @@ export struct Poster {
     // how much of it has been watched (0 to 1).
     video: string,
     progress: float,
+    // Watched to the end: a gold tick shows on the poster.
+    watched: bool,
 }
 
 // One line of a release's notes: a bullet point (maybe under another)
@@ -58,6 +60,10 @@ export struct Detail {
     error: string,
     // The title is on the watchlist.
     saved: bool,
+    // A film watched to the end.
+    watched: bool,
+    // The title is a film (it can be marked watched as a whole).
+    film: bool,
 }
 
 export struct EpisodeRow {
@@ -66,6 +72,8 @@ export struct EpisodeRow {
     title: string,
     date: string,
     selected: bool,
+    // Watched to the end.
+    watched: bool,
 }
 
 export struct StreamRow {
@@ -102,6 +110,8 @@ export struct CalendarEntry {
     video: string,
     // The local time of day, if known.
     time: string,
+    // This episode (or film) has been watched.
+    watched: bool,
 }
 
 // One day's square of the month.
@@ -112,6 +122,10 @@ export struct CalendarDay {
     entries: [CalendarEntry],
     // How many more come out that day than the square names.
     more: int,
+    // Everything that comes out that day (a phone lists the day picked).
+    all: [CalendarEntry],
+    // "Tuesday 25 November", heading the day picked on a phone.
+    long-name: string,
 }
 
 // One line of the month's list; the first of a day carries the day.
@@ -237,6 +251,12 @@ export struct ExploreRow {
 export struct OfferRow {
     name: string,
     ways: string,
+    // "Stream", "Free", "Rent" or "Buy" on the first tile of its group.
+    group: string,
+    // Haven's own tile for the service: its letters and colours.
+    letters: string,
+    tint: color,
+    ink: color,
 }
 
 // An add-on a media server uses and shares with its owner.
@@ -286,6 +306,17 @@ export struct TrackingRow {
     can-connect: bool,
 }
 
+// A tracking account in Settings > Sync options.
+export struct SyncAccount {
+    // 0 Trakt, 1 Simkl.
+    service: int,
+    name: string,
+    detail: string,
+    linked: bool,
+    // Linked and its sync is on.
+    on: bool,
+}
+
 export struct AddonRow {
     url: string,
     name: string,
@@ -332,6 +363,83 @@ component Icon inherits Rectangle {
         stroke-width: root.stroke;
         fill: root.name == "play" ? root.tint : transparent;
         commands: root.name == "home" ? "M3 10.5 L12 3 L21 10.5 M5.5 9 V20 a1 1 0 0 0 1 1 H10 V15 H14 V21 H17.5 a1 1 0 0 0 1 -1 V9" : root.name == "explore" ? "M12 2.5 a9.5 9.5 0 1 0 0 19 a9.5 9.5 0 1 0 0 -19 Z M15.8 8.2 L13.6 13.6 L8.2 15.8 L10.4 10.4 Z" : root.name == "library" ? "M4 4 H8 V20 H4 Z M10 4 H14 V20 H10 Z M15.6 5.2 L19.4 4.2 L22 19 L18.2 20 Z" : root.name == "livetv" ? "M3 7 H21 a1 1 0 0 1 1 1 V18 a1 1 0 0 1 -1 1 H3 a1 1 0 0 1 -1 -1 V8 a1 1 0 0 1 1 -1 Z M8 3 L12 7 L16 3" : root.name == "calendar" ? "M4 5 H20 a1 1 0 0 1 1 1 V20 a1 1 0 0 1 -1 1 H4 a1 1 0 0 1 -1 -1 V6 a1 1 0 0 1 1 -1 Z M3 10 H21 M8 3 V7 M16 3 V7" : root.name == "search" ? "M10.5 3.5 a7 7 0 1 0 0 14 a7 7 0 1 0 0 -14 Z M15.5 15.5 L21 21" : root.name == "settings" ? "M18.88 9.87 L21.66 10.34 L21.66 13.66 L18.88 14.13 L18.37 15.36 L20.00 17.66 L17.66 20.00 L15.36 18.37 L14.13 18.88 L13.66 21.66 L10.34 21.66 L9.87 18.88 L8.64 18.37 L6.34 20.00 L4.00 17.66 L5.63 15.36 L5.12 14.13 L2.34 13.66 L2.34 10.34 L5.12 9.87 L5.63 8.64 L4.00 6.34 L6.34 4.00 L8.64 5.63 L9.87 5.12 L10.34 2.34 L13.66 2.34 L14.13 5.12 L15.36 5.63 L17.66 4.00 L20.00 6.34 L18.37 8.64 Z M12 9 a3 3 0 1 0 0 6 a3 3 0 1 0 0 -6 Z" : root.name == "download" ? "M12 3 V15 M7 10 L12 15 L17 10 M4 20 H20" : root.name == "trash" ? "M4 7 H20 M9 7 V4 H15 V7 M6 7 L7 21 H17 L18 7" : root.name == "play" ? "M7 4 L20 12 L7 20 Z" : root.name == "pause" ? "M8 5 V19 M16 5 V19" : root.name == "folder" ? "M3 6 a1 1 0 0 1 1 -1 H9 L11 7 H20 a1 1 0 0 1 1 1 V18 a1 1 0 0 1 -1 1 H4 a1 1 0 0 1 -1 -1 Z" : root.name == "check" ? "M5 12.5 L10 17.5 L19 7" : root.name == "close" ? "M6 6 L18 18 M18 6 L6 18" : root.name == "back" ? "M15 5 L8 12 L15 19" : root.name == "forward" ? "M9 5 L16 12 L9 19" : root.name == "radio" ? "M4 9 H20 a1 1 0 0 1 1 1 V19 a1 1 0 0 1 -1 1 H4 a1 1 0 0 1 -1 -1 V10 a1 1 0 0 1 1 -1 Z M6 9 L17 4 M15.5 12.5 a2.5 2.5 0 1 0 0 5 a2.5 2.5 0 1 0 0 -5 Z M6 13 H11 M6 16 H11" : root.name == "account" ? "M12 4 a4 4 0 1 0 0 8 a4 4 0 1 0 0 -8 Z M4 21 a8 8 0 0 1 16 0" : root.name == "server" ? "M4 4 H20 V10 H4 Z M4 14 H20 V20 H4 Z M7 7 H8 M7 17 H8" : root.name == "addon" ? "M5 8 H9 a2 2 0 1 1 4 0 H17 V12 a2 2 0 1 1 0 4 V20 H5 Z" : root.name == "info" ? "M12 3 a9 9 0 1 0 0 18 a9 9 0 1 0 0 -18 Z M12 11 V16 M12 7.5 V8" : root.name == "general" ? "M4 6 H20 M4 12 H20 M4 18 H20 M9 4 V8 M15 10 V14 M7 16 V20" : root.name == "storage" ? "M4 5 H20 V19 H4 Z M4 14 H20 M7 16.5 H8" : root.name == "paste" ? "M8 5 H6 a1 1 0 0 0 -1 1 V20 a1 1 0 0 0 1 1 H18 a1 1 0 0 0 1 -1 V6 a1 1 0 0 0 -1 -1 H16 M9 3 H15 V7 H9 Z M9 12 H15 M9 16 H13" : root.name == "sync" ? "M20 11 a8 8 0 0 0 -14.5 -4.5 M4 4 V8 H8 M4 13 a8 8 0 0 0 14.5 4.5 M20 20 V16 H16" : root.name == "plus" ? "M12 5 V19 M5 12 H19" : root.name == "link" ? "M10 14 L14 10 M8.5 11.5 L6.5 13.5 a3 3 0 0 0 4 4 L12.5 15.5 M15.5 12.5 L17.5 10.5 a3 3 0 0 0 -4 -4 L11.5 8.5" : root.name == "player" ? "M3 5 H21 V19 H3 Z M10 9 L15 12 L10 15 Z" : "";
+    }
+}
+
+// Watched: a gold tick in a round pill.
+component WatchedTick inherits Rectangle {
+    in property <length> size: 22px;
+    width: root.size;
+    height: root.size;
+    border-radius: root.size / 2;
+    background: #11131acc;
+    border-width: 1.5px;
+    border-color: Theme.accent;
+    accessible-role: image;
+    accessible-label: "Watched";
+    Icon {
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        name: "check";
+        size: root.size * 0.64;
+        stroke: 2.5px;
+        tint: Theme.accent;
+    }
+}
+
+// Pull down from the top to load a page afresh: the page follows the
+// finger, a round sync sign shows, and letting go far enough down asks
+// for `refresh`. The sign turns while `busy`.
+component PullRefresh inherits Rectangle {
+    // The page inside is scrolled to its top (only then does a pull count).
+    in property <bool> at-top;
+    in property <bool> busy;
+    callback refresh();
+
+    private property <length> drag: swipe.swiping ? max(0px, swipe.current-position.y - swipe.pressed-position.y) : 0px;
+    private property <length> pull: min(self.drag * 0.5, 90px);
+    private property <bool> ready: self.pull >= 56px;
+    clip: true;
+
+    swipe := SwipeGestureHandler {
+        width: 100%;
+        height: 100%;
+        handle-swipe-down: root.at-top && !root.busy;
+        swiped => {
+            if (root.ready) {
+                root.refresh();
+            }
+        }
+        Rectangle {
+            y: root.pull;
+            width: 100%;
+            height: 100%;
+            animate y { duration: swipe.swiping ? 0ms : 220ms; easing: ease-out; }
+            @children
+        }
+    }
+    if root.pull > 2px || root.busy: Rectangle {
+        x: (parent.width - self.width) / 2;
+        y: root.busy ? 14px : max(6px, root.pull - self.height - 8px);
+        width: 40px;
+        height: 40px;
+        border-radius: 20px;
+        background: Theme.surface;
+        border-width: 1.5px;
+        border-color: root.ready || root.busy ? Theme.accent : Theme.border;
+        drop-shadow-blur: 10px;
+        drop-shadow-color: #00000060;
+        accessible-role: text;
+        accessible-label: root.busy ? "Refreshing" : root.ready ? "Let go to refresh" : "Pull down to refresh";
+        Icon {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            name: "sync";
+            size: 22px;
+            tint: Theme.accent;
+            opacity: root.busy ? 1 : min(1, root.pull / 56px);
+            transform-rotation: root.busy ? animation-tick() / 0.9s * 360deg : root.pull / 56px * 270deg;
+        }
     }
 }
 
@@ -681,7 +789,12 @@ component PosterCard inherits Rectangle {
             horizontal-alignment: center;
             vertical-alignment: center;
         }
-        if root.poster.progress > 0: Rectangle {
+        if root.poster.watched: WatchedTick {
+            x: parent.width - self.width - 7px;
+            y: 7px;
+            size: 26px;
+        }
+        if root.poster.progress > 0 && !root.poster.watched: Rectangle {
             x: 8px;
             y: parent.height - 12px;
             width: parent.width - 16px;
@@ -816,6 +929,8 @@ component Chip inherits Rectangle {
 component EpisodeItem inherits Rectangle {
     in property <EpisodeRow> episode;
     callback clicked();
+    // The round mark at the end: watched or not.
+    callback toggle-watched();
 
     height: 44px;
     border-radius: 8px;
@@ -853,6 +968,31 @@ component EpisodeItem inherits Rectangle {
             color: Theme.text-dim;
             font-size: 12px;
             vertical-alignment: center;
+        }
+        // Tap to mark watched (gold tick) or unwatched (empty ring).
+        Rectangle {
+            width: 30px;
+            mark-touch := TouchArea {
+                mouse-cursor: pointer;
+                clicked => { root.toggle-watched(); }
+            }
+            if root.episode.watched: WatchedTick {
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+                size: 24px;
+            }
+            if !root.episode.watched: Rectangle {
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+                width: 24px;
+                height: 24px;
+                border-radius: 12px;
+                border-width: 1.5px;
+                border-color: mark-touch.has-hover ? Theme.accent : Theme.text-dim.with-alpha(0.5);
+                accessible-role: button;
+                accessible-label: "Mark watched";
+                accessible-action-default => { root.toggle-watched(); }
+            }
         }
     }
 }
@@ -2445,17 +2585,19 @@ export component AppWindow inherits Window {
     callback open-downloads-folder();
     callback calendar-week(bool);
     // Settings > Sync options.
-    in-out property <bool> sync-watched: true;
-    in-out property <bool> sync-watchlist: true;
-    in-out property <bool> sync-pull: true;
     in property <string> sync-status;
-    in property <string> sync-accounts;
+    in property <[SyncAccount]> sync-accounts;
     in property <string> sync-note;
     in property <bool> sync-busy;
+    // An account is syncing.
     in property <bool> sync-linked;
+    // Changes still to send (red with this count; 0 is green).
+    in property <int> sync-waiting;
+    // The last try failed.
+    in property <bool> sync-problem;
     callback sync-now();
-    // 0 watched and progress, 1 Watchlist, 2 bring in from the accounts.
-    callback sync-option(int, bool);
+    // An account's sync switched on or off (0 Trakt, 1 Simkl).
+    callback sync-account(int, bool);
     // `mobile`: a phone or tablet build. `compact`: a phone's screen,
     // where the pages are laid out for one column and the side list
     // gives way to tabs. Both are set when Haven starts.
@@ -2480,6 +2622,18 @@ export component AppWindow inherits Window {
     callback close-detail();
     callback season-selected(int);
     callback episode-selected(string);
+    // The title page's panel (places to watch, or a season's episodes)
+    // shows only once asked for, so the page opens on the poster and
+    // the details alone.
+    in-out property <bool> detail-panel-open;
+    // A film's "Sources" button: look up where to watch it now.
+    callback show-sources();
+    // Marked by hand: an episode (by id), the season showing, the film.
+    callback episode-watched(string, bool);
+    callback season-watched(bool);
+    callback film-watched(bool);
+    // Every episode listed for the season showing is watched.
+    in property <bool> season-all-watched;
     callback filter-episodes(string);
     // Puts the open title on the watchlist, or takes it off.
     callback toggle-watchlist();
@@ -2513,6 +2667,9 @@ export component AppWindow inherits Window {
     // Explore: the source, kind and genre chosen (genre -1 for all).
     callback explore-pick(int, int, int);
     callback explore-load-more();
+    // Pulled down: load the source showing afresh.
+    callback explore-refresh();
+    in property <bool> explore-refreshing;
     // Server address, user name, password.
     callback add-xtream(string, string, string);
     // Opens a web address in the user's browser.
@@ -2565,6 +2722,10 @@ export component AppWindow inherits Window {
     callback set-update-check(bool);
     in property <string> calendar-title;
     in property <[CalendarDay]> calendar-days;
+    // A phone: the square whose releases show under the month.
+    in-out property <int> calendar-pick;
+    // A computer: a day was clicked, so the side list shows that day only.
+    in-out property <bool> calendar-day-only;
     in property <[AgendaRow]> calendar-agenda;
     in property <string> calendar-note;
     in property <string> calendar-zone;
@@ -2581,6 +2742,9 @@ export component AppWindow inherits Window {
     }
     // Home came into view or left it: its loading goes on or waits.
     callback home-showing-changed(bool);
+    // Pulled down: load Home afresh.
+    callback home-refresh();
+    in property <bool> home-refreshing;
     out property <bool> home-showing: !root.detail-open && !root.player-open && root.page == root.home-page;
     changed home-showing => { root.home-showing-changed(root.home-showing); }
     callback show-more-streams(string);
@@ -2635,9 +2799,11 @@ export component AppWindow inherits Window {
                 // or an episode once picked, lists its places to watch.
                 private property <bool> is-series: root.episodes.length > 0 || root.seasons.length > 0;
                 private property <bool> sources-shown: !self.is-series || root.episode-open;
+                private property <bool> panel: root.detail-panel-open;
                 private property <length> panel-width: root.compact ? self.width - 24px : clamp(self.width * 0.42, 360px, 540px);
-                // A phone: details over the top part, the panel under them.
-                private property <length> top-part: root.compact ? min(self.height * 0.4, 330px) : self.height;
+                // A phone: details over the top part, the panel under them
+                // (all of the screen until the panel is asked for).
+                private property <length> top-part: root.compact && self.panel ? min(self.height * 0.4, 330px) : self.height;
                 clip: true;
                 background: Theme.background;
 
@@ -2659,7 +2825,7 @@ export component AppWindow inherits Window {
                 VerticalLayout {
                     x: root.compact ? 16px : 40px;
                     y: 0px;
-                    width: root.compact ? parent.width - 32px : parent.width - detail-view.panel-width - 24px - 40px - 36px;
+                    width: root.compact ? parent.width - 32px : detail-view.panel ? parent.width - detail-view.panel-width - 24px - 40px - 36px : min(parent.width - 80px, 820px);
                     height: detail-view.top-part;
                     padding-top: root.compact ? 10px : 20px;
                     padding-bottom: root.compact ? 10px : 36px;
@@ -2674,11 +2840,11 @@ export component AppWindow inherits Window {
                         }
                     }
                     Rectangle { vertical-stretch: 1; }
-                    if root.detail.has-poster && detail-view.height > 560px && !root.compact: HorizontalLayout {
+                    if root.detail.has-poster && (root.compact ? !detail-view.panel && detail-view.height > 520px : detail-view.height > 560px): HorizontalLayout {
                         alignment: start;
                         Rectangle {
-                            width: 120px;
-                            height: 180px;
+                            width: root.compact ? 110px : 120px;
+                            height: root.compact ? 165px : 180px;
                             border-radius: 10px;
                             clip: true;
                             border-width: 1px;
@@ -2698,6 +2864,48 @@ export component AppWindow inherits Window {
                         font-size: root.compact ? 24px : 36px;
                         font-weight: 800;
                         wrap: word-wrap;
+                    }
+                    // A film: the pill marks it watched or unwatched.
+                    if root.detail.film || root.detail.watched: HorizontalLayout {
+                        alignment: start;
+                        Rectangle {
+                            height: 30px;
+                            border-radius: 15px;
+                            background: root.detail.watched ? Theme.accent.with-alpha(0.14) : film-mark.has-hover ? Theme.hover : transparent;
+                            border-width: 1.5px;
+                            border-color: root.detail.watched ? Theme.accent : Theme.text-dim.with-alpha(0.6);
+                            accessible-role: button;
+                            accessible-label: root.detail.watched ? "Watched. Mark unwatched" : "Mark watched";
+                            accessible-action-default => { root.film-watched(!root.detail.watched); }
+                            film-mark := TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => { root.film-watched(!root.detail.watched); }
+                            }
+                            HorizontalLayout {
+                                padding-left: 6px;
+                                padding-right: 14px;
+                                spacing: 7px;
+                                if root.detail.watched: WatchedTick {
+                                    y: (parent.height - self.height) / 2;
+                                    size: 20px;
+                                }
+                                if !root.detail.watched: Rectangle {
+                                    y: (parent.height - self.height) / 2;
+                                    width: 20px;
+                                    height: 20px;
+                                    border-radius: 10px;
+                                    border-width: 1.5px;
+                                    border-color: Theme.text-dim;
+                                }
+                                Text {
+                                    text: root.detail.watched ? "Watched" : "Mark watched";
+                                    color: root.detail.watched ? Theme.accent : Theme.text;
+                                    font-size: 13px;
+                                    font-weight: 700;
+                                    vertical-alignment: center;
+                                }
+                            }
+                        }
                     }
                     if root.episode-open && root.episode-label != "": Text {
                         text: root.episode-label;
@@ -2728,7 +2936,7 @@ export component AppWindow inherits Window {
                         font-size: 14px;
                         wrap: word-wrap;
                         overflow: elide;
-                        max-height: root.compact ? 54px : 118px;
+                        max-height: root.compact ? (detail-view.panel ? 54px : 140px) : 118px;
                     }
                     if root.detail.cast != "" && !root.compact: Text {
                         text: "Cast   " + root.detail.cast;
@@ -2742,9 +2950,109 @@ export component AppWindow inherits Window {
                         font-size: 13px;
                         overflow: elide;
                     }
+                    // Where to watch: the services that have it, grouped
+                    // Stream / Free / Rent / Buy, on Haven's own tiles.
+                    if root.offers.length > 0: VerticalLayout {
+                        spacing: 6px;
+                        Text {
+                            text: "Where to watch  ·  " + root.offers-note;
+                            color: Theme.text-dim;
+                            font-size: 12px;
+                            overflow: elide;
+                        }
+                        Rectangle {
+                            height: 92px;
+                            Flickable {
+                                width: parent.width;
+                                height: parent.height;
+                                content-width: offer-tiles.preferred-width;
+                                content-height: self.height;
+                                offer-tiles := HorizontalLayout {
+                                    alignment: start;
+                                    spacing: 8px;
+                                    for offer[i] in root.offers: VerticalLayout {
+                                        padding-left: offer.group != "" && i > 0 ? 16px : 0px;
+                                        spacing: 4px;
+                                        width: 60px + (offer.group != "" && i > 0 ? 16px : 0px);
+                                        Text {
+                                            height: 14px;
+                                            text: offer.group;
+                                            color: Theme.accent;
+                                            font-size: 11px;
+                                            font-weight: 600;
+                                        }
+                                        Rectangle {
+                                            width: 52px;
+                                            height: 52px;
+                                            border-radius: 12px;
+                                            background: offer.tint;
+                                            border-width: tile-touch.has-hover ? 2px : 1px;
+                                            border-color: tile-touch.has-hover ? Theme.accent : #ffffff14;
+                                            accessible-role: button;
+                                            accessible-label: offer.name + ", " + offer.ways + ". Opens JustWatch";
+                                            accessible-action-default => {
+                                                if (root.offers-link != "") {
+                                                    root.open-link(root.offers-link);
+                                                }
+                                            }
+                                            tile-touch := TouchArea {
+                                                mouse-cursor: pointer;
+                                                clicked => {
+                                                    if (root.offers-link != "") {
+                                                        root.open-link(root.offers-link);
+                                                    }
+                                                }
+                                            }
+                                            Text {
+                                                text: offer.letters;
+                                                color: offer.ink;
+                                                font-size: offer.letters.character-count > 2 ? 13px : 17px;
+                                                font-weight: 800;
+                                                horizontal-alignment: center;
+                                                vertical-alignment: center;
+                                            }
+                                        }
+                                        Text {
+                                            width: 56px;
+                                            text: offer.name;
+                                            color: Theme.text-dim;
+                                            font-size: 11px;
+                                            overflow: elide;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        Text {
+                            text: "Tap a service to see it on JustWatch. Availability by JustWatch.";
+                            color: Theme.text-dim;
+                            font-size: 10px;
+                            opacity: 0.8;
+                        }
+                    }
+                    if root.offers.length == 0 && root.offers-note != "" && !root.detail.loading: Text {
+                        text: root.offers-note;
+                        color: Theme.text-dim;
+                        font-size: 12px;
+                        wrap: word-wrap;
+                    }
                     HorizontalLayout {
                         alignment: start;
                         padding-top: 6px;
+                        spacing: 10px;
+                        // A film: where to watch it is looked up on asking.
+                        if !detail-view.is-series && !root.detail.loading: PrimaryButton {
+                            text: "▶  Sources";
+                            clicked => {
+                                root.detail-panel-open = true;
+                                root.show-sources();
+                            }
+                        }
+                        // A series without seasons: its episodes on asking.
+                        if detail-view.is-series && root.seasons.length == 0: PrimaryButton {
+                            text: "Episodes";
+                            clicked => { root.detail-panel-open = true; }
+                        }
                         Chip {
                             height: 38px;
                             border-radius: 19px;
@@ -2754,10 +3062,32 @@ export component AppWindow inherits Window {
                             clicked => { root.toggle-watchlist(); }
                         }
                     }
+                    // A series: its seasons; picking one lists its episodes.
+                    if root.seasons.length > 0 && !(root.compact && detail-view.panel): Rectangle {
+                        height: 38px;
+                        Flickable {
+                            width: parent.width;
+                            height: parent.height;
+                            content-width: root.seasons.length * 112px;
+                            content-height: self.height;
+                            for number[index] in root.seasons: Chip {
+                                x: index * 112px;
+                                width: 104px;
+                                height: 36px;
+                                label: number == 0 ? "Specials" : "Season " + number;
+                                selected: detail-view.panel && number == root.season;
+                                clicked => {
+                                    root.episode-open = false;
+                                    root.detail-panel-open = true;
+                                    root.season-selected(number);
+                                }
+                            }
+                        }
+                    }
                 }
 
                 // ---- The panel on the right: episodes, then places to watch.
-                Rectangle {
+                if detail-view.panel: Rectangle {
                     x: root.compact ? 12px : parent.width - detail-view.panel-width - 24px;
                     y: root.compact ? detail-view.top-part : 24px;
                     width: detail-view.panel-width;
@@ -2774,6 +3104,26 @@ export component AppWindow inherits Window {
                         padding: 16px;
                         spacing: 12px;
 
+                        HorizontalLayout {
+                            spacing: 10px;
+                            Text {
+                                horizontal-stretch: 1;
+                                text: root.seasons.length == 0 ? "Episodes" : root.season == 0 ? "Specials" : "Season " + root.season;
+                                font-family: Theme.heading-font;
+                                color: Theme.text;
+                                font-size: 16px;
+                                font-weight: 700;
+                                vertical-alignment: center;
+                            }
+                            IconButton {
+                                icon: "close";
+                                label: "Close the list";
+                                clicked => {
+                                    root.detail-panel-open = false;
+                                    root.episode-open = false;
+                                }
+                            }
+                        }
                         if root.seasons.length > 0: Rectangle {
                             height: 32px;
                             Flickable {
@@ -2788,6 +3138,14 @@ export component AppWindow inherits Window {
                                     selected: number == root.season;
                                     clicked => { root.season-selected(number); }
                                 }
+                            }
+                        }
+                        if root.seasons.length > 0 && root.episodes.length > 0: HorizontalLayout {
+                            alignment: start;
+                            Chip {
+                                label: root.season-all-watched ? "✓  Season watched · mark unwatched" : "Mark season watched";
+                                selected: root.season-all-watched;
+                                clicked => { root.season-watched(!root.season-all-watched); }
                             }
                         }
                         if root.seasons.length > 0: Field {
@@ -2810,6 +3168,7 @@ export component AppWindow inherits Window {
                                 for episode in root.episodes: EpisodeItem {
                                     episode: episode;
                                     clicked => { root.episode-selected(episode.id); }
+                                    toggle-watched => { root.episode-watched(episode.id, !episode.watched); }
                                 }
                             }
                         }
@@ -2836,6 +3195,14 @@ export component AppWindow inherits Window {
                                 font-weight: 700;
                                 vertical-alignment: center;
                                 overflow: elide;
+                            }
+                            IconButton {
+                                icon: "close";
+                                label: "Close the list";
+                                clicked => {
+                                    root.detail-panel-open = false;
+                                    root.episode-open = false;
+                                }
                             }
                         }
                         if root.play-note != "": Text {
@@ -2978,39 +3345,7 @@ export component AppWindow inherits Window {
                             font-size: 12px;
                             wrap: word-wrap;
                         }
-                        if root.offers.length > 0: Rectangle {
-                            height: 30px;
-                            Flickable {
-                                width: parent.width;
-                                height: parent.height;
-                                content-width: offer-chips.preferred-width;
-                                content-height: self.height;
-                                offer-chips := HorizontalLayout {
-                                    spacing: 8px;
-                                    alignment: start;
-                                    Text {
-                                        text: "Also on";
-                                        color: Theme.text-dim;
-                                        font-size: 13px;
-                                        vertical-alignment: center;
-                                    }
-                                    for offer in root.offers: Chip {
-                                        label: offer.name + "  ·  " + offer.ways;
-                                        clicked => {
-                                            if (root.offers-link != "") {
-                                                root.open-link(root.offers-link);
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        if root.offers.length > 0: Text {
-                            text: root.offers-note + "  Availability from JustWatch, by way of TMDB.";
-                            color: Theme.text-dim;
-                            font-size: 11px;
-                            overflow: elide;
-                        }
+
                     }
                 }
             }
@@ -3141,8 +3476,19 @@ export component AppWindow inherits Window {
                 padding: root.compact ? 16px : 32px;
                 spacing: root.compact ? 10px : 16px;
 
-                if root.compact: PageTitle {
-                    text: "Calendar";
+                if root.compact: HorizontalLayout {
+                    spacing: 12px;
+                    PageTitle {
+                        text: "Calendar";
+                        vertical-alignment: center;
+                    }
+                    Rectangle { horizontal-stretch: 1; }
+                    Segments {
+                        y: (parent.height - self.height) / 2;
+                        labels: ["Month", "Week"];
+                        current: root.calendar-is-week ? 1 : 0;
+                        chosen(index) => { root.calendar-day-only = false; root.calendar-week(index == 1); }
+                    }
                 }
                 HorizontalLayout {
                     spacing: 10px;
@@ -3155,21 +3501,22 @@ export component AppWindow inherits Window {
                         y: (parent.height - self.height) / 2;
                         labels: ["Month", "Week"];
                         current: root.calendar-is-week ? 1 : 0;
-                        chosen(index) => { root.calendar-week(index == 1); }
+                        chosen(index) => { root.calendar-day-only = false; root.calendar-week(index == 1); }
                     }
                     Rectangle { horizontal-stretch: 1; }
                     IconButton {
                         y: (parent.height - self.height) / 2;
                         icon: "back";
                         label: root.calendar-is-week ? "The week before" : "The month before";
-                        clicked => { root.calendar-step(-1); }
+                        clicked => { root.calendar-day-only = false; root.calendar-step(-1); }
                     }
                     Text {
-                        width: 230px;
+                        width: root.compact ? 170px : 230px;
                         text: root.calendar-title;
                         font-family: Theme.heading-font;
                         color: Theme.text;
-                        font-size: 18px;
+                        font-size: root.compact ? 15px : 18px;
+                        overflow: elide;
                         font-weight: 700;
                         horizontal-alignment: center;
                         vertical-alignment: center;
@@ -3178,19 +3525,181 @@ export component AppWindow inherits Window {
                         y: (parent.height - self.height) / 2;
                         icon: "forward";
                         label: root.calendar-is-week ? "The week after" : "The month after";
-                        clicked => { root.calendar-step(1); }
+                        clicked => { root.calendar-day-only = false; root.calendar-step(1); }
                     }
                     Chip {
                         y: (parent.height - self.height) / 2;
                         height: 36px;
                         border-radius: 18px;
                         label: "Today";
-                        clicked => { root.calendar-step(0); }
+                        clicked => { root.calendar-day-only = false; root.calendar-step(0); }
                     }
                 }
-                HorizontalLayout {
+                // A phone: the month as squares (a gold dot for each release,
+                // a tick once watched); the day picked lists its releases.
+                if root.compact: VerticalLayout {
                     vertical-stretch: 1;
-                    spacing: root.compact ? 0px : 20px;
+                    spacing: 12px;
+                    phone-month := Rectangle {
+                        private property <length> across: self.width / 7;
+                        // A week is one row of taller squares.
+                        private property <length> line: root.calendar-is-week ? 72px : min(self.across, 58px);
+                        height: 22px + (root.calendar-is-week ? 1 : 6) * self.line;
+                        for name[index] in ["M", "T", "W", "T", "F", "S", "S"]: Text {
+                            x: index * phone-month.across;
+                            y: 0;
+                            width: phone-month.across - 4px;
+                            height: 18px;
+                            text: name;
+                            color: Theme.text-dim;
+                            font-size: 12px;
+                            font-weight: 600;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                        for day[index] in root.calendar-days: phone-day := Rectangle {
+                            private property <bool> picked: index == root.calendar-pick;
+                            private property <bool> all-watched: day.all.length > 0 && day.all[0].watched && (day.all.length < 2 || day.all[1].watched) && (day.all.length < 3 || day.all[2].watched);
+                            x: mod(index, 7) * phone-month.across;
+                            y: 22px + floor(index / 7) * phone-month.line;
+                            width: phone-month.across - 4px;
+                            height: phone-month.line - 4px;
+                            border-radius: 8px;
+                            background: self.picked ? Theme.accent.with-alpha(0.22) : day.today ? Theme.selected : day.in-month ? Theme.surface : transparent;
+                            border-width: self.picked || day.today ? 1.5px : 1px;
+                            border-color: self.picked || day.today ? Theme.accent : day.in-month ? Theme.border : transparent;
+                            accessible-role: button;
+                            accessible-label: day.long-name + (day.all.length > 0 ? ", " + day.all.length + " coming out" : "");
+                            accessible-action-default => { root.calendar-pick = index; }
+                            TouchArea {
+                                clicked => { root.calendar-pick = index; }
+                            }
+                            Text {
+                                y: 4px;
+                                width: parent.width;
+                                text: day.number;
+                                color: day.today || phone-day.picked ? Theme.accent : day.in-month ? Theme.text : Theme.text-dim;
+                                font-size: 13px;
+                                font-weight: day.today || phone-day.picked ? 700 : 500;
+                                horizontal-alignment: center;
+                                opacity: day.in-month ? 1 : 0.5;
+                            }
+                            // One dot a release (up to three), or a tick
+                            // when every one shown has been watched.
+                            if day.all.length > 0 && !phone-day.all-watched: HorizontalLayout {
+                                y: parent.height - 14px;
+                                height: 7px;
+                                alignment: center;
+                                spacing: 3px;
+                                for n in min(day.all.length, 3): Rectangle {
+                                    width: 6px;
+                                    height: 6px;
+                                    border-radius: 3px;
+                                    background: Theme.accent;
+                                    opacity: day.in-month ? 1 : 0.55;
+                                }
+                            }
+                            if day.all.length > 0 && phone-day.all-watched: WatchedTick {
+                                x: (parent.width - self.width) / 2;
+                                y: parent.height - self.height - 4px;
+                                size: 16px;
+                            }
+                        }
+                    }
+                    if root.calendar-note != "": Text {
+                        text: root.calendar-note;
+                        color: Theme.text-dim;
+                        font-size: 13px;
+                        wrap: word-wrap;
+                    }
+                    if root.calendar-pick >= 0 && root.calendar-pick < root.calendar-days.length: Text {
+                        text: root.calendar-days[root.calendar-pick].long-name;
+                        font-family: Theme.heading-font;
+                        color: Theme.text;
+                        font-size: 16px;
+                        font-weight: 700;
+                    }
+                    phone-day-scroll := ScrollView {
+                        vertical-stretch: 1;
+                        content-width: self.visible-width;
+                        content-height: phone-day-list.preferred-height;
+                        phone-day-list := VerticalLayout {
+                            width: phone-day-scroll.visible-width;
+                            alignment: start;
+                            spacing: 8px;
+                            if root.calendar-pick >= 0 && root.calendar-pick < root.calendar-days.length && root.calendar-days[root.calendar-pick].all.length == 0: Text {
+                                text: "Nothing from your Watchlist comes out this day.";
+                                color: Theme.text-dim;
+                                font-size: 13px;
+                                wrap: word-wrap;
+                            }
+                            for entry in root.calendar-days[root.calendar-pick].all: Rectangle {
+                                height: 58px;
+                                border-radius: 12px;
+                                background: phone-entry-touch.pressed ? Theme.hover : Theme.surface;
+                                border-width: 1px;
+                                border-color: Theme.border;
+                                accessible-role: button;
+                                accessible-label: entry.title + (entry.label != "" ? ", " + entry.label : "") + (entry.watched ? ", watched" : "");
+                                accessible-action-default => { root.calendar-open(entry); }
+                                phone-entry-touch := TouchArea {
+                                    clicked => { root.calendar-open(entry); }
+                                }
+                                HorizontalLayout {
+                                    padding-left: 14px;
+                                    padding-right: 12px;
+                                    spacing: 10px;
+                                    Rectangle {
+                                        width: 4px;
+                                        height: 30px;
+                                        y: (parent.height - self.height) / 2;
+                                        border-radius: 2px;
+                                        background: Theme.accent;
+                                    }
+                                    VerticalLayout {
+                                        horizontal-stretch: 1;
+                                        alignment: center;
+                                        spacing: 2px;
+                                        Text {
+                                            text: entry.title;
+                                            color: Theme.text;
+                                            font-size: 14px;
+                                            font-weight: 600;
+                                            overflow: elide;
+                                        }
+                                        Text {
+                                            text: entry.label != "" ? entry.label : (entry.kind == "movie" ? "Film" : "Comes out");
+                                            color: Theme.text-dim;
+                                            font-size: 12px;
+                                            overflow: elide;
+                                        }
+                                    }
+                                    if entry.time != "": Text {
+                                        text: entry.time;
+                                        color: Theme.accent;
+                                        font-size: 13px;
+                                        font-weight: 600;
+                                        vertical-alignment: center;
+                                    }
+                                    if entry.watched: WatchedTick {
+                                        y: (parent.height - self.height) / 2;
+                                        size: 24px;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Text {
+                        text: root.calendar-zone;
+                        color: Theme.text-dim;
+                        font-size: 11px;
+                        wrap: word-wrap;
+                    }
+                }
+
+                if !root.compact: HorizontalLayout {
+                    vertical-stretch: 1;
+                    spacing: 20px;
 
                     // The month, a square a day (a computer's screen only).
                     month-grid := Rectangle {
@@ -3211,16 +3720,32 @@ export component AppWindow inherits Window {
                             font-weight: 600;
                             vertical-alignment: center;
                         }
-                        for day[index] in root.calendar-days: Rectangle {
+                        for day[index] in root.calendar-days: desk-day := Rectangle {
+                            private property <bool> picked: root.calendar-day-only && index == root.calendar-pick;
                             x: mod(index, 7) * month-grid.across;
                             y: 28px + floor(index / 7) * month-grid.line;
                             width: month-grid.across - 6px;
                             height: month-grid.line - 6px;
                             border-radius: 10px;
                             clip: true;
-                            background: day.today ? Theme.selected : day.in-month ? Theme.surface : transparent;
-                            border-width: 1px;
-                            border-color: day.today ? Theme.accent : day.in-month ? Theme.border : transparent;
+                            background: self.picked ? Theme.accent.with-alpha(0.18) : day-touch.has-hover && day.in-month ? Theme.hover : day.today ? Theme.selected : day.in-month ? Theme.surface : transparent;
+                            border-width: self.picked ? 2px : 1px;
+                            border-color: self.picked || day.today ? Theme.accent : day.in-month ? Theme.border : transparent;
+                            accessible-role: button;
+                            accessible-label: day.long-name + (day.all.length > 0 ? ", " + day.all.length + " coming out" : "");
+                            accessible-action-default => {
+                                root.calendar-day-only = !self.picked;
+                                root.calendar-pick = index;
+                            }
+                            // Clicking the day (not one of its titles) lists
+                            // only that day beside the month; again, the whole month.
+                            day-touch := TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => {
+                                    root.calendar-day-only = !desk-day.picked;
+                                    root.calendar-pick = index;
+                                }
+                            }
                             Text {
                                 x: 8px;
                                 y: 5px;
@@ -3242,10 +3767,15 @@ export component AppWindow inherits Window {
                                     mouse-cursor: pointer;
                                     clicked => { root.calendar-open(entry); }
                                 }
+                                if entry.watched: WatchedTick {
+                                    x: parent.width - self.width - 3px;
+                                    y: root.calendar-is-week ? 3px : (parent.height - self.height) / 2;
+                                    size: root.calendar-is-week ? 18px : 14px;
+                                }
                                 Text {
                                     x: 5px;
                                     y: root.calendar-is-week ? 4px : 0px;
-                                    width: parent.width - 10px;
+                                    width: parent.width - (entry.watched ? 28px : 10px);
                                     height: root.calendar-is-week ? 18px : parent.height;
                                     text: entry.title;
                                     color: entry-touch.has-hover ? (Theme.dark ? #171a22 : #ffffff) : Theme.text;
@@ -3289,20 +3819,94 @@ export component AppWindow inherits Window {
                         VerticalLayout {
                             padding: 16px;
                             spacing: 8px;
-                            Text {
-                                text: root.calendar-is-week ? "This week" : "This month";
-                                font-family: Theme.heading-font;
-                                color: Theme.text;
-                                font-size: 16px;
-                                font-weight: 700;
+                            HorizontalLayout {
+                                spacing: 8px;
+                                Text {
+                                    horizontal-stretch: 1;
+                                    text: root.calendar-day-only ? root.calendar-days[root.calendar-pick].long-name : root.calendar-is-week ? "This week" : "This month";
+                                    font-family: Theme.heading-font;
+                                    color: Theme.text;
+                                    font-size: 16px;
+                                    font-weight: 700;
+                                    vertical-alignment: center;
+                                    overflow: elide;
+                                }
+                                if root.calendar-day-only: Chip {
+                                    height: 30px;
+                                    border-radius: 15px;
+                                    label: root.calendar-is-week ? "Whole week" : "Whole month";
+                                    clicked => { root.calendar-day-only = false; }
+                                }
                             }
-                            if root.calendar-note != "": Text {
+                            if root.calendar-note != "" && !root.calendar-day-only: Text {
                                 text: root.calendar-note;
                                 color: Theme.text-dim;
                                 font-size: 13px;
                                 wrap: word-wrap;
                             }
-                            agenda-scroll := ScrollView {
+                            // The day clicked: only what comes out then.
+                            if root.calendar-day-only: day-scroll := ScrollView {
+                                vertical-stretch: 1;
+                                content-width: self.visible-width;
+                                content-height: day-list.preferred-height;
+                                day-list := VerticalLayout {
+                                    width: day-scroll.visible-width;
+                                    alignment: start;
+                                    spacing: 6px;
+                                    if root.calendar-days[root.calendar-pick].all.length == 0: Text {
+                                        text: "Nothing from your Watchlist comes out this day.";
+                                        color: Theme.text-dim;
+                                        font-size: 13px;
+                                        wrap: word-wrap;
+                                    }
+                                    for entry in root.calendar-days[root.calendar-pick].all: Rectangle {
+                                        height: 48px;
+                                        border-radius: 10px;
+                                        background: day-entry-touch.has-hover ? Theme.hover : Theme.background.with-alpha(0.55);
+                                        border-width: 1px;
+                                        border-color: day-entry-touch.has-hover ? Theme.accent : Theme.border;
+                                        day-entry-touch := TouchArea {
+                                            mouse-cursor: pointer;
+                                            clicked => { root.calendar-open(entry); }
+                                        }
+                                        HorizontalLayout {
+                                            padding-left: 12px;
+                                            padding-right: 12px;
+                                            spacing: 10px;
+                                            VerticalLayout {
+                                                horizontal-stretch: 1;
+                                                alignment: center;
+                                                spacing: 2px;
+                                                Text {
+                                                    text: entry.title;
+                                                    color: Theme.text;
+                                                    font-size: 13px;
+                                                    font-weight: 600;
+                                                    overflow: elide;
+                                                }
+                                                Text {
+                                                    text: entry.label != "" ? entry.label : (entry.kind == "movie" ? "Film" : "Comes out");
+                                                    color: Theme.text-dim;
+                                                    font-size: 12px;
+                                                    overflow: elide;
+                                                }
+                                            }
+                                            if entry.watched: WatchedTick {
+                                                y: (parent.height - self.height) / 2;
+                                                size: 20px;
+                                            }
+                                            Text {
+                                                text: entry.time;
+                                                color: Theme.accent;
+                                                font-size: 13px;
+                                                font-weight: 600;
+                                                vertical-alignment: center;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            if !root.calendar-day-only: agenda-scroll := ScrollView {
                                 vertical-stretch: 1;
                                 content-width: self.visible-width;
                                 content-height: agenda-list.preferred-height;
@@ -3355,6 +3959,10 @@ export component AppWindow inherits Window {
                                                         font-size: 12px;
                                                         overflow: elide;
                                                     }
+                                                }
+                                                if row.entry.watched: WatchedTick {
+                                                    y: (parent.height - self.height) / 2;
+                                                    size: 20px;
                                                 }
                                                 Text {
                                                     text: row.entry.time;
@@ -3469,7 +4077,13 @@ export component AppWindow inherits Window {
                     remove(poster) => { root.remove-continue(poster); }
                 }
             }
-            if !root.detail-open && root.page == root.home-page && root.home-has-sources: home := ScrollView {
+            if !root.detail-open && root.page == root.home-page && root.home-has-sources: PullRefresh {
+              at-top: home.content-y >= 0;
+              busy: root.home-refreshing;
+              refresh => { root.home-refresh(); }
+              home := ScrollView {
+                width: 100%;
+                height: 100%;
                 // Two wide cards across a phone, as in Strand.
                 private property <length> card-w: root.compact ? (self.visible-width - 32px - 14px) / 2 : 328px;
                 private property <length> card-h: home.card-w * 0.5625;
@@ -3938,6 +4552,7 @@ export component AppWindow inherits Window {
                     }
                 }
             }
+            }
 
             if !root.detail-open && root.page == root.explore-page: VerticalLayout {
                 padding-left: root.compact ? 16px : 32px;
@@ -4146,12 +4761,19 @@ export component AppWindow inherits Window {
                                 }
                             }
                         }
-                        if root.explore-note != "" || root.explore-loading: Text {
+                        if root.explore-note != "" || (root.explore-loading && root.explore-items.length == 0): Text {
                             text: root.explore-note != "" ? root.explore-note : "Loading…";
                             color: Theme.text-dim;
                             overflow: elide;
                         }
-                        explore-view := ScrollView {
+                        PullRefresh {
+                          vertical-stretch: 1;
+                          at-top: explore-view.content-y >= 0;
+                          busy: root.explore-refreshing;
+                          refresh => { root.explore-refresh(); }
+                          explore-view := ScrollView {
+                            width: 100%;
+                            height: 100%;
                             private property <length> step: 162px;
                             private property <length> line: 286px;
                             private property <int> columns: max(1, floor((self.visible-width + 12px) / self.step));
@@ -4173,6 +4795,7 @@ export component AppWindow inherits Window {
                                 enabled: !root.explore-loading;
                                 clicked => { root.explore-load-more(); }
                             }
+                        }
                         }
                     }
                 }
@@ -4533,63 +5156,111 @@ export component AppWindow inherits Window {
                         // ---- Sync options
                         if root.settings-section == 7: VerticalLayout {
                             spacing: 20px;
-                            SettingsCard {
-                                title: "Status";
-                                note: root.sync-note;
-                                SettingsRow {
-                                    label: root.sync-busy ? "Syncing…" : "Sync";
-                                    detail: root.sync-status;
-                                    PrimaryButton {
-                                        text: root.sync-busy ? "Syncing…" : "Sync now";
+                            // Red with the number of changes still to send;
+                            // green once everything is in step. Tap to sync.
+                            HorizontalLayout {
+                                alignment: start;
+                                spacing: 12px;
+                                sync-pill := Rectangle {
+                                    private property <bool> green: root.sync-linked && root.sync-waiting == 0 && !root.sync-problem && !root.sync-busy;
+                                    private property <color> tone: !root.sync-linked ? Theme.text-dim : root.sync-busy ? Theme.accent : self.green ? #3ecf6e : #ef4b4b;
+                                    height: 44px;
+                                    width: sync-pill-row.preferred-width;
+                                    border-radius: 22px;
+                                    background: self.tone.with-alpha(sync-pill-touch.pressed ? 0.30 : 0.16);
+                                    border-width: 1.5px;
+                                    border-color: self.tone;
+                                    accessible-role: button;
+                                    accessible-label: self.green ? "Synced" : root.sync-waiting > 0 ? "Sync, " + root.sync-waiting + " out of sync" : "Sync now";
+                                    accessible-action-default => { root.sync-now(); }
+                                    sync-pill-touch := TouchArea {
+                                        mouse-cursor: pointer;
                                         enabled: root.sync-linked && !root.sync-busy;
                                         clicked => { root.sync-now(); }
                                     }
+                                    sync-pill-row := HorizontalLayout {
+                                        padding-left: 14px;
+                                        padding-right: 16px;
+                                        spacing: 8px;
+                                        Icon {
+                                            y: (parent.height - self.height) / 2;
+                                            name: sync-pill.green ? "check" : "sync";
+                                            size: 20px;
+                                            tint: sync-pill.tone;
+                                            transform-rotation: root.sync-busy ? animation-tick() / 0.9s * 360deg : 0deg;
+                                        }
+                                        Text {
+                                            text: root.sync-busy ? "Syncing…" : sync-pill.green ? "Synced" : "Sync";
+                                            color: sync-pill.tone;
+                                            font-size: 15px;
+                                            font-weight: 700;
+                                            vertical-alignment: center;
+                                        }
+                                        if root.sync-waiting > 0 && !root.sync-busy: Rectangle {
+                                            y: (parent.height - self.height) / 2;
+                                            height: 22px;
+                                            width: max(22px, sync-count.preferred-width + 12px);
+                                            border-radius: 11px;
+                                            background: #ef4b4b;
+                                            sync-count := Text {
+                                                text: root.sync-waiting;
+                                                color: #ffffff;
+                                                font-size: 12px;
+                                                font-weight: 700;
+                                                horizontal-alignment: center;
+                                                vertical-alignment: center;
+                                            }
+                                        }
+                                    }
                                 }
-                                Text {
-                                    text: root.sync-accounts;
-                                    color: Theme.text-dim;
-                                    font-size: 12px;
-                                    wrap: word-wrap;
-                                }
-                                if !root.sync-linked: HorizontalLayout {
-                                    alignment: start;
-                                    Chip {
-                                        label: "Go to Accounts  ›";
-                                        clicked => {
-                                            root.settings-section = 1;
-                                            root.settings-scroll = 0px;
+                            }
+                            Text {
+                                text: root.sync-status;
+                                color: Theme.text-dim;
+                                font-size: 13px;
+                                wrap: word-wrap;
+                            }
+                            SettingsCard {
+                                title: "On this device";
+                                note: root.sync-note;
+                                SettingsRow {
+                                    label: "Local (works offline)";
+                                    detail: "What you watch and your Watchlist are always kept here first, with or without a connection, and sent on to the accounts below.";
+                                    Rectangle {
+                                        width: 56px;
+                                        height: 28px;
+                                        border-radius: 14px;
+                                        background: #3ecf6e.with-alpha(0.16);
+                                        border-width: 1px;
+                                        border-color: #3ecf6e;
+                                        Text {
+                                            text: "On";
+                                            color: #3ecf6e;
+                                            font-size: 13px;
+                                            font-weight: 700;
+                                            horizontal-alignment: center;
+                                            vertical-alignment: center;
                                         }
                                     }
                                 }
                             }
                             SettingsCard {
-                                title: "What syncs";
-                                note: "Playback positions also go back to your media servers when you stop a film or episode.";
-                                SettingsRow {
-                                    label: "Watched and progress";
-                                    detail: "Films and episodes you finish are marked watched on your accounts.";
-                                    Switch {
-                                        checked <=> root.sync-watched;
-                                        accessible-label: "Sync watched and progress";
-                                        toggled => { root.sync-option(0, self.checked); }
+                                title: "Your accounts";
+                                note: "Linking an account switches its sync on.";
+                                for account in root.sync-accounts: SettingsRow {
+                                    label: account.name;
+                                    detail: account.detail;
+                                    if account.linked: Switch {
+                                        checked: account.on;
+                                        accessible-label: "Sync with " + account.name;
+                                        toggled => { root.sync-account(account.service, self.checked); }
                                     }
-                                }
-                                SettingsRow {
-                                    label: "Watchlist";
-                                    detail: "Adding or removing a title changes it on your accounts too.";
-                                    Switch {
-                                        checked <=> root.sync-watchlist;
-                                        accessible-label: "Sync the Watchlist";
-                                        toggled => { root.sync-option(1, self.checked); }
-                                    }
-                                }
-                                SettingsRow {
-                                    label: "Bring in from your accounts";
-                                    detail: "Their Watchlist, and what you watched on Trakt, come into Haven too.";
-                                    Switch {
-                                        checked <=> root.sync-pull;
-                                        accessible-label: "Bring in from your accounts";
-                                        toggled => { root.sync-option(2, self.checked); }
+                                    if !account.linked: Chip {
+                                        label: "Link  ›";
+                                        clicked => {
+                                            root.settings-section = 1;
+                                            root.settings-scroll = 0px;
+                                        }
                                     }
                                 }
                             }
@@ -5231,6 +5902,11 @@ export component AppWindow inherits Window {
                         label: "Settings";
                         selected: !root.detail-open && root.page == root.settings-page;
                         clicked => {
+                            // Tapped again while in Settings: back to its start.
+                            if (!root.detail-open && root.page == root.settings-page) {
+                                root.settings-picking = true;
+                                root.settings-section = 0;
+                            }
                             root.close-detail();
                             root.page = root.settings-page;
                             root.page-selected(root.settings-page);
@@ -5260,6 +5936,11 @@ export component AppWindow inherits Window {
                     accessible-label: "Settings";
                     selected: !root.detail-open && root.page == root.settings-page;
                     clicked => {
+                        // Clicked again while in Settings: back to its start.
+                        if (!root.detail-open && root.page == root.settings-page) {
+                            root.settings-picking = true;
+                            root.settings-section = 0;
+                        }
                         root.close-detail();
                         root.page = root.settings-page;
                         root.page-selected(root.settings-page);

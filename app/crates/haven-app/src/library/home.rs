@@ -34,6 +34,9 @@ pub(super) struct HomeTop {
     /// What is known of each title on Continue Watching: its wide
     /// picture's address and its episodes (asked for once a run).
     continue_meta: RefCell<HashMap<(String, String), Option<(Option<String>, Vec<haven_addons::Video>)>>>,
+    /// Titles whose details have been asked for this run (kept details
+    /// from last time are shown until the fresh ones come).
+    continue_asked: RefCell<std::collections::HashSet<(String, String)>>,
 }
 
 /// "S03E06" from an episode id such as `tt123:3:6`.
@@ -86,6 +89,11 @@ impl Library {
         ui.set_upcoming(ModelRc::from(self.home_top.upcoming.clone()));
     }
 
+    /// Asks Continue Watching's titles' details again (Home pulled down).
+    pub(super) fn recheck_continue(&self) {
+        self.home_top.continue_asked.borrow_mut().clear();
+    }
+
     /// Fills the banner from the first shelf that loads with titles.
     pub(super) fn offer_hero(&self, metas: &[MetaPreview]) {
         if self.home_top.started.get() || metas.len() < 3 {
@@ -106,16 +114,28 @@ impl Library {
                 .collect::<Vec<_>>(),
         );
         for (slot, meta) in chosen.into_iter().enumerate() {
-            let Some(details) = self.details_of(&meta.kind, &meta.id) else {
+            // Details kept from last time show at once; fresh ones follow.
+            let kept = self.kept_details(&meta.kind, &meta.id);
+            if let Some(kept) = &kept {
                 self.home_top.settled.set(self.home_top.settled.get() + 1);
+                self.hero_details(slot, kept.clone());
+            }
+            let Some(details) = self.details_of(&meta.kind, &meta.id) else {
+                if kept.is_none() {
+                    self.home_top.settled.set(self.home_top.settled.get() + 1);
+                }
                 continue;
             };
             self.tasks.spawn(async move {
                 let found = details.await;
                 on_ui(move |library| {
-                    library.home_top.settled.set(library.home_top.settled.get() + 1);
+                    if kept.is_none() {
+                        library.home_top.settled.set(library.home_top.settled.get() + 1);
+                    }
                     if let Ok(found) = found {
-                        library.hero_details(slot, found);
+                        if Some(&found) != kept.as_ref() {
+                            library.hero_details(slot, found);
+                        }
                     }
                 });
             });
@@ -223,6 +243,15 @@ impl Library {
     /// the episode, and how many episodes are left to watch.
     pub(super) fn fill_continue_cards(&self, watched: &[haven_core::storage::Progress]) {
         let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+        // Details kept from last time, until the fresh ones come.
+        for progress in watched {
+            let key = (progress.kind.clone(), progress.title_id.clone());
+            if !self.home_top.continue_meta.borrow().contains_key(&key) {
+                if let Some(meta) = self.kept_details(&key.0, &key.1) {
+                    self.home_top.continue_meta.borrow_mut().insert(key, Some((meta.background.clone(), meta.videos.clone())));
+                }
+            }
+        }
         let known = self.home_top.continue_meta.borrow();
         let old: Vec<ContinueCard> = self.home_top.continuing.iter().collect();
         let mut wanted_meta = Vec::new();
@@ -246,7 +275,7 @@ impl Library {
                 }
                 _ => 0,
             };
-            if !known.contains_key(&key) {
+            if !self.home_top.continue_asked.borrow().contains(&key) {
                 wanted_meta.push(key.clone());
             }
             let kept = old.iter().find(|card| card.has_image && card.kind.as_str() == key.0 && card.id.as_str() == key.1);
@@ -292,16 +321,25 @@ impl Library {
         }
         // Details (wide picture, episode list) once per title per run.
         for key in wanted_meta {
-            self.home_top.continue_meta.borrow_mut().insert(key.clone(), None);
+            self.home_top.continue_asked.borrow_mut().insert(key.clone());
+            if !self.home_top.continue_meta.borrow().contains_key(&key) {
+                self.home_top.continue_meta.borrow_mut().insert(key.clone(), None);
+            }
             let Some(details) = self.details_of(&key.0, &key.1) else { continue };
             self.tasks.spawn(async move {
                 let Ok(meta) = details.await else { return };
                 on_ui(move |library| {
-                    library.home_top.continue_meta.borrow_mut().insert(key.clone(), Some((meta.background.clone(), meta.videos.clone())));
+                    let fresh = Some((meta.background.clone(), meta.videos.clone()));
+                    let before = library.home_top.continue_meta.borrow_mut().insert(key.clone(), fresh.clone());
+                    // Nothing new since last time: the cards stay as they are.
+                    if before.as_ref() == Some(&fresh) {
+                        return;
+                    }
+                    let picture_changed = before.flatten().map(|(bg, _)| bg) != Some(meta.background.clone());
                     // Forget a poster shown meanwhile: the wide picture is better.
                     for at in 0..library.home_top.continuing.row_count() {
                         if let Some(mut card) = library.home_top.continuing.row_data(at) {
-                            if card.kind.as_str() == key.0 && card.id.as_str() == key.1 && meta.background.is_some() {
+                            if card.kind.as_str() == key.0 && card.id.as_str() == key.1 && meta.background.is_some() && picture_changed {
                                 card.has_image = false;
                                 library.home_top.continuing.set_row_data(at, card);
                             }

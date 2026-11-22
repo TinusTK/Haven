@@ -57,11 +57,16 @@ struct Options {
     last_sync: i64,
     #[serde(default)]
     last_pull: i64,
+    /// Linked accounts whose sync is switched off (by service name).
+    /// Everything else syncs: watched, progress and the Watchlist, both
+    /// ways (user, 2026-11-22: one switch per account, not three).
+    #[serde(default)]
+    off: Vec<String>,
 }
 
 impl Default for Options {
     fn default() -> Self {
-        Self { watched: true, watchlist: true, pull: true, last_sync: 0, last_pull: 0 }
+        Self { watched: true, watchlist: true, pull: true, last_sync: 0, last_pull: 0, off: Vec::new() }
     }
 }
 
@@ -92,7 +97,32 @@ struct Outcome {
 
 impl Library {
     fn sync_options(&self) -> Options {
-        self.store.get::<Options>(OPTIONS).ok().flatten().unwrap_or_default()
+        let mut options = self.store.get::<Options>(OPTIONS).ok().flatten().unwrap_or_default();
+        // The three old switches are gone: an account syncs everything or nothing.
+        options.watched = true;
+        options.watchlist = true;
+        options.pull = true;
+        options
+    }
+
+    /// The linked accounts whose sync is on.
+    fn syncing_accounts(&self) -> Vec<Account> {
+        let off = self.sync_options().off;
+        self.accounts.borrow().iter().filter(|a| !off.iter().any(|o| o == a.service.label())).cloned().collect()
+    }
+
+    /// Switches one account's sync on or off; linking one turns it on.
+    pub(super) fn set_account_sync(&self, service: haven_tracking::Service, on: bool) {
+        let mut options = self.sync_options();
+        options.off.retain(|name| name != service.label());
+        if !on {
+            options.off.push(service.label().to_owned());
+        }
+        self.save_sync_options(&options);
+        if on {
+            self.run_sync(true);
+        }
+        self.show_sync();
     }
 
     fn save_sync_options(&self, options: &Options) {
@@ -103,25 +133,16 @@ impl Library {
 
     pub(super) fn start_sync(self: &Rc<Self>, ui: &crate::AppWindow) {
         let options = self.sync_options();
-        ui.set_sync_watched(options.watched);
-        ui.set_sync_watchlist(options.watchlist);
-        ui.set_sync_pull(options.pull);
+        ui.on_sync_account({
+            let library = self.clone();
+            move |service, on| {
+                let service = if service == 0 { haven_tracking::Service::Trakt } else { haven_tracking::Service::Simkl };
+                library.set_account_sync(service, on);
+            }
+        });
         ui.on_sync_now({
             let library = self.clone();
             move || library.run_sync(true)
-        });
-        ui.on_sync_option({
-            let library = self.clone();
-            move |which, on| {
-                let mut options = library.sync_options();
-                match which {
-                    0 => options.watched = on,
-                    1 => options.watchlist = on,
-                    _ => options.pull = on,
-                }
-                library.save_sync_options(&options);
-                library.show_sync();
-            }
         });
         self.show_sync();
         // The first run waits a little so Home loads first.
@@ -146,10 +167,10 @@ impl Library {
     /// queue a little later.
     pub(super) fn queue_sync(&self, what: &str, kind: &str, title_id: &str, video_id: &str) {
         let options = self.sync_options();
-        let wanted = if what == "watched" { options.watched } else { options.watchlist };
+        let wanted = if what == "watched" || what == "unwatched" { options.watched } else { options.watchlist };
         // Nothing linked, switched off, or a title the services cannot
         // know (they go by IMDb id): nothing to send.
-        if !wanted || self.accounts.borrow().is_empty() || subject(kind, title_id, None).is_none() {
+        if !wanted || self.syncing_accounts().is_empty() || subject(kind, title_id, None).is_none() {
             return;
         }
         let change = Change {
@@ -179,7 +200,7 @@ impl Library {
             self.sync.again.set(Some(earlier || pull));
             return;
         }
-        let accounts = self.accounts.borrow().clone();
+        let accounts = self.syncing_accounts();
         let queued = self.store.queued_changes().unwrap_or_default();
         if accounts.is_empty() || (queued.is_empty() && !pull) {
             return self.show_sync();
@@ -213,7 +234,7 @@ impl Library {
             // Each change goes to every account; it leaves the queue once
             // all of them have it (sending the same again does no harm).
             for change in queued {
-                let video = (change.what == "watched").then_some(change.video_id.as_str());
+                let video = (change.what == "watched" || change.what == "unwatched").then_some(change.video_id.as_str());
                 let Some(subject) = subject(&change.kind, &change.title_id, video) else {
                     outcome.sent.push(change.id);
                     continue;
@@ -221,8 +242,9 @@ impl Library {
                 let mut all = true;
                 for account in &ready {
                     let sent = match change.what.as_str() {
-                        "watched" if subject.series && subject.episode.is_none() => Ok(()),
+                        "watched" | "unwatched" if subject.series && subject.episode.is_none() => Ok(()),
                         "watched" => tracker.mark_watched(account, &subject).await,
+                        "unwatched" => tracker.mark_unwatched(account, &subject).await,
                         "watchlist_add" => tracker.set_watchlist(account, &subject, true).await,
                         _ => tracker.set_watchlist(account, &subject, false).await,
                     };
@@ -275,6 +297,7 @@ impl Library {
             }
             if watched_changed {
                 self.reload_continue();
+                self.refresh_ticks();
             }
             if outcome.problems.is_empty() {
                 options.last_pull = now();
@@ -350,14 +373,9 @@ impl Library {
     /// Fills Settings > Sync options: which accounts, and how it stands.
     pub(super) fn show_sync(&self) {
         let Some(ui) = self.ui.upgrade() else { return };
-        let accounts: Vec<&str> = self.accounts.borrow().iter().map(|a| a.service.label()).collect();
-        let waiting = self.store.queued_changes().map(|q| q.len()).unwrap_or(0);
         let options = self.sync_options();
-        let linked = if accounts.is_empty() {
-            "No account is linked yet. Link Trakt or Simkl under Accounts and Haven keeps them up to date.".to_owned()
-        } else {
-            format!("Sending to {}.", accounts.join(" and "))
-        };
+        let syncing: Vec<&str> = self.syncing_accounts().iter().map(|a| a.service.label()).collect();
+        let waiting = if syncing.is_empty() { 0 } else { self.store.queued_changes().map(|q| q.len()).unwrap_or(0) };
         let when = if options.last_sync > 0 {
             chrono::DateTime::from_timestamp(options.last_sync, 0)
                 .map(|at| at.with_timezone(&chrono::Local))
@@ -372,28 +390,51 @@ impl Library {
         } else {
             "Not synced yet".to_owned()
         };
-        let queue = match waiting {
-            0 => "nothing waiting".to_owned(),
-            1 => "1 change waiting".to_owned(),
-            n => format!("{n} changes waiting"),
-        };
         let problem = self.sync.last_problem.borrow().clone();
-        let status = if self.sync.running.get() {
-            "Syncing…".to_owned()
+        let status = if syncing.is_empty() {
+            "Link Trakt or Simkl (or switch one on below) and Haven keeps it up to date from this device.".to_owned()
+        } else if self.sync.running.get() {
+            format!("Syncing with {}…", syncing.join(" and "))
         } else if !problem.is_empty() {
-            format!("{when} · {queue}. Last try: {problem}. Haven tries again later.")
+            format!("{when}. Last try: {problem}. Haven tries again later.")
+        } else if waiting == 0 {
+            format!("{when}. Everything is in step with {}.", syncing.join(" and "))
         } else {
-            format!("{when} · {queue}.")
+            format!("{when}. {waiting} change{} still to send to {}.", if waiting == 1 { "" } else { "s" }, syncing.join(" and "))
         };
-        ui.set_sync_accounts(linked.into());
+        let linked: Vec<haven_tracking::Service> = self.accounts.borrow().iter().map(|a| a.service).collect();
+        let rows: Vec<crate::SyncAccount> = [haven_tracking::Service::Trakt, haven_tracking::Service::Simkl]
+            .into_iter()
+            .enumerate()
+            .map(|(index, service)| {
+                let is_linked = linked.contains(&service);
+                let on = is_linked && !options.off.iter().any(|o| o == service.label());
+                crate::SyncAccount {
+                    service: index as i32,
+                    name: service.label().into(),
+                    linked: is_linked,
+                    on,
+                    detail: if !is_linked {
+                        "Not linked.".into()
+                    } else if on {
+                        "Watched, progress and Watchlist, kept in step both ways.".into()
+                    } else {
+                        "Linked, but not syncing.".into()
+                    },
+                }
+            })
+            .collect();
+        ui.set_sync_accounts(slint::ModelRc::new(slint::VecModel::from(rows)));
         ui.set_sync_status(status.into());
+        ui.set_sync_waiting(waiting as i32);
+        ui.set_sync_problem(!problem.is_empty() && !syncing.is_empty());
         ui.set_sync_busy(self.sync.running.get());
-        ui.set_sync_linked(!accounts.is_empty());
+        ui.set_sync_linked(!syncing.is_empty());
         ui.set_sync_note(
             if PHONE {
-                "Haven keeps everything on this device first and sends your changes in one go, shortly after they happen and when Haven opens. Nothing runs while Haven is closed, so it barely touches the battery."
+                "Changes go out in one go shortly after they happen and when Haven opens. Nothing runs while Haven is closed, so it barely touches the battery."
             } else {
-                "Haven keeps everything on this computer first and sends each change straight away. While Haven is open it also brings in your accounts' Watchlist and what you watched every 15 minutes."
+                "Changes go out straight away. While Haven is open it also brings in your accounts' Watchlist and what you watched every 15 minutes."
             }
             .into(),
         );

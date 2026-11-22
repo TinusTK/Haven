@@ -12,6 +12,8 @@ mod calendar;
 mod cast;
 mod downloads;
 mod explore;
+mod kept;
+mod marks;
 mod home;
 mod offers;
 mod ondemand;
@@ -77,7 +79,7 @@ struct Installed {
 }
 
 /// The two places that show shelves.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Board {
     Home,
     Search,
@@ -96,6 +98,11 @@ struct ShelfSet {
     /// Goes up whenever the shelves are rebuilt, so late answers for the
     /// old shelves are dropped.
     generation: Cell<u64>,
+    /// Pictures already on screen, by title id, so rebuilt shelves show
+    /// them at once instead of loading them again.
+    images: RefCell<std::collections::HashMap<String, Image>>,
+    /// Each shelf's name for its kept copy (empty: not kept).
+    kept_names: RefCell<Vec<String>>,
 }
 
 /// A shelf to build: which catalogue of which add-on, and its heading.
@@ -250,6 +257,9 @@ pub struct Library {
     home_pause: Arc<Pause>,
     /// Where downloaded pictures are kept between runs.
     picture_cache: Arc<std::path::PathBuf>,
+    /// Shelf lists and calendar dates asked for and not answered yet
+    /// (a pulled-down Home turns its sign until none are left).
+    fetches_left: Cell<usize>,
 
     open: RefCell<Option<OpenTitle>>,
     /// Goes up when another title is opened or the page is closed.
@@ -359,6 +369,7 @@ impl Library {
             sync: sync::SyncState::default(),
             updates: updates::Updates::default(),
             picture_cache: Arc::new(picture_cache),
+            fetches_left: Cell::new(0),
             open: RefCell::default(),
             detail_generation: Cell::new(0),
             seasons: Rc::default(),
@@ -446,6 +457,9 @@ impl Library {
         connect!(on_show_more_streams, |group| |l: &Rc<Self>| l.show_more_streams(group.as_str()));
         connect!(on_toggle_watchlist, | | |l: &Rc<Self>| l.toggle_watchlist());
         connect!(on_clear_cache, | | |l: &Rc<Self>| l.clear_cache());
+        connect!(on_home_refresh, | | |l: &Rc<Self>| l.refresh_home());
+        connect!(on_show_sources, | | |l: &Rc<Self>| l.show_film_sources());
+        connect!(on_explore_refresh, | | |l: &Rc<Self>| l.refresh_explore());
         connect!(on_remove_continue, |poster| |l: &Rc<Self>| l.remove_continue(&poster));
         library.show_cache_size();
 
@@ -461,6 +475,7 @@ impl Library {
         library.start_offers(ui);
         library.start_home_top(ui);
         library.start_calendar(ui);
+        library.start_marks(ui);
         library.start_downloads(ui);
         library.start_history(ui);
         library.start_updates(ui);
@@ -500,6 +515,60 @@ impl Library {
         *self.autoplay.borrow_mut() = None;
         self.reload_continue();
         self.show_resume_note();
+        self.refresh_ticks();
+    }
+
+    /// Puts the gold ticks right after something was watched: the open
+    /// title's episodes (or the film itself) and the calendar.
+    pub(super) fn refresh_ticks(&self) {
+        let open = self.open.borrow().as_ref().map(|open| (open.kind.clone(), open.id.clone()));
+        if let Some((kind, id)) = open {
+            let film = self.film_watched(&kind, &id);
+            self.update_detail(|detail| detail.watched = film);
+            let finished = self.finished_here();
+            for at in 0..self.episodes.row_count() {
+                if let Some(mut row) = self.episodes.row_data(at) {
+                    let now = finished.contains(row.id.as_str());
+                    if row.watched != now {
+                        row.watched = now;
+                        self.episodes.set_row_data(at, row);
+                    }
+                }
+            }
+            self.update_season_flag();
+        }
+        self.redraw_calendar();
+    }
+
+    /// Whether every episode listed for the season is watched (the
+    /// season button then offers to mark it unwatched).
+    fn update_season_flag(&self) {
+        let rows = self.episodes.row_count();
+        let all = rows > 0 && self.episodes.iter().all(|row| row.watched);
+        if let Some(ui) = self.ui.upgrade() {
+            ui.set_season_all_watched(all);
+        }
+    }
+
+    /// Films' ticks on Home's shelves and in Explore, after a mark.
+    pub(super) fn refresh_shelf_ticks(&self) {
+        let fix = |items: &VecModel<Poster>| {
+            for at in 0..items.row_count() {
+                if let Some(mut poster) = items.row_data(at) {
+                    let now = self.film_watched(poster.kind.as_str(), poster.id.as_str());
+                    if poster.watched != now {
+                        poster.watched = now;
+                        items.set_row_data(at, poster);
+                    }
+                }
+            }
+        };
+        for set in [&self.home, &self.server_shelves, &self.catalog, &self.search] {
+            for items in set.posters.borrow().iter() {
+                fix(items);
+            }
+        }
+        fix(&self.explore_items());
     }
 
     fn board(&self, board: Board) -> &ShelfSet {
@@ -792,10 +861,33 @@ impl Library {
         let set = self.board(board);
         let generation = set.generation.get() + 1;
         set.generation.set(generation);
+        // Pictures on the old shelves stay on hand for the new ones.
+        {
+            let mut images = set.images.borrow_mut();
+            for items in set.posters.borrow().iter() {
+                for poster in items.iter().filter(|poster| poster.has_image) {
+                    images.insert(poster.id.to_string(), poster.image.clone());
+                }
+            }
+        }
 
         let mut shelves = Vec::new();
         let mut posters = Vec::new();
+        let mut kept_names = Vec::new();
+        let mut kept_lists = Vec::new();
         for (shelf, plan) in plans.into_iter().enumerate() {
+            // What this shelf held last time, shown until the fresh list comes.
+            let kept_name = if board == Board::Search {
+                String::new()
+            } else {
+                format!("shelf|{board:?}|{}|{}", plan.title, plan.source)
+            };
+            if !kept_name.is_empty() {
+                if let Some(list) = self.kept::<Vec<MetaPreview>>(&kept_name) {
+                    kept_lists.push((shelf, list));
+                }
+            }
+            kept_names.push(kept_name);
             let items = Rc::new(VecModel::<Poster>::default());
             shelves.push(Shelf {
                 title: plan.title.into(),
@@ -812,6 +904,10 @@ impl Library {
             let gate = self.server_gate.clone();
             // Home's shelves wait while another page is showing.
             let pause = (board != Board::Search).then(|| self.home_pause.clone());
+            let counted = board != Board::Search;
+            if counted {
+                self.fetches_left.set(self.fetches_left.get() + 1);
+            }
             self.tasks.spawn(async move {
                 let no_key = || "there is no TMDB key".to_owned();
                 if let Some(pause) = &pause {
@@ -850,11 +946,20 @@ impl Library {
                         .await
                         .map_err(|err| err.to_string()),
                 };
-                on_ui(move |library| library.shelf_loaded(board, generation, shelf, metas));
+                on_ui(move |library| {
+                    if counted {
+                        library.fetches_left.set(library.fetches_left.get().saturating_sub(1));
+                    }
+                    library.shelf_loaded(board, generation, shelf, metas)
+                });
             });
         }
         *set.posters.borrow_mut() = posters;
+        *set.kept_names.borrow_mut() = kept_names;
         set.shelves.set_vec(shelves);
+        for (shelf, list) in kept_lists {
+            self.shelf_loaded_from(board, generation, shelf, Ok(list), true);
+        }
     }
 
     fn shelf_loaded(
@@ -863,6 +968,20 @@ impl Library {
         generation: u64,
         shelf: usize,
         metas: Result<Vec<MetaPreview>, String>,
+    ) {
+        self.shelf_loaded_from(board, generation, shelf, metas, false)
+    }
+
+    /// Fills a shelf, from a fresh answer or (`from_kept`) from what it
+    /// held last time. A fresh answer replaces the kept one, unless it
+    /// failed or holds the same titles.
+    fn shelf_loaded_from(
+        &self,
+        board: Board,
+        generation: u64,
+        shelf: usize,
+        metas: Result<Vec<MetaPreview>, String>,
+        from_kept: bool,
     ) {
         let set = self.board(board);
         if generation != set.generation.get() {
@@ -873,8 +992,12 @@ impl Library {
         else {
             return;
         };
+        let kept_name = set.kept_names.borrow().get(shelf).cloned().unwrap_or_default();
+        let showing_kept = !from_kept && !row.loading && items.row_count() > 0;
         row.loading = false;
         match metas {
+            // The kept titles stay when the fresh ones cannot be had.
+            Err(_) if showing_kept => {}
             Err(err) => row.error = format!("Could not load this: {err}.").into(),
             Ok(metas) => {
                 // A shelf shows the start of a list; Explore shows it all.
@@ -883,9 +1006,25 @@ impl Library {
                 // more than once: show each once.
                 let metas: Vec<MetaPreview> =
                     haven_addons::without_repeats(metas).into_iter().take(length).collect();
+                if !from_kept && !kept_name.is_empty() {
+                    self.keep(kept_name, metas.clone());
+                }
+                let same = showing_kept
+                    && items.row_count() == metas.len()
+                    && items.iter().zip(&metas).all(|(old, new)| old.id.as_str() == new.id && old.title.as_str() == new.name);
+                if same {
+                    row.error = "".into();
+                    set.shelves.set_row_data(shelf, row);
+                    return;
+                }
                 if board != Board::Search {
                     self.offer_hero(&metas);
                 }
+                let images = set.images.borrow();
+                let mut on_hand = items.iter().filter(|p| p.has_image).map(|p| (p.id.to_string(), p.image.clone())).collect::<std::collections::HashMap<_, _>>();
+                on_hand.extend(images.iter().map(|(id, image)| (id.clone(), image.clone())));
+                drop(images);
+                row.error = "".into();
                 items.set_vec(
                     metas
                         .iter()
@@ -894,14 +1033,18 @@ impl Library {
                             kind: meta.kind.as_str().into(),
                             title: meta.name.as_str().into(),
                             year: meta.release_info.as_deref().unwrap_or_default().into(),
-                            image: Image::default(),
-                            has_image: false,
+                            image: on_hand.get(&meta.id).cloned().unwrap_or_default(),
+                            has_image: on_hand.contains_key(&meta.id),
                             video: "".into(),
                             progress: 0.0,
+                            watched: self.film_watched(&meta.kind, &meta.id),
                         })
                         .collect::<Vec<_>>(),
                 );
                 for (item, meta) in metas.into_iter().enumerate() {
+                    if on_hand.contains_key(&meta.id) {
+                        continue;
+                    }
                     let Some(url) = meta.poster else { continue };
                     let pause = (board != Board::Search).then(|| self.home_pause.clone());
                     self.fetch_image_for(pause, url, POSTER_SIZE, move |library, pixels| {
@@ -994,6 +1137,7 @@ impl Library {
     /// Deletes every kept picture. Pictures on screen stay; they are
     /// fetched again the next time they are needed.
     fn clear_cache(&self) {
+        self.clear_kept();
         if let Ok(files) = std::fs::read_dir(self.picture_cache.as_path()) {
             for file in files.flatten() {
                 let _ = std::fs::remove_file(file.path());
@@ -1038,6 +1182,7 @@ impl Library {
                     has_image: old.is_some(),
                     video: progress.video_id.as_str().into(),
                     progress: resume::share(progress.position, progress.duration).max(0.02),
+                    watched: false,
                 }
             })
             .collect();
@@ -1099,6 +1244,7 @@ impl Library {
                     has_image: old.is_some(),
                     video: progress.video_id.as_str().into(),
                     progress: if progress.finished { 1.0 } else { resume::share(progress.position, progress.duration).max(0.02) },
+                    watched: progress.finished,
                 }
             })
             .collect();
@@ -1161,6 +1307,7 @@ impl Library {
                     has_image: old.is_some(),
                     video: "".into(),
                     progress: 0.0,
+                    watched: self.film_watched(&saved.kind, &saved.title_id),
                 }
             })
             .collect();
@@ -1223,7 +1370,60 @@ impl Library {
         }
     }
 
+    /// A film's "Sources": looks up, now, where it can be watched.
+    fn show_film_sources(&self) {
+        let Some((kind, id)) = self.open.borrow().as_ref().map(|open| (open.kind.clone(), open.id.clone())) else {
+            return;
+        };
+        self.load_streams(&kind, &id, sources::HEADING);
+    }
+
+    // ---- Pulled down to refresh ----------------------------------------
+
+    /// Loads Home afresh: every shelf, the servers' libraries, the
+    /// calendar's dates and Continue Watching. What is on screen stays
+    /// until each fresh answer replaces it.
+    fn refresh_home(self: &Rc<Self>) {
+        let Some(ui) = self.ui.upgrade() else { return };
+        ui.set_home_refreshing(true);
+        self.reload_home();
+        self.reload_catalog();
+        self.reload_server_shelves();
+        self.recheck_calendar();
+        self.recheck_continue();
+        self.reload_continue();
+        self.wait_for_refresh(std::time::Instant::now());
+    }
+
+    /// Turns the sign until nothing asked for is still out (at most 20 s).
+    fn wait_for_refresh(self: &Rc<Self>, started: std::time::Instant) {
+        if self.fetches_left.get() == 0 || started.elapsed().as_secs() >= 20 {
+            if let Some(ui) = self.ui.upgrade() {
+                ui.set_home_refreshing(false);
+            }
+            return;
+        }
+        let library = Rc::downgrade(self);
+        slint::Timer::single_shot(std::time::Duration::from_millis(250), move || {
+            if let Some(library) = library.upgrade() {
+                library.wait_for_refresh(started);
+            }
+        });
+    }
+
     // ---- A title's page -------------------------------------------------
+
+    /// A film watched to the end (a series has no single tick).
+    pub(super) fn film_watched(&self, kind: &str, id: &str) -> bool {
+        kind == "movie" && self.store.finished_videos(kind, id).is_ok_and(|done| !done.is_empty())
+    }
+
+    /// The episodes of the open title watched to the end.
+    fn finished_here(&self) -> std::collections::HashSet<String> {
+        let open = self.open.borrow();
+        let Some(open) = open.as_ref() else { return Default::default() };
+        self.store.finished_videos(&open.kind, &open.id).unwrap_or_default().into_iter().collect()
+    }
 
     fn update_detail(&self, change: impl FnOnce(&mut Detail)) {
         if let Some(ui) = self.ui.upgrade() {
@@ -1267,9 +1467,13 @@ impl Library {
             poster: poster.image,
             loading: true,
             saved: self.store.in_watchlist(&kind, &id).unwrap_or(false),
+            watched: self.film_watched(&kind, &id),
+            film: kind == "movie",
             ..Detail::default()
         });
         ui.set_episode_open(false);
+        // The page opens on the poster and details alone.
+        ui.set_detail_panel_open(false);
         ui.set_play_note("".into());
         ui.set_episode_label("".into());
         ui.set_episode_filter("".into());
@@ -1284,6 +1488,11 @@ impl Library {
             .collect();
         *self.open.borrow_mut() =
             Some(OpenTitle { kind: kind.clone(), id: id.clone(), meta: None, wanted });
+        // Shown as it was last time straight away; the fresh details
+        // below only change the page if something is new.
+        if let Some(kept) = self.kept_details(&kind, &id) {
+            self.detail_loaded(generation, Ok(kept));
+        }
         if let Some((server, item)) = self.server_item(&id) {
             let client = self.server_client.clone();
             self.tasks.spawn(async move {
@@ -1343,17 +1552,21 @@ impl Library {
         else {
             return;
         };
+        // What the page shows already (kept from last time), if anything.
+        let shown = self.open.borrow().as_ref().and_then(|open| open.meta.clone());
         let meta = match found {
+            Ok(meta) if shown.as_ref() == Some(&meta) => {
+                // Nothing new: the page stays exactly as it is.
+                return self.update_detail(|detail| detail.loading = false);
+            }
             Ok(meta) => meta,
+            // The kept details stay when fresh ones cannot be had.
+            Err(_) if shown.is_some() => return self.update_detail(|detail| detail.loading = false),
             Err(err) => {
                 self.update_detail(|detail| {
                     detail.loading = false;
                     detail.error = err.into();
                 });
-                // A film can still have streams without details.
-                if kind != "series" {
-                    self.load_streams(&kind, &id, sources::HEADING);
-                }
                 return;
             }
         };
@@ -1365,6 +1578,7 @@ impl Library {
         if !meta.genres.is_empty() {
             facts.push(meta.genres.iter().take(3).cloned().collect::<Vec<_>>().join(", "));
         }
+        self.keep(kept::details_name(&kind, &id), meta.clone());
         let needs_poster = self.ui.upgrade().is_some_and(|ui| !ui.get_detail().has_poster);
         self.update_detail(|detail| {
             detail.loading = false;
@@ -1375,9 +1589,11 @@ impl Library {
                 meta.cast.iter().take(CAST_SHOWN).cloned().collect::<Vec<_>>().join(", ").into();
             detail.director = meta.director.join(", ").into();
         });
+        let refreshing = shown.is_some();
+        let same_background = shown.as_ref().is_some_and(|old| old.background == meta.background);
         let pictures = [
             (meta.poster.clone().filter(|_| needs_poster), POSTER_SIZE, DetailImage::Poster),
-            (meta.background.clone(), BACKGROUND_SIZE, DetailImage::Background),
+            (meta.background.clone().filter(|_| !same_background), BACKGROUND_SIZE, DetailImage::Background),
         ];
         for (url, size, which) in pictures {
             if let Some(url) = url {
@@ -1387,20 +1603,41 @@ impl Library {
             }
         }
 
+        let seasons = meta.seasons();
+        // Fresh details for a page already showing: new episodes and
+        // text come in, the season and episode picked stay as they are.
+        if refreshing {
+            let season = self.ui.upgrade().map(|ui| ui.get_season());
+            if let Some(open) = self.open.borrow_mut().as_mut() {
+                open.meta = Some(meta);
+            }
+            if !seasons.is_empty() {
+                self.seasons.set_vec(seasons.iter().map(|&s| s as i32).collect::<Vec<_>>());
+                let keep = season.filter(|s| seasons.contains(&(*s as u32))).unwrap_or(seasons[0] as i32);
+                self.show_season(keep);
+            }
+            return;
+        }
+
         self.enrich(generation, &meta);
         self.load_offers(generation, &meta);
 
-        let seasons = meta.seasons();
         let has_videos = !meta.videos.is_empty();
-        let all: Vec<EpisodeRow> = meta.videos.iter().map(episode_row).collect();
+        let finished_now = self.finished_here();
+        let all: Vec<EpisodeRow> = meta
+            .videos
+            .iter()
+            .map(|video| EpisodeRow { watched: finished_now.contains(video.id.as_str()), ..episode_row(video) })
+            .collect();
         // The episode a Continue Watching card asked for, if it exists.
         let wanted = self.open.borrow_mut().as_mut().and_then(|open| open.wanted.take());
         let wanted = wanted.and_then(|id| meta.videos.iter().find(|video| video.id == id).cloned());
         if let Some(open) = self.open.borrow_mut().as_mut() {
             open.meta = Some(meta);
         }
+        // A film's places to watch are looked up when "Sources" is tapped.
         if !has_videos {
-            self.load_streams(&kind, &id, sources::HEADING);
+            self.set_streams_state(Some(sources::HEADING), false, "");
         } else {
             self.set_streams_state(
                 Some(sources::HEADING),
@@ -1443,6 +1680,7 @@ impl Library {
         let words = self.ui.upgrade().map(|ui| ui.get_episode_filter().to_lowercase()).unwrap_or_default();
         let words = words.trim();
         let picked = self.listed.borrow().as_ref().map(|listed| listed.video_id.clone());
+        let finished = self.finished_here();
         let rows: Vec<EpisodeRow> = match self.open.borrow().as_ref().and_then(|o| o.meta.as_ref()) {
             Some(meta) => meta
                 .episodes(season.max(0) as u32)
@@ -1450,6 +1688,7 @@ impl Library {
                 .map(|video| {
                     let mut row = episode_row(video);
                     row.selected = picked.as_deref() == Some(video.id.as_str());
+                    row.watched = finished.contains(video.id.as_str());
                     row
                 })
                 .filter(|row| {
@@ -1464,6 +1703,7 @@ impl Library {
         if let Some(ui) = self.ui.upgrade() {
             ui.set_season(season);
         }
+        self.update_season_flag();
     }
 
     /// The words over the episode list changed: show the season again.
@@ -1504,6 +1744,7 @@ impl Library {
         if let Some(ui) = self.ui.upgrade() {
             ui.set_episode_label(detail.as_str().into());
             ui.set_episode_open(true);
+            ui.set_detail_panel_open(true);
         }
         if let Some(listed) = self.listed.borrow_mut().as_mut() {
             listed.detail = detail;
@@ -1559,6 +1800,7 @@ fn episode_row(video: &Video) -> EpisodeRow {
         // "2019-01-27T05:00:00.000Z" -> "2019-01-27"
         date: video.released.as_deref().and_then(|date| date.get(..10)).unwrap_or_default().into(),
         selected: false,
+        watched: false,
     }
 }
 

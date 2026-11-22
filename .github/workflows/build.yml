@@ -22,6 +22,8 @@ env:
   # Haven's own Trakt app (trakt.tv/oauth/applications), for Link in Settings.
   HAVEN_TRAKT_CLIENT_ID: ${{ secrets.TRAKT_CLIENT_ID }}
   HAVEN_TRAKT_CLIENT_SECRET: ${{ secrets.TRAKT_CLIENT_SECRET }}
+  # Haven's own Simkl app (simkl.com/settings/developer), for Link in Settings.
+  HAVEN_SIMKL_CLIENT_ID: ${{ secrets.SIMKL_CLIENT_ID }}
 
 jobs:
   windows:

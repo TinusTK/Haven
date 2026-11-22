@@ -27,6 +27,8 @@ const MONTHS: [&str; 12] = [
     "October", "November", "December",
 ];
 const WEEKDAYS: [&str; 7] = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+const WEEKDAY_NAMES: [&str; 7] =
+    ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 
 /// One film or episode coming out.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -61,6 +63,8 @@ pub(super) struct Calendar {
     /// The page has been opened, so it is kept up to date.
     opened: Cell<bool>,
     gate: Arc<Semaphore>,
+    /// The days on the page now, so a phone keeps the day picked.
+    shown: RefCell<Vec<NaiveDate>>,
 }
 
 impl Default for Calendar {
@@ -75,6 +79,7 @@ impl Default for Calendar {
             pictures: RefCell::default(),
             opened: Cell::new(false),
             gate: Arc::new(Semaphore::new(TITLES_AT_ONCE)),
+            shown: RefCell::default(),
         }
     }
 }
@@ -173,7 +178,24 @@ pub(super) fn month_days(year: i32, month: u32) -> Vec<NaiveDate> {
 impl Library {
     /// Fetches a title's details from wherever it came from: its media
     /// server, TMDB, or the first add-on that knows it.
+    /// The answer is kept, so the next start can show it at once.
     pub(super) fn details_of(
+        &self,
+        kind: &str,
+        id: &str,
+    ) -> Option<Pin<Box<dyn Future<Output = Result<MetaDetail, String>> + Send>>> {
+        let fetch = self.fetch_details(kind, id)?;
+        let (dir, name) = (self.kept_dir(), super::kept::details_name(kind, id));
+        Some(Box::pin(async move {
+            let found = fetch.await;
+            if let Ok(meta) = &found {
+                super::kept::write_kept(&dir, &name, meta);
+            }
+            found
+        }))
+    }
+
+    fn fetch_details(
         &self,
         kind: &str,
         id: &str,
@@ -293,8 +315,20 @@ impl Library {
             if !self.calendar.asked.borrow_mut().insert(title.clone()) {
                 continue;
             }
+            // The dates found last time show at once; fresh ones follow.
+            let kept = self.kept_details(&title.0, &title.1);
+            if let Some(meta) = &kept {
+                if let Some(picture) = meta.background.clone().or(meta.poster.clone()) {
+                    self.calendar.pictures.borrow_mut().insert(title.clone(), picture);
+                }
+                self.calendar.releases.borrow_mut().insert(title.clone(), releases_of(meta, &Local));
+            }
+            let counted = kept.is_none();
             let Some(details) = self.details_of(&title.0, &title.1) else { continue };
-            self.calendar.waiting.set(self.calendar.waiting.get() + 1);
+            if counted {
+                self.calendar.waiting.set(self.calendar.waiting.get() + 1);
+            }
+            self.fetches_left.set(self.fetches_left.get() + 1);
             let gate = self.calendar.gate.clone();
             self.tasks.spawn(async move {
                 let found = match gate.acquire().await {
@@ -308,7 +342,10 @@ impl Library {
                 }
                 on_ui(move |library| {
                     let calendar = &library.calendar;
-                    calendar.waiting.set(calendar.waiting.get().saturating_sub(1));
+                    if counted {
+                        calendar.waiting.set(calendar.waiting.get().saturating_sub(1));
+                    }
+                    library.fetches_left.set(library.fetches_left.get().saturating_sub(1));
                     // Taken off the Watchlist meanwhile: not wanted.
                     if calendar.asked.borrow().contains(&title) {
                         match releases {
@@ -318,7 +355,8 @@ impl Library {
                                 }
                                 calendar.releases.borrow_mut().insert(title, releases);
                             }
-                            // Asked again the next time the page opens.
+                            // Asked again the next time the page opens
+                            // (the kept dates stay meanwhile).
                             None => {
                                 calendar.asked.borrow_mut().remove(&title);
                             }
@@ -328,6 +366,18 @@ impl Library {
                 });
             });
         }
+        self.show_calendar();
+    }
+
+    /// Asks every title's dates again (Home pulled down); the dates on
+    /// screen stay until the fresh ones come.
+    pub(super) fn recheck_calendar(&self) {
+        self.calendar.asked.borrow_mut().clear();
+        self.refresh_calendar();
+    }
+
+    /// Draws the calendar again (after something was watched).
+    pub(super) fn redraw_calendar(&self) {
         self.show_calendar();
     }
 
@@ -345,6 +395,19 @@ impl Library {
             .into_iter()
             .map(|saved| ((saved.kind, saved.title_id), saved.title))
             .collect();
+
+        // What has been watched already, for the ticks.
+        let mut watched: HashMap<&Title, HashSet<String>> = HashMap::new();
+        let releases_now = self.calendar.releases.borrow();
+        for title in releases_now.keys() {
+            let finished = self.store.finished_videos(&title.0, &title.1).unwrap_or_default();
+            watched.insert(title, finished.into_iter().collect());
+        }
+        let is_watched = |title: &Title, release: &Release| {
+            watched.get(title).is_some_and(|done| {
+                if release.video.is_empty() { !done.is_empty() } else { done.contains(&release.video) }
+            })
+        };
 
         // Everything coming out, by day, in order of time then name.
         let mut by_day: HashMap<NaiveDate, Vec<(Option<NaiveTime>, CalendarEntry)>> = HashMap::new();
@@ -364,6 +427,7 @@ impl Library {
                             .map(|time| time.format("%H:%M").to_string())
                             .unwrap_or_default()
                             .into(),
+                        watched: is_watched(title, release),
                     },
                 ));
             }
@@ -394,6 +458,16 @@ impl Library {
                             .map(|(_, entry)| entry.clone())
                             .collect::<Vec<_>>(),
                     )),
+                    all: ModelRc::new(VecModel::from(
+                        entries.iter().map(|(_, entry)| entry.clone()).collect::<Vec<_>>(),
+                    )),
+                    long_name: format!(
+                        "{} {} {}",
+                        WEEKDAY_NAMES[day.weekday().num_days_from_monday() as usize],
+                        day.day(),
+                        MONTHS[day.month0() as usize]
+                    )
+                    .into(),
                 }
             })
             .collect();
@@ -437,7 +511,17 @@ impl Library {
         };
         ui.set_calendar_title(title.into());
         ui.set_calendar_is_week(week);
+        // A phone lists one day's releases: keep the day picked while it
+        // is still on the page, else today, else the 1st of the month.
+        let before = self.calendar.shown.borrow().get(ui.get_calendar_pick().max(0) as usize).copied();
+        let pick = before
+            .and_then(|day| days.iter().position(|d| *d == day))
+            .or_else(|| days.iter().position(|d| *d == today))
+            .or_else(|| days.iter().position(|d| week || d.month() == month))
+            .unwrap_or(0);
+        *self.calendar.shown.borrow_mut() = days.clone();
         ui.set_calendar_days(ModelRc::new(VecModel::from(squares)));
+        ui.set_calendar_pick(pick as i32);
         ui.set_calendar_agenda(ModelRc::new(VecModel::from(agenda)));
         ui.set_calendar_note(note.into());
         drop(ui);

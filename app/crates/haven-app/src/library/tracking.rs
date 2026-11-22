@@ -101,7 +101,7 @@ impl Library {
                     } else if has_keys && service == Service::Trakt {
                         "Not linked. Link opens trakt.tv to sign in, then comes back to Haven."
                     } else if has_keys {
-                        "Not linked. Link shows a code to enter on simkl.com."
+                        "Not linked. Link opens simkl.com: sign in and allow Haven, and it links by itself."
                     } else if service == Service::Trakt {
                         "Not available in this copy of Haven yet (no Trakt app key)."
                     } else {
@@ -172,10 +172,11 @@ impl Library {
                         ui.set_tracking_code(user_code.into());
                         ui.set_tracking_link(link.as_str().into());
                     }
-                    library.tracking_status(&format!(
-                        "Enter the code on the {} page that just opened in your web browser.",
-                        service.label()
-                    ));
+                    library.tracking_status(&if service == Service::Simkl {
+                        "Sign in on the Simkl page that just opened in your web browser and allow Haven. Haven links by itself.".to_owned()
+                    } else {
+                        format!("Enter the code on the {} page that just opened in your web browser.", service.label())
+                    });
                     open_in_browser(&link);
                 });
             }
@@ -209,7 +210,10 @@ impl Library {
         let attempts = self.tracking_attempt.clone();
         let tracker = self.tracker();
         let state = random_state();
-        let link = match tracker.trakt_authorize_url(&state) {
+        // A new PKCE pair for each sign-in: only this run of Haven can
+        // turn Trakt's code into a sign-in.
+        let pkce = haven_tracking::Pkce::new();
+        let link = match tracker.trakt_authorize_url(&state, &pkce.challenge) {
             Ok(link) => link,
             Err(_) => {
                 return self.tracking_status(
@@ -263,7 +267,7 @@ impl Library {
             };
             drop(listener);
             let result = match code {
-                Ok(code) => tracker.trakt_exchange(&code, now()).await.map_err(|err| err.to_string()),
+                Ok(code) => tracker.trakt_exchange(&code, &pkce.verifier, now()).await.map_err(|err| err.to_string()),
                 Err(err) => Err(err),
             };
             if current() {
@@ -294,8 +298,9 @@ impl Library {
                 self.accounts.borrow_mut().push(account);
                 self.save_accounts();
                 self.tracking_status(&format!("Linked to {}.", service.label()));
-                // Bring in what the new account holds, and send what waits.
-                self.run_sync(true);
+                // Linking turns its sync on: bring in what the new account
+                // holds, and send what waits.
+                self.set_account_sync(service, true);
             }
             Err(err) => {
                 self.tracking_status(&format!("Could not link {}: {err}.", service.label()))
@@ -305,11 +310,14 @@ impl Library {
     }
 
     fn tracking_disconnect(&self, service: Service) {
-        // Tell Trakt too, so the link is gone on its side as well.
-        if let Some(account) = self.account(service).filter(|_| service == Service::Trakt) {
+        // Tell the service too, so the link is gone on its side as well.
+        if let Some(account) = self.account(service) {
             let tracker = self.tracker();
             self.tasks.spawn(async move {
-                let _ = tracker.trakt_revoke(&account).await;
+                let _ = match account.service {
+                    Service::Trakt => tracker.trakt_revoke(&account).await,
+                    Service::Simkl => tracker.simkl_revoke(&account).await,
+                };
             });
         }
         self.accounts.borrow_mut().retain(|account| account.service != service);

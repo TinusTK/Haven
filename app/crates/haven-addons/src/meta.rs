@@ -1,9 +1,9 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::{Error, Result, lenient};
 
 /// The short form of a title that catalogues list: enough for a poster.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct MetaPreview {
     pub id: String,
     #[serde(rename = "type")]
@@ -17,7 +17,7 @@ pub struct MetaPreview {
 }
 
 /// Everything an add-on knows about one title.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct MetaDetail {
     pub id: String,
     #[serde(rename = "type")]
@@ -58,7 +58,7 @@ pub struct MetaDetail {
 }
 
 /// One episode. Its `id` is what streams are asked for.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct Video {
     pub id: String,
     /// `title` in the current protocol, `name` in older add-ons.

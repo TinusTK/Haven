@@ -4,6 +4,7 @@
 
 use std::{
     cell::{Cell, RefCell},
+    collections::HashMap,
     rc::Rc,
 };
 
@@ -74,9 +75,19 @@ pub(super) struct Explore {
     /// many titles to skip.
     next: Cell<u32>,
     loading: Cell<bool>,
+    /// The first page of this source has not come yet.
+    first: Cell<bool>,
+    /// The grid shows the first page kept from last time.
+    showing_kept: Cell<bool>,
+    /// The name the source's first page is kept under.
+    kept_name: RefCell<String>,
 }
 
 impl Library {
+    pub(super) fn explore_items(&self) -> Rc<VecModel<Poster>> {
+        self.explore.items.clone()
+    }
+
     pub(super) fn start_explore(self: &Rc<Self>, ui: &AppWindow) {
         ui.set_explore_items(ModelRc::from(self.explore.items.clone()));
         ui.on_explore_pick({
@@ -231,6 +242,18 @@ impl Library {
                 }
             }
         }
+        // The first page as it was last time shows at once; the fresh
+        // one replaces it when it comes.
+        let name = format!("explore|{}|{}|{}", chosen.label(), explore.kind.get(), explore.genre.get());
+        explore.first.set(true);
+        explore.showing_kept.set(false);
+        if let Some(titles) = self.kept::<Vec<MetaPreview>>(&name) {
+            if !titles.is_empty() {
+                self.explore_add(generation, titles, &HashMap::new());
+                explore.showing_kept.set(true);
+            }
+        }
+        *explore.kept_name.borrow_mut() = name;
         self.explore_load();
     }
 
@@ -253,6 +276,54 @@ impl Library {
                 }
             });
         });
+    }
+
+    /// Loads the source showing afresh (Explore pulled down). The titles
+    /// on screen stay until the fresh first page replaces them.
+    pub(super) fn refresh_explore(&self) {
+        let Some(ui) = self.ui.upgrade() else { return };
+        let explore = &self.explore;
+        let Some(source) = explore.sources.borrow().iter().position(|s| s.label() == *explore.chosen.borrow()) else {
+            return;
+        };
+        ui.set_explore_refreshing(true);
+        // The grid as it is becomes the page shown until the fresh one comes.
+        let on_screen: Vec<MetaPreview> = explore
+            .items
+            .iter()
+            .map(|poster| MetaPreview {
+                id: poster.id.to_string(),
+                kind: poster.kind.to_string(),
+                name: poster.title.to_string(),
+                poster: None,
+                release_info: Some(poster.year.to_string()).filter(|year| !year.is_empty()),
+            })
+            .collect();
+        let images: HashMap<String, Image> = explore
+            .items
+            .iter()
+            .filter(|poster| poster.has_image)
+            .map(|poster| (poster.id.to_string(), poster.image.clone()))
+            .collect();
+        let (kind, genre) = (explore.kind.get() as i32, explore.genre.get());
+        // Forget the source so it is picked as new (its genres stay).
+        self.explore_pick(source as i32, kind, genre);
+        if !on_screen.is_empty() && !explore.showing_kept.get() {
+            explore.items.set_vec(Vec::new());
+            self.explore_add(explore.generation.get(), on_screen, &images);
+            explore.showing_kept.set(true);
+        } else if explore.showing_kept.get() {
+            // Kept from last time: put the pictures on screen back.
+            for at in 0..explore.items.row_count() {
+                if let Some(mut poster) = explore.items.row_data(at) {
+                    if let Some(image) = images.get(poster.id.as_str()).filter(|_| !poster.has_image) {
+                        poster.image = image.clone();
+                        poster.has_image = true;
+                        explore.items.set_row_data(at, poster);
+                    }
+                }
+            }
+        }
     }
 
     /// Fetches the next page of the chosen source and adds it to the grid.
@@ -342,14 +413,48 @@ impl Library {
         explore.loading.set(false);
         let Some(ui) = self.ui.upgrade() else { return };
         ui.set_explore_loading(false);
+        let first = explore.first.replace(false);
+        if first {
+            ui.set_explore_refreshing(false);
+        }
         let (titles, next, more) = match page {
             Ok(page) => page,
+            // The kept page stays when the fresh one cannot be had.
+            Err(_) if first && explore.showing_kept.get() => {
+                explore.showing_kept.set(false);
+                ui.set_explore_more(false);
+                return;
+            }
             Err(err) => {
                 ui.set_explore_more(false);
                 return ui.set_explore_note(format!("Could not load this: {err}.").into());
             }
         };
         explore.next.set(next);
+        let mut on_hand = HashMap::new();
+        if first {
+            self.keep(explore.kept_name.borrow().clone(), titles.clone());
+            // The fresh first page takes the kept one's place; pictures
+            // already on screen stay.
+            if explore.showing_kept.replace(false) {
+                for poster in explore.items.iter().filter(|poster| poster.has_image) {
+                    on_hand.insert(poster.id.to_string(), poster.image.clone());
+                }
+                explore.items.set_vec(Vec::new());
+            }
+        }
+        let added = self.explore_add(generation, titles, &on_hand);
+        drop(ui);
+        let Some(ui) = self.ui.upgrade() else { return };
+        // A page of nothing new means the end, whatever the source says.
+        ui.set_explore_more(more && added > 0);
+        ui.set_explore_note(if explore.items.row_count() == 0 { "Nothing here." } else { "" }.into());
+    }
+
+    /// Adds titles to the grid (each once) and fetches their posters,
+    /// unless `on_hand` has them. Returns how many were added.
+    fn explore_add(&self, generation: u64, titles: Vec<MetaPreview>, on_hand: &HashMap<String, Image>) -> usize {
+        let explore = &self.explore;
         let mut added = 0;
         for title in haven_addons::without_repeats(titles) {
             // Pages can overlap, and the same film can be listed again
@@ -366,24 +471,31 @@ impl Library {
             if known {
                 continue;
             }
-            let item = explore.items.row_count();
+            let image = on_hand.get(&title.id).cloned();
             explore.items.push(Poster {
                 id: title.id.as_str().into(),
                 kind: title.kind.as_str().into(),
                 title: title.name.as_str().into(),
                 year: title.release_info.as_deref().unwrap_or_default().into(),
-                image: Image::default(),
-                has_image: false,
+                has_image: image.is_some(),
+                image: image.unwrap_or_default(),
                 video: "".into(),
                 progress: 0.0,
+                watched: self.film_watched(&title.kind, &title.id),
             });
             added += 1;
+            if on_hand.contains_key(&title.id) {
+                continue;
+            }
             if let Some(url) = title.poster {
+                let id = title.id.clone();
                 self.fetch_image(url, POSTER_SIZE, move |library, pixels| {
                     let explore = &library.explore;
                     if generation != explore.generation.get() {
                         return;
                     }
+                    // Found by id: a kept page may have been replaced meanwhile.
+                    let Some(item) = explore.items.iter().position(|poster| poster.id.as_str() == id) else { return };
                     if let Some(mut poster) = explore.items.row_data(item) {
                         poster.image = Image::from_rgba8(pixels);
                         poster.has_image = true;
@@ -392,9 +504,7 @@ impl Library {
                 });
             }
         }
-        // A page of nothing new means the end, whatever the source says.
-        ui.set_explore_more(more && added > 0);
-        ui.set_explore_note(if explore.items.row_count() == 0 { "Nothing here." } else { "" }.into());
+        added
     }
 }
 

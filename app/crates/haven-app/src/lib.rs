@@ -119,9 +119,11 @@ pub fn run(paths: AppPaths, phone: bool) -> Result<(), Box<dyn Error>> {
     let live = livetv::LiveTv::start(&ui, store.clone(), tasks.handle().clone())?;
 
     // The loading screen: the halo and a bar that follows what Haven
-    // loads at start. It shows for at least 3 seconds, and after that
-    // until the bar is full (at most 25 seconds, so a dead network never
-    // keeps Haven shut).
+    // loads at start. What was loaded last time is kept and shows at
+    // once (then is brought up to date behind the scenes), so on most
+    // starts the bar fills straight away. It shows for at least a second
+    // (so it does not flash), else until the bar is full, and never more
+    // than 12 seconds, so a slow or dead network never keeps Haven shut.
     let splash = Rc::new(slint::Timer::default());
     {
         let started = std::time::Instant::now();
@@ -130,12 +132,13 @@ pub fn run(paths: AppPaths, phone: bool) -> Result<(), Box<dyn Error>> {
         splash.start(slint::TimerMode::Repeated, std::time::Duration::from_millis(80), move || {
             let Some(ui) = ui.upgrade() else { return };
             let elapsed = started.elapsed().as_secs_f32();
-            let real = if elapsed >= 25.0 { 1.0 } else { library.startup().clamp(0.0, 1.0) };
-            // In the first 3 seconds the bar cannot run ahead of the clock.
-            let target = if elapsed < 3.0 { real.min(elapsed / 3.0) } else { real };
+            let real = if elapsed >= 12.0 { 1.0 } else { library.startup().clamp(0.0, 1.0) };
+            // In the first second the bar cannot run ahead of the clock.
+            let target = if elapsed < 1.0 { real.min(elapsed) } else { real };
             shown.set(shown.get().max(target));
             ui.set_splash_progress(shown.get());
-            if shown.get() >= 1.0 && elapsed >= 3.0 {
+            if shown.get() >= 1.0 && elapsed >= 1.0 {
+                haven_core::diag::note(&format!("loading screen closed after {elapsed:.1} s"));
                 ui.set_splash_shown(false);
                 let faded = ui.as_weak();
                 slint::Timer::single_shot(std::time::Duration::from_millis(450), move || {

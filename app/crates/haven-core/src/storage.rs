@@ -367,6 +367,15 @@ impl Store {
         Ok(())
     }
 
+    /// Forgets one film or episode (marked unwatched).
+    pub fn remove_video_progress(&self, kind: &str, title_id: &str, video_id: &str) -> Result<()> {
+        self.conn.execute(
+            "DELETE FROM progress WHERE kind = ?1 AND title_id = ?2 AND video_id = ?3",
+            [kind, title_id, video_id],
+        )?;
+        Ok(())
+    }
+
     /// What was saved for one film or episode, if anything.
     pub fn progress(&self, kind: &str, title_id: &str, video_id: &str) -> Result<Option<Progress>> {
         Ok(self
@@ -570,6 +579,12 @@ impl Store {
             self.conn.execute(
                 "DELETE FROM sync_queue WHERE what LIKE 'watchlist_%' AND kind = ?1 AND title_id = ?2",
                 [&change.kind, &change.title_id],
+            )?;
+        } else if change.what == "watched" || change.what == "unwatched" {
+            // Marked watched then unwatched (or the other way): the last one counts.
+            self.conn.execute(
+                "DELETE FROM sync_queue WHERE what IN ('watched', 'unwatched') AND kind = ?1 AND title_id = ?2 AND video_id = ?3",
+                [&change.kind, &change.title_id, &change.video_id],
             )?;
         } else {
             self.conn.execute(
@@ -779,6 +794,28 @@ mod tests {
         assert_eq!(again.position, 250.0);
         assert_eq!(again.updated_at, 2);
         assert_eq!(again.poster.as_deref(), Some("https://example.org/p.jpg"));
+    }
+
+    #[test]
+    fn an_episode_can_be_marked_unwatched_and_the_last_mark_is_sent() {
+        let store = Store::in_memory().unwrap();
+        store.save_progress(&watched("a", "a:1:1", 0.0, true, 10)).unwrap();
+        store.save_progress(&watched("a", "a:1:2", 0.0, true, 11)).unwrap();
+        store.remove_video_progress("series", "a", "a:1:1").unwrap();
+        assert_eq!(store.finished_videos("series", "a").unwrap(), vec!["a:1:2".to_owned()]);
+        let change = |what: &str| Change {
+            id: 0,
+            what: what.to_owned(),
+            kind: "series".to_owned(),
+            title_id: "a".to_owned(),
+            video_id: "a:1:1".to_owned(),
+            created_at: 1,
+        };
+        store.queue_change(&change("watched")).unwrap();
+        store.queue_change(&change("unwatched")).unwrap();
+        let queued = store.queued_changes().unwrap();
+        assert_eq!(queued.len(), 1);
+        assert_eq!(queued[0].what, "unwatched");
     }
 
     #[test]
