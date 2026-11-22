@@ -7,20 +7,31 @@
 //! `stream/<type>/<id>.json`.
 
 mod client;
-mod lenient;
 mod manifest;
-mod meta;
-mod stream;
 mod url;
 
 pub use client::Client;
-pub use manifest::{Catalog, Extra, Manifest, Resource, parse_manifest};
-pub use meta::{
-    MetaDetail, MetaPreview, Video, is_release_name, parse_catalog, parse_meta, title_key,
-    without_repeats,
+pub use manifest::{Manifest, Resource, parse_manifest};
+pub use haven_titles::{
+    Catalog, Extra, MetaDetail, MetaPreview, Source, Stream, StreamKind, Video, catalog_url,
+    is_release_name, resource_url, resource_url_with, title_key, without_repeats,
 };
-pub use stream::{Stream, StreamKind, parse_streams};
-pub use url::{catalog_url, manifest_url, resource_url, resource_url_with};
+
+/// Reads a catalogue page an add-on sent.
+pub fn parse_catalog(json: &str) -> Result<Vec<MetaPreview>> {
+    Ok(haven_titles::parse_catalog(json)?)
+}
+
+/// Reads the details an add-on sent for one title.
+pub fn parse_meta(json: &str) -> Result<MetaDetail> {
+    Ok(haven_titles::parse_meta(json)?)
+}
+
+/// Reads the streams an add-on offered.
+pub fn parse_streams(json: &str) -> Result<Vec<Stream>> {
+    Ok(haven_titles::parse_streams(json)?)
+}
+pub use url::manifest_url;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -38,6 +49,18 @@ pub enum Error {
     NotText,
     #[error("the add-on does not know this title")]
     UnknownTitle,
+}
+
+impl From<haven_titles::Error> for Error {
+    fn from(error: haven_titles::Error) -> Self {
+        match error {
+            haven_titles::Error::BadResponse(e) => Error::BadResponse(e),
+            haven_titles::Error::UnknownTitle => Error::UnknownTitle,
+            haven_titles::Error::InvalidAddress(address) => Error::InvalidAddress(address),
+            haven_titles::Error::Http(e) => Error::Http(e),
+            haven_titles::Error::NotText => Error::NotText,
+        }
+    }
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

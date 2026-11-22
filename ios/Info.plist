@@ -29,6 +29,19 @@
         <string>UIInterfaceOrientationLandscapeLeft</string>
         <string>UIInterfaceOrientationLandscapeRight</string>
     </array>
+    <!-- Haven's backup shows in the Files app (On My iPhone › Haven). -->
+    <key>UIFileSharingEnabled</key><true/>
+    <key>LSSupportsOpeningDocumentsInPlace</key><true/>
+    <!-- The App Store build's backup folder in iCloud Drive, named Haven. -->
+    <key>NSUbiquitousContainers</key>
+    <dict>
+        <key>iCloud.net.haven.app</key>
+        <dict>
+            <key>NSUbiquitousContainerIsDocumentScopePublic</key><true/>
+            <key>NSUbiquitousContainerName</key><string>Haven</string>
+            <key>NSUbiquitousContainerSupportedFolderLevels</key><string>Any</string>
+        </dict>
+    </dict>
     <!-- Lets animations run at the screen's full rate on iPhones. -->
     <key>CADisableMinimumFrameDurationOnPhone</key><true/>
     <!-- Slint's windows are attached through UIKit's scenes. -->

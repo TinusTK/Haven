@@ -5,13 +5,20 @@ edition.workspace = true
 publish.workspace = true
 
 [dependencies]
-haven-addons.workspace = true
+haven-titles.workspace = true
 haven-core.workspace = true
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
+url = "2"
+
+[features]
+# Store builds: media servers only on the home network or Tailscale.
+own-network = []
+# Add-ons a Jellyfin server shares with its owner (not in store builds).
+shared-addons = []
 
 [dev-dependencies]
 tokio.workspace = true

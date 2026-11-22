@@ -1,7 +1,7 @@
 //! Plex. Signing in goes through plex.tv with a short code the user
 //! approves in a web browser; the servers are then asked directly.
 
-use haven_addons::{MetaDetail, MetaPreview, Stream, Video};
+use haven_titles::{MetaDetail, MetaPreview, Stream, Video};
 use serde_json::{Value, json};
 
 use crate::{
@@ -90,17 +90,22 @@ pub(crate) fn read_resources(resources: &Value) -> Vec<Listed> {
 }
 
 pub async fn servers(client: &Client, account_token: &str) -> Result<Vec<Server>> {
-    let url = format!("{PLEX_TV}/resources?includeHttps=1&includeRelay=1");
+    // Store builds use only the server's own-network addresses: no relay.
+    let relay = if crate::ONLY_OWN_NETWORK { 0 } else { 1 };
+    let url = format!("{PLEX_TV}/resources?includeHttps=1&includeRelay={relay}");
     let resources = client.call(&url, &headers(client, Some(account_token)), None).await?;
     let listed = read_resources(&resources);
     if listed.is_empty() {
         return Ok(Vec::new());
     }
     let mut found = Vec::new();
+    let mut refused = false;
     for server in listed {
         for address in &server.addresses {
             let probe = format!("{address}/identity");
-            if client.call(&probe, &headers(client, Some(&server.token)), None).await.is_ok() {
+            let answer = client.call(&probe, &headers(client, Some(&server.token)), None).await;
+            refused |= matches!(answer, Err(Error::NotOwnNetwork));
+            if answer.is_ok() {
                 found.push(Server {
                     id: 0,
                     kind: Kind::Plex,
@@ -113,7 +118,11 @@ pub async fn servers(client: &Client, account_token: &str) -> Result<Vec<Server>
             }
         }
     }
-    if found.is_empty() { Err(Error::Unreachable) } else { Ok(found) }
+    match (found.is_empty(), refused) {
+        (false, _) => Ok(found),
+        (true, true) => Err(Error::NotOwnNetwork),
+        (true, false) => Err(Error::Unreachable),
+    }
 }
 
 async fn get(client: &Client, server: &Server, path: &str) -> Result<Value> {
@@ -282,6 +291,10 @@ pub(crate) fn read_previews(server: &Server, container: &Value) -> Vec<MetaPrevi
             name,
             poster: thumb.map(|thumb| image(server, &thumb)),
             release_info: text(item, "year"),
+            rating: number(item, "audienceRating")
+                .or_else(|| number(item, "rating"))
+                .filter(|r| *r > 0.0)
+                .map(|r| format!("{r:.1}")),
         });
     }
     previews
@@ -324,6 +337,7 @@ pub(crate) fn read_detail(server: &Server, detail: &Value, episodes: &Value) -> 
         id: title_id(server.id, &id),
         kind: if text(item, "type").as_deref() == Some("show") { "series" } else { "movie" }.to_owned(),
         name: text(item, "title")?,
+        logo: None,
         poster: text(item, "thumb").map(|thumb| image(server, &thumb)),
         background: text(item, "art").map(|art| image(server, &art)),
         description: text(item, "summary"),

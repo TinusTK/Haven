@@ -548,6 +548,16 @@ impl Store {
         Ok(rows.collect::<rusqlite::Result<_>>()?)
     }
 
+    /// Every film and episode with a position or a watched mark, newest
+    /// first (for handing the whole record to Haven Hub).
+    pub fn all_progress(&self) -> Result<Vec<Progress>> {
+        let mut query = self
+            .conn
+            .prepare(&format!("SELECT {PROGRESS_COLUMNS} FROM progress ORDER BY updated_at DESC"))?;
+        let rows = query.query_map([], progress_from)?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
     /// The films and episodes of one title watched to the end.
     pub fn finished_videos(&self, kind: &str, title_id: &str) -> Result<Vec<String>> {
         let mut query = self.conn.prepare(

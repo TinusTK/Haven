@@ -6,6 +6,8 @@
 //! Each service needs the app's own keys (a client id; Trakt also a
 //! client secret), which come from Settings.
 
+pub mod sync;
+
 use haven_core::{http, secrets::Secrets};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};

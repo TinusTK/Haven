@@ -157,6 +157,7 @@ fn repeats_of_a_title_are_dropped_and_the_clean_name_wins() {
         name: name.into(),
         poster: None,
         release_info: year.map(Into::into),
+        rating: None,
     };
     assert_eq!(
         title_key("movie", "Dune Part Two (2024) [1080p] [WEBRip] 88", None),

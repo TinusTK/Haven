@@ -10,7 +10,7 @@ use std::{
 };
 
 use chrono::{DateTime, Datelike, Days, Local, Months, NaiveDate, NaiveTime, TimeZone};
-use haven_addons::MetaDetail;
+use haven_titles::MetaDetail;
 use slint::{ModelRc, VecModel};
 use tokio::sync::Semaphore;
 
@@ -216,15 +216,15 @@ impl Library {
             .installed
             .borrow()
             .iter()
-            .filter(|addon| addon.manifest.provides("meta", kind, id))
+            .filter(|addon| addon.provides("meta", kind, id))
             .map(|addon| addon.url.clone())
             .collect();
         if sources.is_empty() {
             return None;
         }
-        let (addons, kind, id) = (self.addons.clone(), kind.to_owned(), id.to_owned());
+        let (addons, kind, id) = (self.catalogues.clone(), kind.to_owned(), id.to_owned());
         Some(Box::pin(async move {
-            let mut found = Err("no add-on has it".to_owned());
+            let mut found = Err("no source has it".to_owned());
             for url in sources {
                 match addons.meta(&url, &kind, &id).await {
                     Ok(meta) => return Ok(meta),

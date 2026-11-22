@@ -20,7 +20,7 @@ use std::{
     time::Duration,
 };
 
-use haven_core::storage::{Change, Progress, Saved};
+use haven_core::storage::Change;
 use haven_tracking::{Account, Listed, Watched, subject};
 use serde::{Deserialize, Serialize};
 
@@ -85,15 +85,7 @@ fn now() -> i64 {
     chrono::Utc::now().timestamp()
 }
 
-/// What one run brought back, for the UI thread.
-struct Outcome {
-    sent: Vec<i64>,
-    problems: Vec<String>,
-    renewed: Vec<Account>,
-    watchlists: Vec<Listed>,
-    watched: Vec<Watched>,
-    pulled: bool,
-}
+use haven_tracking::sync::Outcome;
 
 impl Library {
     fn sync_options(&self) -> Options {
@@ -211,74 +203,14 @@ impl Library {
         let tracker = self.tracker();
         let pull = pull && options.pull;
         self.tasks.spawn(async move {
-            let mut outcome = Outcome {
-                sent: Vec::new(),
-                problems: Vec::new(),
-                renewed: Vec::new(),
-                watchlists: Vec::new(),
-                watched: Vec::new(),
-                pulled: pull,
-            };
-            // A token about to run out is renewed first.
-            let mut ready = Vec::new();
-            for account in accounts {
-                match tracker.renewed(&account, now()).await {
-                    Ok(Some(renewed)) => {
-                        outcome.renewed.push(renewed.clone());
-                        ready.push(renewed);
-                    }
-                    Ok(None) => ready.push(account),
-                    Err(err) => outcome.problems.push(format!("{}: {err}", account.service.label())),
-                }
-            }
-            // Each change goes to every account; it leaves the queue once
-            // all of them have it (sending the same again does no harm).
-            for change in queued {
-                let video = (change.what == "watched" || change.what == "unwatched").then_some(change.video_id.as_str());
-                let Some(subject) = subject(&change.kind, &change.title_id, video) else {
-                    outcome.sent.push(change.id);
-                    continue;
-                };
-                let mut all = true;
-                for account in &ready {
-                    let sent = match change.what.as_str() {
-                        "watched" | "unwatched" if subject.series && subject.episode.is_none() => Ok(()),
-                        "watched" => tracker.mark_watched(account, &subject).await,
-                        "unwatched" => tracker.mark_unwatched(account, &subject).await,
-                        "watchlist_add" => tracker.set_watchlist(account, &subject, true).await,
-                        _ => tracker.set_watchlist(account, &subject, false).await,
-                    };
-                    if let Err(err) = sent {
-                        all = false;
-                        outcome.problems.push(format!("{}: {err}", account.service.label()));
-                    }
-                }
-                if all && !ready.is_empty() {
-                    outcome.sent.push(change.id);
-                }
-            }
-            if pull {
-                for account in &ready {
-                    match tracker.watchlist(account).await {
-                        Ok(listed) => outcome.watchlists.extend(listed),
-                        Err(err) => outcome.problems.push(format!("{}: {err}", account.service.label())),
-                    }
-                    match tracker.watched(account).await {
-                        Ok(watched) => outcome.watched.extend(watched),
-                        Err(err) => outcome.problems.push(format!("{}: {err}", account.service.label())),
-                    }
-                }
-            }
+            let outcome = haven_tracking::sync::exchange(&tracker, accounts, queued, pull, now()).await;
             on_ui(move |library| library.sync_finished(outcome));
         });
     }
 
     fn sync_finished(&self, outcome: Outcome) {
-        for renewed in outcome.renewed {
-            let mut accounts = self.accounts.borrow_mut();
-            accounts.retain(|known| known.service != renewed.service);
-            accounts.push(renewed);
-            drop(accounts);
+        if !outcome.renewed.is_empty() {
+            haven_tracking::sync::keep_renewed(&mut self.accounts.borrow_mut(), &outcome.renewed);
             self.save_accounts();
         }
         for id in &outcome.sent {
@@ -317,57 +249,12 @@ impl Library {
 
     /// Puts titles from an account's Watchlist on Haven's, if new there.
     pub(super) fn add_listed(&self, listed: &[Listed]) -> usize {
-        let mut added = 0;
-        // Oldest first, so the list keeps the service's order.
-        for (place, title) in listed.iter().rev().enumerate() {
-            let kind = if title.series { "series" } else { "movie" };
-            if self.store.in_watchlist(kind, &title.imdb).unwrap_or(true) {
-                continue;
-            }
-            let saved = self.store.add_to_watchlist(&Saved {
-                kind: kind.to_owned(),
-                title_id: title.imdb.clone(),
-                title: title.title.clone(),
-                year: title.year.clone(),
-                poster: None,
-                added_at: now() * 1000 + place as i64,
-            });
-            if saved.is_ok() {
-                added += 1;
-            }
-        }
-        added
+        haven_tracking::sync::add_listed(&self.store, listed, now())
     }
 
     /// Records what an account says was watched, where Haven has nothing yet.
     fn add_watched(&self, watched: &[Watched]) -> usize {
-        watched
-            .iter()
-            .filter(|entry| {
-                let (kind, video_id, detail) = match entry.episode {
-                    Some((season, episode)) => (
-                        "series",
-                        format!("{}:{season}:{episode}", entry.imdb),
-                        format!("S{season} E{episode}"),
-                    ),
-                    None => ("movie", entry.imdb.clone(), String::new()),
-                };
-                self.store
-                    .add_watched_elsewhere(&Progress {
-                        kind: kind.to_owned(),
-                        title_id: entry.imdb.clone(),
-                        video_id,
-                        title: entry.title.clone(),
-                        detail,
-                        poster: None,
-                        position: 0.0,
-                        duration: 0.0,
-                        finished: true,
-                        updated_at: entry.at.max(0) * 1000,
-                    })
-                    .unwrap_or(false)
-            })
-            .count()
+        haven_tracking::sync::add_watched(&self.store, watched)
     }
 
     /// Fills Settings > Sync options: which accounts, and how it stands.

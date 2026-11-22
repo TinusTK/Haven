@@ -5,7 +5,7 @@
 
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
-use haven_addons::Stream;
+use haven_titles::Stream;
 use haven_core::settings::SwitchedOff;
 use haven_livetv::{
     OnDemand, XtreamAccount, on_demand_matches, xtream_episode, xtream_films, xtream_series,

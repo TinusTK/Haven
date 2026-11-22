@@ -17,26 +17,46 @@
 //!    down with its OpenGL context current) and then call [`Video::finish`].
 //!
 //! Proven by `examples/mpv_spike.rs`, which this was lifted from.
+//!
+//! On an iPhone or iPad the window is drawn with wgpu on Metal instead
+//! (`require_wgpu_30` in step 1), and mpv draws with an OpenGL ES context
+//! of its own into a picture shared with Metal: see `video_ios.rs`.
 
+#[cfg(not(target_os = "ios"))]
 use std::ffi::{CStr, CString, c_void};
+#[cfg(not(target_os = "ios"))]
 use std::num::NonZeroU32;
 use std::sync::{Arc, mpsc};
 
+#[cfg(not(target_os = "ios"))]
 use glow::HasContext;
 use libmpv2::Mpv;
-use libmpv2::render::{OpenGLInitParams, RenderContext, RenderParam, RenderParamApiType};
-use slint::{BorrowedOpenGLTextureBuilder, GraphicsAPI, RenderingState};
+use libmpv2::render::RenderContext;
+#[cfg(not(target_os = "ios"))]
+use libmpv2::render::{OpenGLInitParams, RenderParam, RenderParamApiType};
+#[cfg(not(target_os = "ios"))]
+use slint::BorrowedOpenGLTextureBuilder;
+use slint::{GraphicsAPI, RenderingState};
 
 use crate::tracks::{Track, parse_tracks};
 
+#[cfg(target_os = "ios")]
+#[path = "video_ios.rs"]
+mod ios;
+#[cfg(target_os = "ios")]
+use ios::Target;
+
+#[cfg(not(target_os = "ios"))]
 type ProcAddressFn<'a> = dyn Fn(&CStr) -> *const c_void + 'a;
 
 /// Slint's OpenGL symbol lookup, lent to mpv while it creates its render
 /// context. mpv resolves every GL function during that call and libmpv2
 /// frees these parameters right after it, so the pointer never outlives the
 /// rendering callback it came from.
+#[cfg(not(target_os = "ios"))]
 struct ProcLoader(*const ProcAddressFn<'static>);
 
+#[cfg(not(target_os = "ios"))]
 fn mpv_gl_lookup(loader: &ProcLoader, name: &str) -> *mut c_void {
     let Ok(name) = CString::new(name) else {
         return std::ptr::null_mut();
@@ -46,6 +66,7 @@ fn mpv_gl_lookup(loader: &ProcLoader, name: &str) -> *mut c_void {
 }
 
 /// The framebuffer mpv draws into, and its colour texture that Slint shows.
+#[cfg(not(target_os = "ios"))]
 struct Target {
     fbo: glow::NativeFramebuffer,
     texture: glow::NativeTexture,
@@ -53,6 +74,7 @@ struct Target {
     height: u32,
 }
 
+#[cfg(not(target_os = "ios"))]
 impl Target {
     /// `width` and `height` are physical pixels.
     unsafe fn new(gl: &glow::Context, width: u32, height: u32) -> Result<Self, String> {
@@ -118,18 +140,26 @@ impl Target {
     }
 }
 
-const TEXTURE_UNITS: u32 = 4;
+#[cfg(not(target_os = "ios"))]
+/// Texture slots saved and put back around mpv's drawing. mpv uses more
+/// than the first few (its dither and lookup textures), and a renderer
+/// that remembers which texture sits in each slot (Skia) would otherwise
+/// draw the wrong picture.
+const TEXTURE_UNITS: u32 = 32;
+#[cfg(not(target_os = "ios"))]
 const CAPS: [u32; 5] =
     [glow::BLEND, glow::SCISSOR_TEST, glow::DEPTH_TEST, glow::STENCIL_TEST, glow::CULL_FACE];
 
 /// The OpenGL state that our framebuffer work and mpv's renderer change.
 /// Slint's renderer shares this context and expects to find it untouched.
+#[cfg(not(target_os = "ios"))]
 struct GlState {
     draw_fbo: i32,
     read_fbo: i32,
     viewport: [i32; 4],
     scissor_box: [i32; 4],
     active_texture: i32,
+    units: u32,
     textures_2d: [i32; TEXTURE_UNITS as usize],
     program: i32,
     vertex_array: i32,
@@ -141,10 +171,12 @@ struct GlState {
     caps: [bool; CAPS.len()],
 }
 
+#[cfg(not(target_os = "ios"))]
 fn name(id: i32) -> Option<NonZeroU32> {
     NonZeroU32::new(id as u32)
 }
 
+#[cfg(not(target_os = "ios"))]
 impl GlState {
     unsafe fn save(gl: &glow::Context) -> Self {
         unsafe {
@@ -153,8 +185,10 @@ impl GlState {
             let mut scissor_box = [0; 4];
             gl.get_parameter_i32_slice(glow::SCISSOR_BOX, &mut scissor_box);
             let active_texture = gl.get_parameter_i32(glow::ACTIVE_TEXTURE);
+            let units = (gl.get_parameter_i32(glow::MAX_COMBINED_TEXTURE_IMAGE_UNITS).max(1) as u32)
+                .min(TEXTURE_UNITS);
             let mut textures_2d = [0; TEXTURE_UNITS as usize];
-            for unit in 0..TEXTURE_UNITS {
+            for unit in 0..units {
                 gl.active_texture(glow::TEXTURE0 + unit);
                 textures_2d[unit as usize] = gl.get_parameter_i32(glow::TEXTURE_BINDING_2D);
             }
@@ -165,6 +199,7 @@ impl GlState {
                 viewport,
                 scissor_box,
                 active_texture,
+                units,
                 textures_2d,
                 program: gl.get_parameter_i32(glow::CURRENT_PROGRAM),
                 vertex_array: gl.get_parameter_i32(glow::VERTEX_ARRAY_BINDING),
@@ -197,7 +232,7 @@ impl GlState {
             gl.viewport(x, y, w, h);
             let [x, y, w, h] = self.scissor_box;
             gl.scissor(x, y, w, h);
-            for unit in 0..TEXTURE_UNITS {
+            for unit in 0..self.units {
                 gl.active_texture(glow::TEXTURE0 + unit);
                 gl.bind_texture(
                     glow::TEXTURE_2D,
@@ -309,7 +344,11 @@ pub struct Video {
     incoming: Option<mpsc::Receiver<Result<Mpv, String>>>,
     /// Leaked so the render context can borrow it; freed in `teardown`.
     mpv: Option<&'static Mpv>,
+    #[cfg(not(target_os = "ios"))]
     gl: Option<glow::Context>,
+    /// mpv's own OpenGL ES context (iPhone and iPad).
+    #[cfg(target_os = "ios")]
+    gles: Option<ios::Gles>,
     render: Option<RenderContext<'static>>,
     target: Option<Target>,
     /// What to load as soon as mpv can draw.
@@ -330,7 +369,10 @@ impl Video {
             wake: Arc::new(wake),
             incoming: None,
             mpv: None,
+            #[cfg(not(target_os = "ios"))]
             gl: None,
+            #[cfg(target_os = "ios")]
+            gles: None,
             render: None,
             target: None,
             waiting: None,
@@ -349,12 +391,54 @@ impl Video {
         let (sender, incoming) = mpsc::channel();
         self.incoming = Some(incoming);
         let wake = self.wake.clone();
+        // mpv puts its stream cache here but does not make the folder.
+        #[cfg(not(target_os = "android"))]
+        let cache = std::env::temp_dir().join("haven-stream");
+        // Android: the app's own cache folder (the system's temporary
+        // folder is not the app's to write to).
+        #[cfg(target_os = "android")]
+        let cache = android_cache().join("haven-stream");
+        let _ = std::fs::create_dir_all(&cache);
         std::thread::spawn(move || {
             let made = Mpv::with_initializer(|init| {
                 init.set_property("vo", "libmpv")?;
                 // Decode on the GPU where possible, copy frames back to
                 // memory: no GL interop needed, so it works everywhere.
+                #[cfg(not(any(target_os = "ios", target_os = "android")))]
                 init.set_property("hwdec", "auto-copy")?;
+                // Android: the phone's own decoders (MediaCodec), copied
+                // back to memory like the line above. The emulator's
+                // decoder gives mpv no pictures, so it decodes in software.
+                #[cfg(target_os = "android")]
+                init.set_property("hwdec", if android_emulator() { "no" } else { "mediacodec-copy" })?;
+                // Android has no font list for subtitles: a few of the
+                // phone's own fonts (all 200 of them take seconds to look
+                // through, and the app stops answering meanwhile).
+                // Subtitles are sized to the picture, not the tall screen.
+                #[cfg(target_os = "android")]
+                {
+                    let fonts = android_fonts(&cache);
+                    let _ = init.set_property("sub-fonts-dir", fonts.display().to_string());
+                    let _ = init.set_property("osd-fonts-dir", fonts.display().to_string());
+                    let _ = init.set_property("sub-font", "Roboto");
+                    let _ = init.set_property("osd-font", "Roboto");
+                    let _ = init.set_property("sub-scale-by-window", "no");
+                    // A paused picture redrawn through mpv's default
+                    // half-float framebuffer came out black (seen on the
+                    // emulator); 8 bits per colour draws it everywhere.
+                    let _ = init.set_property("fbo-format", "rgba8");
+                }
+                // iPhone and iPad: Apple's own decoder (VideoToolbox),
+                // straight into OpenGL ES where the libmpv can (devices),
+                // else copied back (the simulator).
+                #[cfg(target_os = "ios")]
+                {
+                    init.set_property("hwdec", "videotoolbox,videotoolbox-copy")?;
+                    // Apple's sound decoders first where they cover the
+                    // format (Dolby Digital and Digital Plus, AAC, MP3);
+                    // FFmpeg's own for the rest.
+                    let _ = init.set_property("ad", "ac3_at,eac3_at,aac_at,mp3_at");
+                }
                 // Don't let mpv's renderer sleep on the UI thread.
                 init.set_property("video-timing-offset", "0")?;
                 // Addresses are opened as they are: no helper programs.
@@ -371,10 +455,7 @@ impl Video {
                 // what has been watched is kept for going back.
                 let _ = init.set_property("cache", "yes");
                 let _ = init.set_property("cache-on-disk", "yes");
-                let _ = init.set_property(
-                    "demuxer-cache-dir",
-                    std::env::temp_dir().join("haven-stream").display().to_string(),
-                );
+                let _ = init.set_property("demuxer-cache-dir", cache.display().to_string());
                 let _ = init.set_property("demuxer-max-bytes", "200GiB");
                 let _ = init.set_property("demuxer-max-back-bytes", "200GiB");
                 let _ = init.set_property("cache-secs", "1000000");
@@ -424,6 +505,7 @@ impl Video {
         step
     }
 
+    #[cfg(not(target_os = "ios"))]
     fn setup(&mut self, api: &GraphicsAPI) -> Result<(), String> {
         let GraphicsAPI::NativeOpenGL { get_proc_address } = api else {
             return Err(format!("the window is not drawn with OpenGL ({api:?})"));
@@ -436,6 +518,7 @@ impl Video {
 
     /// Creates mpv's render context once both mpv and the GL context
     /// exist, then loads whatever was waiting for it.
+    #[cfg(not(target_os = "ios"))]
     fn connect(&mut self, api: &GraphicsAPI) -> Result<(), String> {
         if self.render.is_none() && self.gl.is_some() {
             if self.mpv.is_none() {
@@ -496,6 +579,7 @@ impl Video {
     }
 
     /// Lets mpv draw the current frame into the framebuffer.
+    #[cfg(not(target_os = "ios"))]
     fn draw(&mut self, size: (u32, u32), show: &mut dyn FnMut(slint::Image)) -> Result<(), String> {
         if !self.showing {
             return Ok(());
@@ -541,6 +625,7 @@ impl Video {
     ///
     /// `gl_current` is true inside RenderingTeardown. Without a current GL
     /// context the GL objects are left to die with the context instead.
+    #[cfg(not(target_os = "ios"))]
     fn teardown(&mut self, gl_current: bool) {
         self.showing = false;
         self.waiting = None;
@@ -784,4 +869,56 @@ impl Video {
             };
         }
     }
+}
+
+/// Android: the app's cache folder, `cache` beside the `files` folder the
+/// system gives the app (`/data/user/0/<app>/cache`). Found from
+/// `/proc/self/cmdline` (the app's package name), so no Java call is needed.
+#[cfg(target_os = "android")]
+fn android_cache() -> std::path::PathBuf {
+    let package = std::fs::read("/proc/self/cmdline")
+        .ok()
+        .and_then(|line| line.split(|b| *b == 0).next().map(|name| String::from_utf8_lossy(name).into_owned()))
+        .unwrap_or_default();
+    let package = package.split(':').next().unwrap_or_default();
+    if package.is_empty() {
+        return std::env::temp_dir();
+    }
+    std::path::Path::new("/data/data").join(package).join("cache")
+}
+
+/// Android: a folder beside the stream cache that links to the phone's
+/// fonts subtitles need most (Latin, Chinese/Japanese/Korean, Arabic,
+/// Hebrew, Thai).
+#[cfg(target_os = "android")]
+fn android_fonts(cache: &std::path::Path) -> std::path::PathBuf {
+    let fonts = cache.with_file_name("haven-fonts");
+    let _ = std::fs::create_dir_all(&fonts);
+    for name in [
+        "Roboto-Regular.ttf",
+        "NotoSansCJK-Regular.ttc",
+        "NotoNaskhArabic-Regular.ttf",
+        "NotoSansHebrew-Regular.ttf",
+        "NotoSansThai-Regular.ttf",
+    ] {
+        let from = std::path::Path::new("/system/fonts").join(name);
+        let to = fonts.join(name);
+        if from.exists() && !to.exists() {
+            let _ = std::os::unix::fs::symlink(&from, &to);
+        }
+    }
+    fonts
+}
+
+/// Android: true on the Android emulator (the system says so in
+/// `ro.kernel.qemu`).
+#[cfg(target_os = "android")]
+fn android_emulator() -> bool {
+    unsafe extern "C" {
+        fn __system_property_get(name: *const std::ffi::c_char, value: *mut std::ffi::c_char) -> i32;
+    }
+    let mut value = [0 as std::ffi::c_char; 92];
+    // SAFETY: the buffer is PROP_VALUE_MAX (92) bytes, as the call needs.
+    let length = unsafe { __system_property_get(c"ro.kernel.qemu".as_ptr(), value.as_mut_ptr()) };
+    length > 0 && value[0] == b'1' as std::ffi::c_char
 }

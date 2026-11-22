@@ -1,0 +1,17 @@
+# Haven Hub with Docker Compose: `docker compose up -d` in this folder.
+# Then open http://<this machine's address>:8590 for the pairing code.
+services:
+  haven-hub:
+    image: ghcr.io/tinustk/haven-hub:latest
+    container_name: haven-hub
+    restart: unless-stopped
+    ports:
+      - "8590:8590"
+    environment:
+      # The name Haven's apps show for this Hub.
+      HAVEN_HUB_NAME: "Haven Hub"
+    volumes:
+      - haven-hub:/data
+
+volumes:
+  haven-hub:

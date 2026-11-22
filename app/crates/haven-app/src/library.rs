@@ -8,13 +8,18 @@ use std::{
     sync::{Arc, atomic::AtomicU64},
 };
 
+#[cfg(feature = "addons")]
+mod addons;
+mod backup;
 mod calendar;
 mod cast;
 mod downloads;
 mod explore;
 mod kept;
+mod local;
 mod marks;
 mod home;
+mod hub;
 mod offers;
 mod ondemand;
 mod servers;
@@ -23,9 +28,7 @@ mod sync;
 mod tracking;
 mod updates;
 
-use haven_addons::{
-    Catalog, Client, Manifest, MetaDetail, MetaPreview, Video, manifest_url, parse_manifest,
-};
+use haven_titles::{Catalog, Catalogues, MetaDetail, MetaPreview, Source, Video};
 use haven_core::{
     http,
     storage::{Saved, Store},
@@ -35,7 +38,7 @@ use haven_player::{clock, resume};
 use slint::{ComponentHandle, Image, Model, ModelRc, Rgba8Pixel, SharedPixelBuffer, VecModel};
 use tokio::{runtime::Handle, sync::Semaphore};
 
-use crate::{AddonRow, AppWindow, Detail, EpisodeRow, Poster, Shelf, StreamRow};
+use crate::{AppWindow, Detail, EpisodeRow, Poster, Shelf, StreamRow};
 
 /// Titles on a media server library's A to Z shelf on Home; Explore
 /// shows the whole library.
@@ -73,10 +76,21 @@ fn on_ui(work: impl FnOnce(&Rc<Library>) + Send + 'static) {
     });
 }
 
-struct Installed {
-    url: String,
-    manifest: Manifest,
+#[cfg(all(feature = "store", feature = "addons"))]
+compile_error!("a store build has no add-ons: build it with --no-default-features --features store");
+
+/// Picks the words for this build: `$store` where there are no add-ons,
+/// `$addons` where there are. Only the chosen words go into the program.
+macro_rules! words {
+    ($store:expr, $addons:expr) => {{
+        #[cfg(not(feature = "addons"))]
+        let chosen = $store;
+        #[cfg(feature = "addons")]
+        let chosen = $addons;
+        chosen
+    }};
 }
+pub(crate) use words;
 
 /// The two places that show shelves.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -114,8 +128,9 @@ struct ShelfPlan {
 
 /// Where a shelf's titles come from.
 enum ShelfFrom {
-    /// A catalogue of an add-on (its manifest address).
-    Addon { url: String, catalog: Catalog },
+    /// A catalogue of a source (the built-in one or an add-on), by the
+    /// source's address.
+    Catalogue { url: String, catalog: Catalog },
     /// A library on a media server: its newest titles, or all by name.
     Server { server: haven_servers::Server, library: String, latest: bool },
     /// A media server's answer to the search words.
@@ -208,15 +223,18 @@ impl Pause {
 
 /// Said when nothing knows the title that was opened.
 const NO_DETAILS: &str =
-    if NO_ADDONS { "There are no details for this title." } else { "None of your add-ons has details for this title." };
+    words!("There are no details for this title.", "None of your add-ons has details for this title.");
 
 /// A phone or tablet build (updates come as a new APK or IPA).
 pub(crate) const MOBILE: bool = cfg!(any(target_os = "android", target_os = "ios"));
 
-/// A build for the App Store or Google Play (feature `store`): it has no
-/// Add-ons page and never speaks of add-ons. Every other build, the phone
-/// ones on GitHub too, has add-ons.
-pub(crate) const NO_ADDONS: bool = cfg!(feature = "store");
+/// A build without add-ons (the App Store and Google Play builds): no
+/// add-on code, no Add-ons page, never a word about add-ons. Every other
+/// build, the phone ones on GitHub too, has add-ons.
+pub(crate) const NO_ADDONS: bool = cfg!(not(feature = "addons"));
+
+/// Where the built-in catalogue's list of catalogues is kept between runs.
+const CINEMETA_KEPT: &str = "cinemeta_description";
 
 /// A counter that says which list of places to watch is current. Work
 /// off the UI thread reads it to stop when its list is no longer wanted.
@@ -239,10 +257,22 @@ pub struct Library {
     ui: slint::Weak<AppWindow>,
     store: Rc<Store>,
     tasks: Handle,
-    addons: Client,
+    /// Reads catalogues and details: the built-in catalogue's, and the
+    /// add-ons' where there are add-ons.
+    catalogues: Catalogues,
+    #[cfg(feature = "addons")]
+    addons: haven_addons::Client,
     http: reqwest::Client,
-    installed: RefCell<Vec<Installed>>,
+    /// Every source of catalogues and details in use: the built-in
+    /// catalogue first, then the add-ons that are switched on.
+    installed: RefCell<Vec<Source>>,
+    /// The built-in catalogue.
+    builtin: RefCell<Source>,
+    /// The add-ons that are switched on, as sources.
+    #[cfg(feature = "addons")]
+    addon_sources: RefCell<Vec<Source>>,
     /// The address of every installed add-on, switched on or not.
+    #[cfg(feature = "addons")]
     addon_urls: RefCell<Vec<String>>,
     home: ShelfSet,
     search: ShelfSet,
@@ -252,6 +282,8 @@ pub struct Library {
     downloads: downloads::Downloads,
     home_top: home::HomeTop,
     sync: sync::SyncState,
+    backup: backup::BackupState,
+    local: local::LocalState,
     updates: updates::Updates,
     /// Held while Home is not the page showing.
     home_pause: Arc<Pause>,
@@ -312,6 +344,7 @@ pub struct Library {
     /// The Xtream Codes accounts' films and series, as far as fetched.
     on_demand: ondemand::Lists,
     /// The add-ons that media servers use and share with their owner.
+    #[cfg(feature = "addons")]
     shared_addons: RefCell<Vec<(String, haven_servers::SharedAddon)>>,
     /// Every library of every server that answered, for Explore.
     server_libraries: RefCell<Vec<(haven_servers::Server, haven_servers::Library)>>,
@@ -354,9 +387,15 @@ impl Library {
             ui: ui.as_weak(),
             store,
             tasks,
-            addons: Client::new(http.clone()),
+            catalogues: Catalogues::new(http.clone()),
+            #[cfg(feature = "addons")]
+            addons: haven_addons::Client::new(http.clone()),
             http,
             installed: RefCell::default(),
+            builtin: RefCell::new(Source::cinemeta(None)),
+            #[cfg(feature = "addons")]
+            addon_sources: RefCell::default(),
+            #[cfg(feature = "addons")]
             addon_urls: RefCell::default(),
             home: ShelfSet::default(),
             search: ShelfSet::default(),
@@ -367,6 +406,8 @@ impl Library {
             downloads: downloads::Downloads::default(),
             home_top: home::HomeTop::default(),
             sync: sync::SyncState::default(),
+            backup: backup::BackupState::default(),
+            local: local::LocalState::default(),
             updates: updates::Updates::default(),
             picture_cache: Arc::new(picture_cache),
             fetches_left: Cell::new(0),
@@ -399,6 +440,7 @@ impl Library {
             server_generation: Cell::new(0),
             server_states: RefCell::default(),
             on_demand: ondemand::Lists::default(),
+            #[cfg(feature = "addons")]
             shared_addons: RefCell::default(),
             server_libraries: RefCell::default(),
             server_timer: slint::Timer::default(),
@@ -423,6 +465,7 @@ impl Library {
         ui.set_streams(ModelRc::from(library.streams.clone()));
         ui.set_watchlist(ModelRc::from(library.watchlist.clone()));
         ui.set_continue_shelf(Shelf {
+            ranked: false,
             title: "Continue Watching".into(),
             source: "".into(),
             loading: false,
@@ -443,9 +486,9 @@ impl Library {
                 });
             };
         }
-        connect!(on_install_addon, |address| |l: &Rc<Self>| l.install(address.as_str()));
-        connect!(on_remove_addon, |url| |l: &Rc<Self>| l.remove(url.as_str()));
-        connect!(on_set_addon_enabled, |url, on| |l: &Rc<Self>| l.set_addon_enabled(url.as_str(), on));
+        #[cfg(feature = "addons")]
+        library.connect_addons(ui);
+        library.connect_hub(ui);
         connect!(on_search, |query| |l: &Rc<Self>| l.run_search(query.as_str()));
         connect!(on_open_title, |poster| |l: &Rc<Self>| l.open_title(poster));
         connect!(on_close_detail, | | |l: &Rc<Self>| l.close_detail());
@@ -464,8 +507,12 @@ impl Library {
         library.show_cache_size();
 
         library.home_pause.set(!ui.get_home_showing());
+        library.load_builtin();
+        #[cfg(feature = "addons")]
         library.load_installed();
-        library.install_free_catalogue();
+        #[cfg(not(feature = "addons"))]
+        library.load_sources();
+        library.refresh_builtin();
         library.reload_home();
         library.reload_continue();
         library.reload_watchlist();
@@ -480,6 +527,9 @@ impl Library {
         library.start_history(ui);
         library.start_updates(ui);
         library.start_servers(ui);
+        library.start_backup(ui);
+        library.start_local(ui);
+        library.hub_sync();
         library.start_casting(ui);
         library.reload_catalog();
         Ok(library)
@@ -580,159 +630,51 @@ impl Library {
         }
     }
 
-    // ---- Add-ons ----------------------------------------------------
+    // ---- Sources of catalogues and details ----------------------------
 
-    /// Reads the installed add-ons from the database into memory and the UI.
-    fn load_installed(&self) {
-        let stored = self.store.addons().unwrap_or_else(|err| {
-            eprintln!("haven: could not read the installed add-ons: {err}");
-            Vec::new()
-        });
-        let off = haven_core::settings::SwitchedOff::load(&self.store).unwrap_or_default().addons;
-        let installed: Vec<Installed> = stored
-            .into_iter()
-            .filter_map(|addon| match parse_manifest(&addon.manifest) {
-                Ok(manifest) => Some(Installed { url: addon.url, manifest }),
-                Err(err) => {
-                    eprintln!("haven: skipping add-on {}: {err}", addon.url);
-                    None
-                }
-            })
-            .collect();
-
-        let rows: Vec<AddonRow> = installed
-            .iter()
-            .map(|addon| AddonRow {
-                url: addon.url.as_str().into(),
-                name: addon.manifest.name.as_str().into(),
-                description: addon.manifest.description.as_deref().unwrap_or_default().into(),
-                version: addon.manifest.version.as_str().into(),
-                catalogs: addon.manifest.catalogs.iter().filter(|c| !c.needs_input()).count() as i32,
-                enabled: !off.contains(&addon.url),
-            })
-            .collect();
-        *self.addon_urls.borrow_mut() = installed.iter().map(|addon| addon.url.clone()).collect();
-        // An add-on that is switched off is listed but never asked.
-        *self.installed.borrow_mut() =
-            installed.into_iter().filter(|addon| !off.contains(&addon.url)).collect();
-        if let Some(ui) = self.ui.upgrade() {
-            ui.set_addons(ModelRc::new(VecModel::from(rows)));
-        }
-        self.show_shared_addons();
-    }
-
-    /// The first time Haven runs, installs Cinemeta: a free catalogue of
-    /// films and series that needs no key, so Home and Explore have
-    /// something in them from the start. It is an add-on like any other:
-    /// it can be switched off or removed, and is not put back.
-    fn install_free_catalogue(&self) {
-        const DONE: &str = "free_catalogue_installed";
-        const CINEMETA: &str = "https://v3-cinemeta.strem.io/manifest.json";
-        // A store build has no Add-ons page to put it back from: there
-        // it is Haven's built-in catalogue, made sure of at every start.
-        if NO_ADDONS {
-            if !self.addon_urls.borrow().iter().any(|url| url == CINEMETA) {
-                self.install(CINEMETA);
+    /// The built-in catalogue as it was last described, if it was.
+    fn load_builtin(&self) {
+        let kept: Option<String> = self.store.get(CINEMETA_KEPT).ok().flatten();
+        if let Some(catalogs) = kept.and_then(|json| haven_titles::parse_catalogs(&json).ok()) {
+            if !catalogs.is_empty() {
+                *self.builtin.borrow_mut() = Source::cinemeta(Some(catalogs));
             }
-            return;
-        }
-        if self.store.get::<bool>(DONE).ok().flatten() == Some(true) {
-            return;
-        }
-        // Checks of Haven itself can do without it.
-        #[cfg(debug_assertions)]
-        if std::env::var_os("HAVEN_NO_FREE_CATALOGUE").is_some() {
-            return;
-        }
-        if let Err(err) = self.store.put(DONE, &true) {
-            return eprintln!("haven: could not note the free catalogue: {err}");
-        }
-        if !self.addon_urls.borrow().iter().any(|url| url == CINEMETA) {
-            self.install(CINEMETA);
         }
     }
 
-    fn set_status(&self, text: &str, is_error: bool) {
-        if let Some(ui) = self.ui.upgrade() {
-            ui.set_addon_status(text.into());
-            ui.set_addon_status_is_error(is_error);
-        }
+    /// Puts together the sources in use: the built-in catalogue first.
+    pub(super) fn load_sources(&self) {
+        #[cfg_attr(not(feature = "addons"), allow(unused_mut))]
+        let mut sources = vec![self.builtin.borrow().clone()];
+        #[cfg(feature = "addons")]
+        sources.extend(self.addon_sources.borrow().iter().cloned());
+        *self.installed.borrow_mut() = sources;
     }
 
-    fn set_busy(&self, busy: bool) {
-        if let Some(ui) = self.ui.upgrade() {
-            ui.set_addon_busy(busy);
-        }
-    }
-
-    /// Fetches the manifest at the address the user gave and installs it.
-    fn install(&self, address: &str) {
-        let url = match manifest_url(address) {
-            Ok(url) => url,
-            Err(err) => {
-                return self.set_status(&format!("Could not install the add-on: {err}."), true);
-            }
-        };
-        self.set_busy(true);
-        self.set_status("Contacting the add-on…", false);
-        let addons = self.addons.clone();
+    /// Asks the built-in catalogue which catalogues it has now; when that
+    /// changed, keeps it and rebuilds what shows them.
+    fn refresh_builtin(&self) {
+        let catalogues = self.catalogues.clone();
         self.tasks.spawn(async move {
-            let fetched = async {
-                let json = addons.manifest_json(&url).await?;
-                let manifest = parse_manifest(&json)?;
-                Ok::<_, haven_addons::Error>((json, manifest.name))
+            let Ok(json) = catalogues.description_json(haven_titles::CINEMETA_URL).await else { return };
+            let Ok(catalogs) = haven_titles::parse_catalogs(&json) else { return };
+            if catalogs.is_empty() {
+                return;
             }
-            .await
-            .map_err(|err| err.to_string());
-            on_ui(move |library| library.install_finished(&url, fetched));
+            on_ui(move |library| {
+                let fresh = Source::cinemeta(Some(catalogs));
+                if *library.builtin.borrow() == fresh {
+                    return;
+                }
+                if let Err(err) = library.store.put(CINEMETA_KEPT, &json) {
+                    eprintln!("haven: could not keep the catalogue list: {err}");
+                }
+                *library.builtin.borrow_mut() = fresh;
+                library.load_sources();
+                library.reload_home();
+                library.rebuild_explore();
+            });
         });
-    }
-
-    fn install_finished(&self, url: &str, fetched: Result<(String, String), String>) {
-        self.set_busy(false);
-        let (json, name) = match fetched {
-            Ok(fetched) => fetched,
-            Err(err) => {
-                return self.set_status(&format!("Could not install the add-on: {err}."), true);
-            }
-        };
-        if let Err(err) = self.store.save_addon(url, &json) {
-            return self.set_status(&format!("Could not save the add-on: {err}"), true);
-        }
-        self.load_installed();
-        self.reload_home();
-        self.clear_search();
-        self.rebuild_explore();
-        self.set_status(&format!("Installed {name}."), false);
-        if let Some(ui) = self.ui.upgrade() {
-            ui.set_addon_address("".into());
-        }
-    }
-
-    /// Switches an add-on on or off. Off, it stays installed but is not
-    /// asked for shelves, details or streams.
-    fn set_addon_enabled(&self, url: &str, on: bool) {
-        let mut off = haven_core::settings::SwitchedOff::load(&self.store).unwrap_or_default();
-        haven_core::settings::switch(&mut off.addons, url.to_owned(), on);
-        if let Err(err) = off.save(&self.store) {
-            return self.set_status(&format!("Could not save that: {err}"), true);
-        }
-        self.load_installed();
-        self.reload_home();
-        self.clear_search();
-        self.rebuild_explore();
-        self.set_status(if on { "Add-on switched on." } else { "Add-on switched off." }, false);
-    }
-
-    fn remove(&self, url: &str) {
-        if let Err(err) = self.store.remove_addon(url) {
-            return self.set_status(&format!("Could not remove the add-on: {err}"), true);
-        }
-        self.load_installed();
-        self.reload_home();
-        self.clear_search();
-        self.rebuild_explore();
-        self.set_status("Add-on removed.", false);
     }
 
     // ---- Shelves (Home and Search) ------------------------------------
@@ -744,11 +686,11 @@ impl Library {
             .borrow()
             .iter()
             .flat_map(|addon| {
-                addon.manifest.catalogs.iter().filter(|c| !c.needs_input()).map(|catalog| {
+                addon.catalogs.iter().filter(|c| !c.needs_input()).map(|catalog| {
                     ShelfPlan {
                         title: catalog.title(),
-                        source: addon.manifest.name.clone(),
-                        from: ShelfFrom::Addon { url: addon.url.clone(), catalog: catalog.clone() },
+                        source: addon.name.clone(),
+                        from: ShelfFrom::Catalogue { url: addon.url.clone(), catalog: catalog.clone() },
                     }
                 })
             })
@@ -815,11 +757,11 @@ impl Library {
             .borrow()
             .iter()
             .flat_map(|addon| {
-                addon.manifest.catalogs.iter().filter(|c| c.searchable()).map(|catalog| {
+                addon.catalogs.iter().filter(|c| c.searchable()).map(|catalog| {
                     ShelfPlan {
                         title: catalog.results_title(),
-                        source: addon.manifest.name.clone(),
-                        from: ShelfFrom::Addon { url: addon.url.clone(), catalog: catalog.clone() },
+                        source: addon.name.clone(),
+                        from: ShelfFrom::Catalogue { url: addon.url.clone(), catalog: catalog.clone() },
                     }
                 })
             })
@@ -840,13 +782,12 @@ impl Library {
             }
         }
         let note = if self.installed.borrow().is_empty() && plans.is_empty() {
-            if NO_ADDONS {
-                "Add a media server or a TMDB key in Settings: search looks through those."
-            } else {
+            words!(
+                "Add a media server or a TMDB key in Settings: search looks through those.",
                 "Add a media server or a TMDB key in Settings, or install an add-on: search looks through those."
-            }
+            )
         } else if plans.is_empty() {
-            if NO_ADDONS { "Nothing you have added can be searched." } else { "None of your add-ons can be searched." }
+            words!("Nothing you have added can be searched.", "None of your add-ons can be searched.")
         } else {
             ""
         };
@@ -889,7 +830,10 @@ impl Library {
             }
             kept_names.push(kept_name);
             let items = Rc::new(VecModel::<Poster>::default());
+            // Popular and trending lists show each title's place.
+            let ranked = ["Popular", "Trending", "Top"].iter().any(|word| plan.title.starts_with(word));
             shelves.push(Shelf {
+                ranked,
                 title: plan.title.into(),
                 source: plan.source.into(),
                 loading: true,
@@ -899,7 +843,7 @@ impl Library {
             posters.push(items);
 
             let (addons, servers, search) =
-                (self.addons.clone(), self.server_client.clone(), search.clone());
+                (self.catalogues.clone(), self.server_client.clone(), search.clone());
             let tmdb = self.tmdb();
             let gate = self.server_gate.clone();
             // Home's shelves wait while another page is showing.
@@ -919,7 +863,7 @@ impl Library {
                     _ => None,
                 };
                 let metas = match &plan.from {
-                    ShelfFrom::Addon { url, catalog } => addons
+                    ShelfFrom::Catalogue { url, catalog } => addons
                         .catalog(url, catalog, search.as_deref())
                         .await
                         .map_err(|err| err.to_string()),
@@ -1005,7 +949,7 @@ impl Library {
                 // A server that gathers catalogues lists the same film
                 // more than once: show each once.
                 let metas: Vec<MetaPreview> =
-                    haven_addons::without_repeats(metas).into_iter().take(length).collect();
+                    haven_titles::without_repeats(metas).into_iter().take(length).collect();
                 if !from_kept && !kept_name.is_empty() {
                     self.keep(kept_name, metas.clone());
                 }
@@ -1038,6 +982,8 @@ impl Library {
                             video: "".into(),
                             progress: 0.0,
                             watched: self.film_watched(&meta.kind, &meta.id),
+                            rating: meta.rating.as_deref().unwrap_or_default().into(),
+                            rank: 0,
                         })
                         .collect::<Vec<_>>(),
                 );
@@ -1183,6 +1129,8 @@ impl Library {
                     video: progress.video_id.as_str().into(),
                     progress: resume::share(progress.position, progress.duration).max(0.02),
                     watched: false,
+                    rating: "".into(),
+                    rank: 0,
                 }
             })
             .collect();
@@ -1245,6 +1193,8 @@ impl Library {
                     video: progress.video_id.as_str().into(),
                     progress: if progress.finished { 1.0 } else { resume::share(progress.position, progress.duration).max(0.02) },
                     watched: progress.finished,
+                    rating: "".into(),
+                    rank: 0,
                 }
             })
             .collect();
@@ -1286,6 +1236,9 @@ impl Library {
         // Keep pictures that are already loaded.
         let had: Vec<Poster> = self.watchlist.iter().collect();
         let mut wanted = Vec::new();
+        // Titles saved without a poster (brought in from Trakt or Simkl,
+        // say): looked up so their pictures show here too.
+        let mut missing = Vec::new();
         let rows: Vec<Poster> = saved
             .iter()
             .enumerate()
@@ -1294,8 +1247,14 @@ impl Library {
                     .iter()
                     .find(|old| old.has_image && old.id == saved.title_id && old.kind == saved.kind);
                 if old.is_none() {
-                    if let Some(url) = &saved.poster {
-                        wanted.push((item, url.clone()));
+                    let poster = saved.poster.clone().or_else(|| {
+                        let kept = self.kept_details(&saved.kind, &saved.title_id)?.poster?;
+                        let _ = self.store.add_to_watchlist(&Saved { poster: Some(kept.clone()), ..saved.clone() });
+                        Some(kept)
+                    });
+                    match poster {
+                        Some(url) => wanted.push((item, url)),
+                        None => missing.push((item, saved.clone())),
                     }
                 }
                 Poster {
@@ -1308,11 +1267,36 @@ impl Library {
                     video: "".into(),
                     progress: 0.0,
                     watched: self.film_watched(&saved.kind, &saved.title_id),
+                    rating: "".into(),
+                    rank: 0,
                 }
             })
             .collect();
         self.watchlist.set_vec(rows);
         self.refresh_calendar();
+        for (item, saved) in missing {
+            let Some(details) = self.details_of(&saved.kind, &saved.title_id) else { continue };
+            self.tasks.spawn(async move {
+                let Ok(meta) = details.await else { return };
+                let Some(url) = meta.poster else { return };
+                on_ui(move |library| {
+                    let _ = library.store.add_to_watchlist(&Saved { poster: Some(url.clone()), ..saved });
+                    if generation != library.watchlist_generation.get() {
+                        return;
+                    }
+                    library.fetch_image(url, POSTER_SIZE, move |library, pixels| {
+                        if generation != library.watchlist_generation.get() {
+                            return;
+                        }
+                        if let Some(mut poster) = library.watchlist.row_data(item) {
+                            poster.image = Image::from_rgba8(pixels);
+                            poster.has_image = true;
+                            library.watchlist.set_row_data(item, poster);
+                        }
+                    });
+                });
+            });
+        }
         for (item, url) in wanted {
             self.fetch_image(url, POSTER_SIZE, move |library, pixels| {
                 if generation != library.watchlist_generation.get() {
@@ -1484,7 +1468,7 @@ impl Library {
             .installed
             .borrow()
             .iter()
-            .filter(|addon| addon.manifest.provides("meta", &kind, &id))
+            .filter(|addon| addon.provides("meta", &kind, &id))
             .map(|addon| addon.url.clone())
             .collect();
         *self.open.borrow_mut() =
@@ -1527,9 +1511,9 @@ impl Library {
                 Err(NO_DETAILS.into()),
             );
         }
-        let addons = self.addons.clone();
+        let addons = self.catalogues.clone();
         self.tasks.spawn(async move {
-            // The first add-on that knows the title wins.
+            // The first source that knows the title wins.
             let mut found = Err(NO_DETAILS.to_owned());
             for url in sources {
                 match addons.meta(&url, &kind, &id).await {

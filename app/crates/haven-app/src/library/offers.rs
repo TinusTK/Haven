@@ -1,7 +1,7 @@
 //! The services that carry a title (subscription, rental, purchase), as
 //! TMDB passes them on from JustWatch, and the country they are shown for.
 
-use haven_addons::MetaDetail;
+use haven_titles::MetaDetail;
 use slint::{Color, ModelRc, SharedString, VecModel};
 
 use super::{Library, on_ui};

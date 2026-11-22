@@ -5,7 +5,7 @@
 
 use std::path::{Path, PathBuf};
 
-use haven_addons::MetaDetail;
+use haven_titles::MetaDetail;
 use serde::{Serialize, de::DeserializeOwned};
 
 use super::Library;

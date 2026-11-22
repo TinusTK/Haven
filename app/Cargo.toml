@@ -3,12 +3,14 @@ resolver = "3"
 members = [
     "crates/haven-core",
     "crates/haven-addons",
+    "crates/haven-titles",
     "crates/haven-livetv",
     "crates/haven-servers",
     "crates/haven-metadata",
     "crates/haven-tracking",
     "crates/haven-cast",
     "crates/haven-app",
+    "crates/haven-hub",
     "crates/haven-player",
 ]
 
@@ -21,6 +23,7 @@ publish = false
 haven-cast = { path = "crates/haven-cast" }
 haven-core = { path = "crates/haven-core" }
 haven-addons = { path = "crates/haven-addons" }
+haven-titles = { path = "crates/haven-titles" }
 haven-livetv = { path = "crates/haven-livetv" }
 haven-metadata = { path = "crates/haven-metadata" }
 haven-player = { path = "crates/haven-player" }

@@ -10,6 +10,7 @@ pub struct Secrets {
     pub trakt_client_id: Option<String>,
     pub trakt_client_secret: Option<String>,
     pub simkl_client_id: Option<String>,
+    pub omdb_api_key: Option<String>,
 }
 
 impl Secrets {
@@ -47,6 +48,7 @@ impl Secrets {
             trakt_client_id: take("TRAKT_CLIENT_ID"),
             trakt_client_secret: take("TRAKT_CLIENT_SECRET"),
             simkl_client_id: take("SIMKL_CLIENT_ID"),
+            omdb_api_key: take("OMDB_API_KEY"),
         }
     }
 }

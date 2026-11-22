@@ -7,7 +7,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use haven_addons::MetaDetail;
+use haven_titles::MetaDetail;
 use haven_core::settings::Keys;
 use haven_tracking::{Account, Client, Service};
 use slint::{ModelRc, VecModel};
@@ -15,7 +15,7 @@ use slint::{ModelRc, VecModel};
 use super::{BACKGROUND_SIZE, CAST_SHOWN, DetailImage, Library, POSTER_SIZE, on_ui, servers::open_in_browser};
 use crate::{AppWindow, TrackingRow};
 
-const ACCOUNTS: &str = "tracking_accounts";
+use haven_tracking::sync::ACCOUNTS;
 
 fn now() -> i64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |since| since.as_secs() as i64)
@@ -34,6 +34,7 @@ impl Library {
         ui.set_keys_trakt_id(keys.trakt_id.as_str().into());
         ui.set_keys_trakt_secret(keys.trakt_secret.as_str().into());
         ui.set_keys_simkl_id(keys.simkl_id.as_str().into());
+        ui.set_keys_omdb(keys.omdb.as_str().into());
         *self.keys.borrow_mut() = keys.resolved(&self.secrets_file);
         *self.accounts.borrow_mut() =
             self.store.get::<Vec<Account>>(ACCOUNTS).ok().flatten().unwrap_or_default();
@@ -82,7 +83,7 @@ impl Library {
     }
 
     /// Fills the Tracking rows in Settings.
-    fn show_tracking(&self) {
+    pub(super) fn show_tracking(&self) {
         let Some(ui) = self.ui.upgrade() else { return };
         let tracker = self.tracker();
         let rows: Vec<TrackingRow> = [Service::Trakt, Service::Simkl]
@@ -125,6 +126,7 @@ impl Library {
             trakt_id: ui.get_keys_trakt_id().trim().to_owned(),
             trakt_secret: ui.get_keys_trakt_secret().trim().to_owned(),
             simkl_id: ui.get_keys_simkl_id().trim().to_owned(),
+            omdb: ui.get_keys_omdb().trim().to_owned(),
         };
         match keys.save(&self.store) {
             Ok(()) => {

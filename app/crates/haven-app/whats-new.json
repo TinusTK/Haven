@@ -1,0 +1,45 @@
+{
+  "version": "0.2.3",
+  "sections": [
+    {
+      "title": "Haven's own player on phones",
+      "lines": [
+        "iPhone, iPad and Android now play inside Haven, with the same player as the computers.",
+        "Audio and subtitle choices, speed, resume where you left off and the next episode, all in Haven."
+      ]
+    },
+    {
+      "title": "A new look",
+      "lines": [
+        "Three posters across on phones, each with its rating.",
+        "Home's banner shows the title's logo with IMDb, TMDB and Rotten Tomatoes scores."
+      ]
+    },
+    {
+      "title": "Library › Local",
+      "lines": [
+        "A new tab for the videos already on your device. Tap one to play it."
+      ]
+    },
+    {
+      "title": "Backups",
+      "lines": [
+        "Your servers, accounts, lists and settings are backed up while Haven is open.",
+        "Restore it any time in Settings › Sync options."
+      ]
+    },
+    {
+      "title": "Haven Hub",
+      "lines": [
+        "Run Haven on a Raspberry Pi or a small server and pair it in Settings › Media servers."
+      ]
+    },
+    {
+      "title": "Fixes",
+      "lines": [
+        "Watchlist posters show again for titles brought in from Trakt or Simkl.",
+        "Smoother sideways scrolling: posters no longer light up as you swipe past them."
+      ]
+    }
+  ]
+}

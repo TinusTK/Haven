@@ -4,7 +4,7 @@
 
 use std::rc::Rc;
 
-use haven_addons::Video;
+use haven_titles::Video;
 use haven_core::storage::Progress;
 
 use super::Library;

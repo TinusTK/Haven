@@ -6,7 +6,7 @@
 //!
 //! This product uses the TMDB API but is not endorsed or certified by TMDB.
 
-use haven_addons::{MetaDetail, MetaPreview, Video};
+use haven_titles::{MetaDetail, MetaPreview, Video};
 use serde_json::Value;
 
 use crate::{ANSWER_BYTES, API, CAST_KEPT, Error, IMAGES, read_details};
@@ -239,6 +239,11 @@ pub(crate) fn read_page(found: &Value, series: bool, images: &str) -> Vec<MetaPr
                 name: text(item, "title").or_else(|| text(item, "name"))?,
                 poster: text(item, "poster_path").map(|path| format!("{images}/w342{path}")),
                 release_info: year(text(item, "release_date").or_else(|| text(item, "first_air_date"))),
+                rating: item
+                    .get("vote_average")
+                    .and_then(Value::as_f64)
+                    .filter(|r| *r > 0.0)
+                    .map(|r| format!("{r:.1}")),
             })
         })
         .collect()
@@ -303,6 +308,7 @@ pub(crate) fn read_title(record: &Value, series: bool, number: u64, images: &str
         id: title_id(series, number),
         kind: if series { "series" } else { "movie" }.to_owned(),
         name: text(record, "title").or_else(|| text(record, "name"))?,
+        logo: None,
         poster: image("poster_path", "w500"),
         background: image("backdrop_path", "w1280"),
         description: details.overview,

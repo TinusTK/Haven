@@ -8,7 +8,7 @@ use std::{
     rc::Rc,
 };
 
-use haven_addons::{MetaDetail, MetaPreview};
+use haven_titles::{MetaDetail, MetaPreview};
 use slint::{Image, Model, ModelRc, VecModel};
 
 use super::{BACKGROUND_SIZE, Library, on_ui};
@@ -33,7 +33,7 @@ pub(super) struct HomeTop {
     continuing: Rc<VecModel<ContinueCard>>,
     /// What is known of each title on Continue Watching: its wide
     /// picture's address and its episodes (asked for once a run).
-    continue_meta: RefCell<HashMap<(String, String), Option<(Option<String>, Vec<haven_addons::Video>)>>>,
+    continue_meta: RefCell<HashMap<(String, String), Option<(Option<String>, Vec<haven_titles::Video>)>>>,
     /// Titles whose details have been asked for this run (kept details
     /// from last time are shown until the fresh ones come).
     continue_asked: RefCell<std::collections::HashSet<(String, String)>>,
@@ -51,12 +51,12 @@ pub(super) fn episode_badge(video_id: &str) -> String {
 /// How many aired episodes are still to watch, from `current` on (a
 /// series' regular episodes, in order; specials left out).
 pub(super) fn episodes_left(
-    videos: &[haven_addons::Video],
+    videos: &[haven_titles::Video],
     current: &str,
     finished: &std::collections::HashSet<String>,
     today: &str,
 ) -> i32 {
-    let mut episodes: Vec<&haven_addons::Video> = videos
+    let mut episodes: Vec<&haven_titles::Video> = videos
         .iter()
         .filter(|video| video.season.unwrap_or(1) > 0 && video.episode.is_some())
         .filter(|video| video.released.as_deref().is_some_and(|day| day.get(..10).unwrap_or(day) <= today))
@@ -67,20 +67,54 @@ pub(super) fn episodes_left(
 }
 
 /// "★ 8.2  •  2026  •  Horror, Thriller  •  Film" from a title's details.
-pub(super) fn facts_of(meta: &MetaDetail) -> String {
+/// The width a banner's title logo is fetched at.
+const LOGO_SIZE: (u32, u32) = (600, 240);
+
+/// The line under the banner's title: "2026 · Adventure, Action, Fantasy
+/// · 173 min · R".
+pub(super) fn banner_facts(meta: &MetaDetail, scores: Option<&haven_metadata::omdb::Scores>) -> String {
     let mut parts = Vec::new();
-    if let Some(rating) = meta.rating.as_deref().filter(|r| !r.is_empty()) {
-        parts.push(format!("★ {rating}"));
-    }
     if let Some(year) = meta.release_info.as_deref().filter(|y| !y.is_empty()) {
         parts.push(year.to_owned());
     }
     if !meta.genres.is_empty() {
-        parts.push(meta.genres.iter().take(2).cloned().collect::<Vec<_>>().join(", "));
+        parts.push(meta.genres.iter().take(3).cloned().collect::<Vec<_>>().join(", "));
     }
-    parts.push(if meta.kind == "movie" { "Film".to_owned() } else { "Series".to_owned() });
-    parts.join("  •  ")
+    let runtime = meta.runtime.clone().or_else(|| scores.and_then(|s| s.runtime.clone()));
+    if let Some(runtime) = runtime.filter(|r| !r.is_empty()) {
+        parts.push(runtime);
+    }
+    if let Some(rated) = scores.and_then(|s| s.rated.clone()) {
+        parts.push(rated);
+    }
+    parts.join("  ·  ")
 }
+
+/// The scores under the banner's title, those that are known.
+pub(super) fn score_pills(
+    meta: &MetaDetail,
+    tmdb: Option<f64>,
+    scores: Option<&haven_metadata::omdb::Scores>,
+) -> Vec<crate::ScorePill> {
+    let mut pills = Vec::new();
+    let mut add = |label: &str, value: String, tone: i32| {
+        pills.push(crate::ScorePill { label: label.into(), value: value.into(), tone });
+    };
+    if let Some(imdb) = meta.rating.clone().or_else(|| scores.and_then(|s| s.imdb.clone())).filter(|r| !r.is_empty()) {
+        add("IMDb", imdb, 0);
+    }
+    if let Some(tmdb) = tmdb.filter(|r| *r > 0.0) {
+        add("TMDB", format!("{tmdb:.1}"), 1);
+    }
+    if let Some(rt) = scores.and_then(|s| s.rotten_tomatoes.clone()) {
+        add("RT", rt, 2);
+    }
+    if let Some(mc) = scores.and_then(|s| s.metacritic.clone()) {
+        add("MC", mc, 3);
+    }
+    pills
+}
+
 
 impl Library {
     pub(super) fn start_home_top(&self, ui: &crate::AppWindow) {
@@ -144,9 +178,20 @@ impl Library {
 
     fn hero_details(&self, slot: usize, meta: MetaDetail) {
         let Some(mut slide) = self.home_top.slides.row_data(slot) else { return };
-        slide.facts = facts_of(&meta).into();
+        slide.facts = banner_facts(&meta, None).into();
         slide.description = meta.description.as_deref().unwrap_or_default().into();
+        slide.scores = ModelRc::new(VecModel::from(score_pills(&meta, None, None)));
         self.home_top.slides.set_row_data(slot, slide);
+        self.hero_scores(slot, &meta);
+        if let Some(url) = meta.logo.clone() {
+            self.fetch_image_for(Some(self.home_pause.clone()), url, LOGO_SIZE, move |library, pixels| {
+                if let Some(mut slide) = library.home_top.slides.row_data(slot) {
+                    slide.logo = Image::from_rgba8(pixels);
+                    slide.has_logo = true;
+                    library.home_top.slides.set_row_data(slot, slide);
+                }
+            });
+        }
         if let Some(url) = meta.background.or(meta.poster) {
             self.fetch_image_for(Some(self.home_pause.clone()), url, BACKGROUND_SIZE, move |library, pixels| {
                 if let Some(mut slide) = library.home_top.slides.row_data(slot) {
@@ -156,6 +201,47 @@ impl Library {
                 }
             });
         }
+    }
+
+    /// Adds the TMDB, Rotten Tomatoes and Metacritic scores (and the age
+    /// rating) to a banner slide, where keys for them are set. OMDb's
+    /// answers are kept for a week: its free key allows 1,000 a day.
+    fn hero_scores(&self, slot: usize, meta: &MetaDetail) {
+        let imdb = meta.imdb_id.clone().or_else(|| haven_metadata::is_imdb_id(&meta.id).then(|| meta.id.clone()));
+        let Some(imdb) = imdb else { return };
+        let (tmdb_key, omdb_key) = {
+            let keys = self.keys.borrow();
+            (keys.tmdb_api_key.clone(), keys.omdb_api_key.clone())
+        };
+        let kept_name = format!("omdb|{imdb}");
+        let kept: Option<(i64, haven_metadata::omdb::Scores)> = self.kept(&kept_name);
+        let fresh_enough = kept.as_ref().is_some_and(|(at, _)| chrono::Utc::now().timestamp() - at < 7 * 86_400);
+        let (http, series, meta) = (self.http.clone(), meta.kind == "series", meta.clone());
+        let dir = self.kept_dir();
+        self.tasks.spawn(async move {
+            let tmdb = match tmdb_key {
+                Some(key) => haven_metadata::details(&http, &key, series, &imdb).await.ok().flatten().and_then(|d| d.rating),
+                None => None,
+            };
+            let mut scores = kept.map(|(_, scores)| scores);
+            if !fresh_enough {
+                if let Some(key) = omdb_key {
+                    if let Ok(Some(found)) = haven_metadata::omdb::scores(&http, &key, &imdb).await {
+                        super::kept::write_kept(&dir, &kept_name, &(chrono::Utc::now().timestamp(), &found));
+                        scores = Some(found);
+                    }
+                }
+            }
+            on_ui(move |library| {
+                let Some(mut slide) = library.home_top.slides.row_data(slot) else { return };
+                if slide.id.as_str() != meta.id && slide.title.as_str() != meta.name {
+                    return;
+                }
+                slide.facts = banner_facts(&meta, scores.as_ref()).into();
+                slide.scores = ModelRc::new(VecModel::from(score_pills(&meta, tmdb, scores.as_ref())));
+                library.home_top.slides.set_row_data(slot, slide);
+            });
+        });
     }
 
     /// Puts the coming episodes and films on Home, with each title's
@@ -359,7 +445,7 @@ mod tests {
 
     #[test]
     fn episodes_left_count_from_the_current_one() {
-        let video = |s: u32, e: u32, day: &str| haven_addons::Video {
+        let video = |s: u32, e: u32, day: &str| haven_titles::Video {
             id: format!("tt1:{s}:{e}"),
             title: None,
             season: Some(s),

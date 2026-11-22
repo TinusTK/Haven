@@ -19,6 +19,7 @@ mod library;
 mod livetv;
 #[cfg(feature = "player")]
 mod player;
+mod whats_new;
 
 slint::include_modules!();
 
@@ -58,14 +59,25 @@ pub fn is_phone() -> bool {
 pub fn run(paths: AppPaths, phone: bool) -> Result<(), Box<dyn Error>> {
     haven_core::diag::start(&paths.data_dir().join("haven.log"));
     let store = Rc::new(Store::open(&paths.database())?);
+    // Haven has run here before (not a fresh install): for "What's new".
+    let existing = store.get::<serde_json::Value>("settings").ok().flatten().is_some();
     let settings = Rc::new(RefCell::new(Settings::load(&store)?));
 
     // Must run before the first window exists: the player draws video with
     // OpenGL, so the window has to be drawn with OpenGL too.
     // If that cannot be had, carry on: Haven then runs without the player.
-    #[cfg(feature = "player")]
+    #[cfg(all(feature = "player", not(target_os = "ios")))]
     if let Err(err) = slint::BackendSelector::new().require_opengl().select() {
         eprintln!("haven: OpenGL is not available: {err}");
+    }
+    // iPhone and iPad: Slint draws with wgpu on Metal, and mpv's pictures
+    // are handed to it as wgpu textures (haven-player's video_ios.rs).
+    #[cfg(all(feature = "player", target_os = "ios"))]
+    if let Err(err) = slint::BackendSelector::new()
+        .require_wgpu_30(slint::wgpu_30::WGPUConfiguration::default())
+        .select()
+    {
+        eprintln!("haven: Metal is not available: {err}");
     }
 
     let ui = AppWindow::new()?;
@@ -73,7 +85,10 @@ pub fn run(paths: AppPaths, phone: bool) -> Result<(), Box<dyn Error>> {
     ui.set_mobile(cfg!(any(target_os = "android", target_os = "ios")));
     // A store build (App Store, Google Play): no add-ons.
     ui.set_addons_hidden(library::NO_ADDONS);
+    ui.set_own_network_only(haven_servers::ONLY_OWN_NETWORK);
     ui.set_compact(phone);
+    ui.global::<Theme>().set_phone(phone);
+    ui.global::<Theme>().set_touch(cfg!(any(target_os = "android", target_os = "ios")));
     ui.set_ios(cfg!(target_os = "ios"));
     ui.set_version(env!("CARGO_PKG_VERSION").into());
     ui.set_data_path(paths.data_dir().display().to_string().into());
@@ -81,8 +96,7 @@ pub fn run(paths: AppPaths, phone: bool) -> Result<(), Box<dyn Error>> {
     ui.set_dark(settings.borrow().theme == ThemeChoice::Dark);
     let page_count = ui.get_pages().row_count() as u32;
     let last = settings.borrow().last_page.min(page_count.saturating_sub(1)) as i32;
-    // A store build has no Add-ons page to come back to.
-    ui.set_page(if library::NO_ADDONS && ui.get_pages().row_data(last as usize).is_some_and(|name| name == "Add-ons") { 0 } else { last });
+    ui.set_page(last);
 
     ui.on_dark_toggled({
         let (store, settings) = (store.clone(), settings.clone());
@@ -124,6 +138,16 @@ pub fn run(paths: AppPaths, phone: bool) -> Result<(), Box<dyn Error>> {
     // starts the bar fills straight away. It shows for at least a second
     // (so it does not flash), else until the bar is full, and never more
     // than 12 seconds, so a slow or dead network never keeps Haven shut.
+    let whats_new_due = whats_new::prepare(&ui, &store, existing);
+    ui.on_whats_new_done({
+        let (ui, store) = (ui.as_weak(), store.clone());
+        move |dont_show_again| {
+            whats_new::done(&store, dont_show_again);
+            if let Some(ui) = ui.upgrade() {
+                ui.set_whats_new_shown(false);
+            }
+        }
+    });
     let splash = Rc::new(slint::Timer::default());
     {
         let started = std::time::Instant::now();
@@ -144,6 +168,9 @@ pub fn run(paths: AppPaths, phone: bool) -> Result<(), Box<dyn Error>> {
                 slint::Timer::single_shot(std::time::Duration::from_millis(450), move || {
                     if let Some(ui) = faded.upgrade() {
                         ui.set_splash_gone(true);
+                        if whats_new_due {
+                            ui.set_whats_new_shown(true);
+                        }
                     }
                 });
                 if let Some(timer) = timer.upgrade() {
@@ -169,7 +196,13 @@ pub fn run(paths: AppPaths, phone: bool) -> Result<(), Box<dyn Error>> {
     // user prefers one (Settings > Player) or Haven's own cannot run.
     #[cfg(feature = "player")]
     let own: Option<Rc<dyn Fn(library::PlayRequest)>> = player.clone().map(|playing| {
-        Rc::new(move |request| playing.play(request)) as Rc<dyn Fn(library::PlayRequest)>
+        Rc::new(move |request: library::PlayRequest| {
+            // Android: a video from the phone's media list is opened here
+            // and handed to the player as an open file.
+            #[cfg(target_os = "android")]
+            let request = library::PlayRequest { address: external::playable(&request.address), ..request };
+            playing.play(request)
+        }) as Rc<dyn Fn(library::PlayRequest)>
     });
     #[cfg(not(feature = "player"))]
     let own: Option<Rc<dyn Fn(library::PlayRequest)>> = None;
@@ -177,7 +210,13 @@ pub fn run(paths: AppPaths, phone: bool) -> Result<(), Box<dyn Error>> {
     let play = {
         let (external, own) = (external.clone(), own.clone());
         move |request: library::PlayRequest| match &own {
-            Some(own) if !external.wanted() => {
+            // On a phone or tablet, other apps cannot open the files kept
+            // inside Haven (Downloads, and on an iPhone Library > Local):
+            // those always play in Haven's own player.
+            Some(own)
+                if !external.wanted()
+                    || (cfg!(any(target_os = "ios", target_os = "android")) && !request.address.contains("://")) =>
+            {
                 external.clear();
                 own(request)
             }
@@ -247,6 +286,8 @@ static ANDROID: std::sync::OnceLock<slint::android::AndroidApp> = std::sync::Onc
 fn android_main(app: slint::android::AndroidApp) {
     let data = app.internal_data_path();
     let _ = ANDROID.set(app.clone());
+    #[cfg(feature = "player")]
+    external::player_ready(&app);
     // Under 600 dp across its short side a screen is a phone's; a
     // tablet has room for the layout a computer gets.
     let phone = app.config().smallest_screen_width_dp().is_none_or(|across| across < 600);

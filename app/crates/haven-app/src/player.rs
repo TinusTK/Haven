@@ -349,6 +349,7 @@ impl Player {
         self.tracks_shown.borrow_mut().clear();
         self.seek_held.set(None);
         ui.set_player_open(true);
+        phone_bars(&ui, false);
 
         let address = request.address.clone();
         *self.playing.borrow_mut() = Some(Playing {
@@ -444,7 +445,7 @@ impl Player {
         let left = (status.duration - status.position).max(0.0);
         // How the stream is coming in: its speed and how far ahead of
         // the picture it has got.
-        ui.set_player_net(arrival(status.arriving, status.ahead, share_loaded(&status)).into());
+        ui.set_player_net(arrival(status.arriving, share_loaded(&status)).into());
         ui.set_player_buffered((status.position + status.ahead.unwrap_or(0.0)) as f32);
         ui.set_player_elapsed(clock(status.position).into());
         ui.set_player_remaining(
@@ -667,6 +668,7 @@ impl Player {
             }
             ui.set_player_fullscreen(false);
             ui.set_player_open(false);
+            phone_bars(&ui, true);
             ui.set_player_frame(Image::default());
         }
     }
@@ -686,6 +688,7 @@ impl Player {
             }
             ui.set_player_fullscreen(false);
             ui.set_player_open(false);
+            phone_bars(&ui, true);
             ui.set_player_frame(Image::default());
         }
         if let Some(closed) = self.closed.borrow().as_ref() {
@@ -768,8 +771,8 @@ fn fit_of(choice: i32) -> Fit {
     }
 }
 
-/// "4.2 MB/s · 38 s ahead": how fast a stream arrives and how much of it
-/// is waiting to be shown. Empty when mpv does not say.
+/// "4.2 MB/s · 42% loaded": how fast a stream arrives and how much of the
+/// whole has arrived. Empty when mpv does not say.
 /// How much of a film has arrived, from 0 to 100; `None` for a live
 /// stream (no running time).
 fn share_loaded(status: &haven_player::video::Status) -> Option<f64> {
@@ -778,7 +781,23 @@ fn share_loaded(status: &haven_player::video::Status) -> Option<f64> {
     })
 }
 
-fn arrival(bytes_a_second: Option<f64>, ahead: Option<f64>, loaded: Option<f64>) -> String {
+/// iPhone and iPad: hides the status bar (the clock, signal and battery)
+/// and the home bar while a video plays, and shows them again after.
+fn phone_bars(ui: &AppWindow, shown: bool) {
+    #[cfg(target_os = "ios")]
+    {
+        use slint::winit_030::WinitWindowAccessor;
+        use winit::platform::ios::WindowExtIOS;
+        ui.window().with_winit_window(|window| {
+            window.set_prefers_status_bar_hidden(!shown);
+            window.set_prefers_home_indicator_hidden(!shown);
+        });
+    }
+    #[cfg(not(target_os = "ios"))]
+    let _ = (ui, shown);
+}
+
+fn arrival(bytes_a_second: Option<f64>, loaded: Option<f64>) -> String {
     // Nothing arriving (all of it is here already) is not worth saying.
     let speed = bytes_a_second.filter(|speed| *speed >= 1_000.0).map(|speed| {
         if speed >= 1_000_000.0 {
@@ -787,14 +806,11 @@ fn arrival(bytes_a_second: Option<f64>, ahead: Option<f64>, loaded: Option<f64>)
             format!("{:.0} KB/s", speed / 1_000.0)
         }
     });
-    let ahead = ahead.map(|ahead| {
-        if ahead >= 90.0 { format!("{:.0} min ahead", ahead / 60.0) } else { format!("{ahead:.0} s ahead") }
-    });
-    // Next to the minutes: how much of the whole has arrived.
+    // How much of the whole has arrived.
     let loaded = loaded.map(|loaded| {
         if loaded >= 99.5 { "100% loaded".to_owned() } else { format!("{:.0}% loaded", loaded.floor()) }
     });
-    [speed, ahead, loaded].into_iter().flatten().collect::<Vec<_>>().join("  ·  ")
+    [speed, loaded].into_iter().flatten().collect::<Vec<_>>().join("  ·  ")
 }
 
 #[cfg(test)]
@@ -803,10 +819,10 @@ mod tests {
 
     #[test]
     fn a_streams_arrival_is_put_in_words() {
-        assert_eq!(arrival(Some(4_200_000.0), Some(38.0), None), "4.2 MB/s  ·  38 s ahead");
-        assert_eq!(arrival(Some(850_000.0), Some(300.0), Some(42.7)), "850 KB/s  ·  5 min ahead  ·  42% loaded");
-        assert_eq!(arrival(None, Some(12.0), Some(99.8)), "12 s ahead  ·  100% loaded");
-        assert_eq!(arrival(Some(0.0), Some(26.0), None), "26 s ahead");
-        assert_eq!(arrival(None, None, None), "");
+        assert_eq!(arrival(Some(4_200_000.0), None), "4.2 MB/s");
+        assert_eq!(arrival(Some(850_000.0), Some(42.7)), "850 KB/s  ·  42% loaded");
+        assert_eq!(arrival(None, Some(99.8)), "100% loaded");
+        assert_eq!(arrival(Some(0.0), None), "");
+        assert_eq!(arrival(None, None), "");
     }
 }

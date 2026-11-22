@@ -51,6 +51,15 @@ pub(super) fn downloads_root(data_dir: &Path) -> PathBuf {
     match home {
         Some(home) if cfg!(target_os = "macos") => home.join("Movies").join("Haven"),
         Some(home) if cfg!(any(windows, target_os = "linux")) => home.join("Videos").join("Haven"),
+        // iPhone and iPad: Haven's own folder in the Files app
+        // (On My iPhone › Haven › Downloads).
+        Some(home) if cfg!(target_os = "ios") => home.join("Documents").join("Downloads"),
+        _ if cfg!(target_os = "android") => {
+            // The phone's Movies folder, where other apps see them too;
+            // Haven's own folder if Android does not allow it.
+            let movies = PathBuf::from("/storage/emulated/0/Movies/Haven");
+            if std::fs::create_dir_all(&movies).is_ok() { movies } else { data_dir.join("Downloads") }
+        }
         _ => data_dir.join("Downloads"),
     }
 }
@@ -154,6 +163,24 @@ impl Library {
     /// Saves the place to watch in row `row` of the open title's list.
     fn download_stream(&self, row: i32) {
         let Some((request, _)) = self.request_for(row) else { return };
+        // This one is downloaded already: play the saved copy (or say how
+        // far it has come; the play button streams it meanwhile).
+        let existing = self.store.downloads().unwrap_or_default();
+        if let Some(saved) = existing.iter().find(|d| d.url == request.address && d.state != "failed") {
+            if saved.state == "done" {
+                return self.play_download(saved.id);
+            }
+            let (size, received) = self.downloads.live.borrow().get(&saved.id).copied().unwrap_or((saved.size, saved.received));
+            let note = if size > 0 {
+                format!("Still downloading ({:.0}%). Press play to stream it now.", received as f64 / size as f64 * 100.0)
+            } else {
+                "Still downloading. Press play to stream it now.".to_owned()
+            };
+            if let Some(ui) = self.ui.upgrade() {
+                ui.set_play_note(note.into());
+            }
+            return;
+        }
         let (season, episode) = self.listed_numbers();
         let mut d = Download {
             id: 0,
@@ -173,7 +200,6 @@ impl Library {
             added_at: chrono::Utc::now().timestamp_millis(),
         };
         // The same film or episode already saved or on its way.
-        let existing = self.store.downloads().unwrap_or_default();
         if existing.iter().any(|old| old.kind == d.kind && old.video_id == d.video_id && old.state != "failed") {
             if let Some(ui) = self.ui.upgrade() {
                 ui.set_play_note("That one is already in your downloads (Library).".into());
@@ -305,6 +331,7 @@ impl Library {
     /// Fills the Library's Downloads list: films, then series, each
     /// series under its name with its episodes in order.
     pub(super) fn show_downloads(&self) {
+        self.refresh_saved_marks();
         let all = self.store.downloads().unwrap_or_default();
         let live = self.downloads.live.borrow();
         let mut rows = Vec::new();

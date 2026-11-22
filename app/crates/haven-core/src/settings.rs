@@ -33,6 +33,8 @@ pub struct Keys {
     pub trakt_id: String,
     pub trakt_secret: String,
     pub simkl_id: String,
+    /// OMDb (omdbapi.com): Rotten Tomatoes and Metacritic scores, the age rating.
+    pub omdb: String,
 }
 
 /// Never print the values.
@@ -78,6 +80,7 @@ impl Keys {
                 &file.simkl_client_id,
                 option_env!("HAVEN_SIMKL_CLIENT_ID"),
             ),
+            omdb_api_key: pick(&self.omdb, &file.omdb_api_key, option_env!("HAVEN_OMDB_API_KEY")),
         }
     }
 }

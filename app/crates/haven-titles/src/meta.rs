@@ -14,6 +14,9 @@ pub struct MetaPreview {
     /// Usually a year or a year range; some add-ons send a number.
     #[serde(default, rename = "releaseInfo", deserialize_with = "lenient::text_or_number")]
     pub release_info: Option<String>,
+    /// Out of 10, as text ("8.4"), when the catalogue gives one.
+    #[serde(default, rename = "imdbRating", deserialize_with = "lenient::text_or_number", skip_serializing_if = "Option::is_none")]
+    pub rating: Option<String>,
 }
 
 /// Everything an add-on knows about one title.
@@ -28,6 +31,9 @@ pub struct MetaDetail {
     /// A wide picture for the top of the page.
     #[serde(default)]
     pub background: Option<String>,
+    /// The title's name drawn as a picture (a logo), when there is one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub logo: Option<String>,
     #[serde(default)]
     pub description: Option<String>,
     #[serde(default, rename = "releaseInfo", deserialize_with = "lenient::text_or_number")]

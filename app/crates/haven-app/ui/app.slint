@@ -25,6 +25,10 @@ export struct Poster {
     progress: float,
     // Watched to the end: a gold tick shows on the poster.
     watched: bool,
+    // Out of 10 ("8.4"), shown in a corner; empty when not known.
+    rating: string,
+    // Its place on a ranked shelf (1, 2, 3…); 0 for none.
+    rank: int,
 }
 
 // One line of a release's notes: a bullet point (maybe under another)
@@ -37,6 +41,8 @@ export struct NoteLine {
 
 // One catalogue from an add-on, shown as a row of posters on Home.
 export struct Shelf {
+    // A ranked list (Popular, Trending): each poster shows its place.
+    ranked: bool,
     title: string,
     source: string,
     loading: bool,
@@ -101,6 +107,8 @@ export struct StreamRow {
     size: string,
     // How many are sharing it (seeders); empty if unknown.
     seeders: string,
+    // Downloaded from this row: 0 no, 1 on its way, 2 saved.
+    saved: int,
 }
 
 // Something coming out, on the Calendar page.
@@ -143,6 +151,19 @@ export struct AgendaRow {
 // A film or episode in the Library's Downloads. `section` ("Films" or
 // "Series") and `group` (a series' name) are set on the first row under
 // them only.
+// One part of "What's new": a heading and a line or two.
+export struct WhatsNewSection {
+    title: string,
+    lines: [string],
+}
+
+// A video already on this device (Library > Local).
+export struct LocalRow {
+    title: string,
+    // Where it is and how big: "Movies  ·  1.4 GB".
+    detail: string,
+}
+
 export struct DownloadRow {
     id: int,
     section: string,
@@ -156,6 +177,15 @@ export struct DownloadRow {
 }
 
 // A title in Home's banner.
+// One score under the banner's title: "IMDb" "8.4". `tone` picks the
+// label's colour: 0 IMDb gold, 1 TMDB teal, 2 Rotten Tomatoes red,
+// 3 Metacritic green.
+export struct ScorePill {
+    label: string,
+    value: string,
+    tone: int,
+}
+
 export struct HeroSlide {
     id: string,
     kind: string,
@@ -165,6 +195,10 @@ export struct HeroSlide {
     description: string,
     image: image,
     has-image: bool,
+    // The title drawn as a logo, shown in place of the plain name.
+    logo: image,
+    has-logo: bool,
+    scores: [ScorePill],
 }
 
 // A film or episode to carry on with, in Home's Continue Watching row.
@@ -263,6 +297,7 @@ export struct OfferRow {
     ink: color,
 }
 
+// addons:begin
 // An add-on a media server uses and shares with its owner.
 export struct SharedAddonRow {
     index: int,
@@ -270,6 +305,7 @@ export struct SharedAddonRow {
     server: string,
     installed: bool,
 }
+// addons:end
 
 // A playlist or an Xtream Codes account the user added.
 export struct SourceRow {
@@ -321,6 +357,7 @@ export struct SyncAccount {
     on: bool,
 }
 
+// addons:begin
 export struct AddonRow {
     url: string,
     name: string,
@@ -330,9 +367,23 @@ export struct AddonRow {
     // Switched on. Off, it stays installed but is not asked for anything.
     enabled: bool,
 }
+// addons:end
 
 export global Theme {
     in-out property <bool> dark: true;
+    // A touch screen: no hover highlights (a finger "hovers" wherever it
+    // presses, which lights up cards while scrolling past them).
+    in-out property <bool> touch: false;
+    // A phone's layout: three posters across a shelf.
+    in-out property <bool> phone: false;
+    // A poster's width on a shelf `row` wide.
+    pure public function card-width(row: length) -> length {
+        return phone ? (row - 24px) / 3.15 : 150px;
+    }
+    // A poster's width in a grid `row` wide: three across on a phone.
+    pure public function grid-card-width(row: length) -> length {
+        return phone ? (row - 20px) / 3 : 150px;
+    }
     out property <color> background: dark ? #0d0f14 : #f3f4f7;
     out property <color> surface: dark ? #151821 : #ffffff;
     out property <color> border: dark ? #232733 : #dfe2ea;
@@ -475,7 +526,7 @@ component IconButton inherits Rectangle {
     width: root.size;
     height: root.size;
     border-radius: root.size / 2;
-    background: root.active || touch.has-hover ? Theme.accent : Theme.selected;
+    background: root.active || (touch.has-hover && !Theme.touch) ? Theme.accent : Theme.selected;
     accessible-role: button;
     accessible-label: root.label;
     accessible-action-default => { root.clicked(); }
@@ -486,7 +537,7 @@ component IconButton inherits Rectangle {
     Icon {
         name: root.icon;
         size: root.size * 0.5;
-        tint: root.active || touch.has-hover ? (Theme.dark ? #171a22 : #ffffff) : Theme.accent;
+        tint: root.active || (touch.has-hover && !Theme.touch) ? (Theme.dark ? #171a22 : #ffffff) : Theme.accent;
     }
 }
 
@@ -713,13 +764,16 @@ component PosterCard inherits Rectangle {
     in property <Poster> poster;
     // What a right-click offers to do with the card; empty for nothing.
     in property <string> remove-label;
+    in property <length> card-width: 150px;
     callback clicked();
     callback remove();
+    private property <length> picture-height: root.card-width * 1.5;
+    private property <bool> lit: (touch.has-hover && !Theme.touch) || focus.has-focus;
 
-    width: 150px;
-    height: 270px;
+    width: root.card-width;
+    height: root.picture-height + (Theme.phone ? 30px : 45px);
     accessible-role: button;
-    accessible-label: poster.year == "" ? poster.title : poster.title + ", " + poster.year;
+    accessible-label: (poster.year == "" ? poster.title : poster.title + ", " + poster.year) + (poster.rating == "" ? "" : ", rated " + poster.rating);
     accessible-action-default => { root.clicked(); }
 
     focus := FocusScope {
@@ -745,12 +799,12 @@ component PosterCard inherits Rectangle {
     }
     Rectangle {
         y: 0;
-        height: 225px;
-        border-radius: 8px;
+        height: root.picture-height;
+        border-radius: Theme.phone ? 10px : 8px;
         clip: true;
         background: Theme.surface;
-        border-width: touch.has-hover || focus.has-focus ? 2px : 1px;
-        border-color: touch.has-hover || focus.has-focus ? Theme.accent : Theme.border;
+        border-width: root.lit ? 2px : 1px;
+        border-color: root.lit ? Theme.accent : Theme.border;
 
         if root.poster.has-image: Image {
             width: 100%;
@@ -769,9 +823,43 @@ component PosterCard inherits Rectangle {
             horizontal-alignment: center;
             vertical-alignment: center;
         }
-        if root.poster.watched: WatchedTick {
+        // Its place on a ranked shelf, large in the top corner.
+        if root.poster.rank > 0: Text {
+            x: 9px;
+            y: 3px;
+            text: root.poster.rank;
+            color: #000000a0;
+            font-family: Theme.heading-font;
+            font-size: Theme.phone ? 34px : 38px;
+            font-weight: 800;
+        }
+        if root.poster.rank > 0: Text {
+            x: 7px;
+            y: 1px;
+            text: root.poster.rank;
+            color: #ffffff;
+            font-family: Theme.heading-font;
+            font-size: Theme.phone ? 34px : 38px;
+            font-weight: 800;
+        }
+        // Its score, in a dark pill in the other corner.
+        if root.poster.rating != "": Rectangle {
             x: parent.width - self.width - 7px;
             y: 7px;
+            width: score.preferred-width + 16px;
+            height: 24px;
+            border-radius: 7px;
+            background: #0b0d12c8;
+            score := Text {
+                text: "★ " + root.poster.rating;
+                color: #ffffff;
+                font-size: 12px;
+                font-weight: 700;
+            }
+        }
+        if root.poster.watched: WatchedTick {
+            x: parent.width - self.width - 7px;
+            y: root.poster.rating != "" ? parent.height - self.height - 7px : 7px;
             size: 26px;
         }
         if root.poster.progress > 0 && !root.poster.watched: Rectangle {
@@ -790,19 +878,46 @@ component PosterCard inherits Rectangle {
         }
     }
     Text {
-        y: 232px;
+        y: root.picture-height + 7px;
         width: 100%;
         text: root.poster.title;
         color: Theme.text;
-        font-size: 13px;
+        font-size: Theme.phone ? 14px : 13px;
+        font-weight: Theme.phone ? 600 : 400;
+        horizontal-alignment: Theme.phone ? center : left;
         overflow: elide;
     }
-    Text {
-        y: 251px;
+    if !Theme.phone: Text {
+        y: root.picture-height + 26px;
         width: 100%;
         text: root.poster.year;
         color: Theme.text-dim;
         font-size: 12px;
+    }
+}
+
+// A score under the banner's title: "IMDb 8.4" in a dark pill.
+component ScoreTag inherits Rectangle {
+    in property <ScorePill> pill;
+    width: tag-label.preferred-width + tag-value.preferred-width + 26px;
+    height: 30px;
+    border-radius: 8px;
+    background: #0b0d12b8;
+    border-width: 1px;
+    border-color: #ffffff1f;
+    tag-label := Text {
+        x: 10px;
+        text: root.pill.label;
+        color: root.pill.tone == 0 ? #f5c518 : root.pill.tone == 1 ? #01b4e4 : root.pill.tone == 2 ? #fa320a : #66cc33;
+        font-size: 13px;
+        font-weight: 800;
+    }
+    tag-value := Text {
+        x: tag-label.x + tag-label.preferred-width + 6px;
+        text: root.pill.value;
+        color: #ffffff;
+        font-size: 14px;
+        font-weight: 700;
     }
 }
 
@@ -817,7 +932,8 @@ component ShelfRow inherits VerticalLayout {
     in property <length> gap;
     callback open(Poster);
     callback remove(Poster);
-    private property <length> step: 162px;
+    private property <length> card-w: Theme.card-width(root.width);
+    private property <length> step: root.card-w + (Theme.phone ? 10px : 12px);
     private property <bool> hidden: root.hide-empty && !root.shelf.loading && root.shelf.error == "" && root.shelf.items.length == 0;
 
     spacing: 10px;
@@ -857,7 +973,7 @@ component ShelfRow inherits VerticalLayout {
         color: Theme.text-dim;
     }
     if root.shelf.items.length > 0: Rectangle {
-        height: 270px;
+        height: root.card-w * 1.5 + (Theme.phone ? 30px : 45px);
         Flickable {
             width: parent.width;
             height: parent.height;
@@ -865,6 +981,7 @@ component ShelfRow inherits VerticalLayout {
             content-height: self.height;
             for poster[index] in root.shelf.items: PosterCard {
                 x: index * root.step;
+                card-width: root.card-w;
                 poster: poster;
                 remove-label: root.remove-label;
                 clicked => { root.open(poster); }
@@ -874,12 +991,14 @@ component ShelfRow inherits VerticalLayout {
     }
 }
 
+// addons:begin
 component SectionTitle inherits Text {
     font-family: Theme.heading-font;
     color: Theme.text;
     font-size: 18px;
     font-weight: 600;
 }
+// addons:end
 
 component Chip inherits Rectangle {
     in property <string> label;
@@ -1113,7 +1232,12 @@ component SourceCard inherits Rectangle {
             alignment: center;
             IconButton {
                 icon: "download";
-                label: "Download " + root.stream.name;
+                // Filled once it is downloaded (or on its way): pressing it
+                // again plays the saved copy.
+                active: root.stream.saved > 0;
+                label: root.stream.saved == 2 ? "Play the downloaded copy of " + root.stream.name
+                    : root.stream.saved == 1 ? "Downloading " + root.stream.name
+                    : "Download " + root.stream.name;
                 size: 38px;
                 clicked => { root.download(); }
             }
@@ -1460,8 +1584,14 @@ component PlayerView inherits Rectangle {
     in property <string> elapsed-text;
     in property <string> remaining-text;
     in property <string> ends-at;
-    // "4.2 MB/s · 38 s ahead", and how far the stream has arrived.
+    // "4.2 MB/s · 100% loaded", and how far the stream has arrived.
     in property <string> net;
+    // The phone's notch, rounded corners and home bar: the controls stay
+    // inside them.
+    in property <length> inset-top;
+    in property <length> inset-bottom;
+    in property <length> inset-left;
+    in property <length> inset-right;
     in property <float> buffered;
     in property <[TrackRow]> audio-tracks;
     in property <[TrackRow]> subtitle-tracks;
@@ -1593,11 +1723,13 @@ component PlayerView inherits Rectangle {
         }
     }
 
-    // The picture itself: move to show the controls, click to pause.
+    // The picture itself. With a mouse: move to show the controls, click
+    // to pause. On a touch screen: a tap shows the controls (or hides
+    // them); pausing is the pause button's job.
     TouchArea {
         mouse-cursor: root.controls ? MouseCursor.default : MouseCursor.none;
         pointer-event(event) => {
-            if (event.kind == PointerEventKind.move) {
+            if (event.kind == PointerEventKind.move && !Theme.touch) {
                 root.controls = true;
                 hide.restart();
             }
@@ -1606,6 +1738,11 @@ component PlayerView inherits Rectangle {
             keys.focus();
             if (root.menu != 0) {
                 root.menu = 0;
+            } else if (Theme.touch) {
+                root.controls = !root.controls;
+                if (root.controls) {
+                    hide.restart();
+                }
             } else if (root.error == "") {
                 root.toggle-pause();
             }
@@ -1643,11 +1780,14 @@ component PlayerView inherits Rectangle {
     Rectangle {
         visible: root.bars;
         y: 0;
-        height: 84px;
+        height: 84px + root.inset-top;
         background: @linear-gradient(180deg, #000000c0 0%, #00000000 100%);
         top-touch := TouchArea { }
         HorizontalLayout {
             padding: 16px;
+            padding-top: 16px + root.inset-top;
+            padding-left: 16px + root.inset-left;
+            padding-right: 16px + root.inset-right;
             spacing: 14px;
             VerticalLayout {
                 height: 40px;
@@ -1749,13 +1889,13 @@ component PlayerView inherits Rectangle {
     Rectangle {
         visible: root.bars && root.error == "";
         y: parent.height - self.height;
-        height: 112px;
+        height: 112px + root.inset-bottom;
         background: @linear-gradient(180deg, #00000000 0%, #000000d8 100%);
         bottom-touch := TouchArea { }
         VerticalLayout {
-            padding-left: 20px;
-            padding-right: 20px;
-            padding-bottom: 12px;
+            padding-left: 20px + root.inset-left;
+            padding-right: 20px + root.inset-right;
+            padding-bottom: 12px + root.inset-bottom;
             spacing: 6px;
             alignment: end;
 
@@ -1845,8 +1985,8 @@ component PlayerView inherits Rectangle {
 
     // The open list, above the buttons that open it.
     if root.menu != 0: Rectangle {
-        x: parent.width - self.width - 20px;
-        y: parent.height - 112px - self.height + 30px;
+        x: parent.width - self.width - 20px - root.inset-right;
+        y: parent.height - 112px - root.inset-bottom - self.height + 30px;
         width: 340px;
         height: min(list.preferred-height + 50px, parent.height - 200px);
         border-radius: 10px;
@@ -2021,6 +2161,7 @@ component PlayerView inherits Rectangle {
     }
 }
 
+// addons:begin
 component AddonCard inherits Rectangle {
     in property <AddonRow> addon;
     callback remove();
@@ -2078,6 +2219,7 @@ component AddonCard inherits Rectangle {
         }
     }
 }
+// addons:end
 
 // One line of a list down the side of a page: a category, a source.
 component SideItem inherits Rectangle {
@@ -2427,17 +2569,23 @@ export component AppWindow inherits Window {
     in-out property <int> country-index;
     // A store build (App Store, Google Play): no Add-ons page, no mention of add-ons.
     in property <bool> addons-hidden;
+    // Store builds: media servers only on the home network or Tailscale.
+    in property <bool> own-network-only;
+    // addons:begin
     in property <[SharedAddonRow]> shared-addons;
+    // addons:end
     // How many pictures are kept on this computer, in words.
     in property <string> cache-status;
     in property <[string]> pages: ["Home", "Explore", "Library", "Live TV", "Calendar", "Settings"];
 
     in property <[Shelf]> shelves;
+    // addons:begin
     in property <[AddonRow]> addons;
     in property <bool> addon-busy;
     in property <string> addon-status;
     in property <bool> addon-status-is-error;
     in-out property <string> addon-address;
+    // addons:end
     in property <[Shelf]> search-shelves;
     in property <string> search-note;
     in-out property <string> search-query;
@@ -2486,6 +2634,7 @@ export component AppWindow inherits Window {
     in-out property <string> keys-trakt-id;
     in-out property <string> keys-trakt-secret;
     in-out property <string> keys-simkl-id;
+    in-out property <string> keys-omdb;
     in property <string> keys-status;
     in property <[TrackingRow]> tracking;
     in property <bool> tracking-busy;
@@ -2495,6 +2644,10 @@ export component AppWindow inherits Window {
     in property <string> tracking-link;
 
     in property <[ServerRow]> servers;
+    // A Haven Hub is among the servers; what the last send or fetch did.
+    in property <bool> has-hub;
+    in property <bool> hub-busy;
+    in property <string> hub-status;
     // One "New in" and one A to Z shelf per library of each media server.
     in property <[Shelf]> server-shelves;
     // Shelves from the built-in TMDB catalogue; empty without a TMDB key.
@@ -2598,6 +2751,23 @@ export component AppWindow inherits Window {
     private property <int> settings-page: 5;
     // The Library's part showing: 0 Downloads, 1 Watchlist, 2 History.
     in-out property <int> library-tab;
+    // Library > Local.
+    in property <[LocalRow]> local-rows;
+    in property <string> local-status;
+    in property <string> local-place;
+    in property <bool> local-busy;
+    callback local-open();
+    callback local-play(int);
+    changed library-tab => {
+        if (self.library-tab == 0) {
+            self.local-open();
+        }
+    }
+    changed page => {
+        if (self.page == self.library-page && self.library-tab == 0) {
+            self.local-open();
+        }
+    }
     // Live TV shows television (0) or radio (1).
     in-out property <int> live-band;
     // The part of Settings showing: 0 General, 1 Accounts, 2 Media
@@ -2638,6 +2808,12 @@ export component AppWindow inherits Window {
     // The last try failed.
     in property <bool> sync-problem;
     callback sync-now();
+    // Settings > Sync options > Backup.
+    in property <string> backup-status;
+    in property <string> backup-where;
+    in property <bool> backup-busy;
+    callback backup-now();
+    callback backup-restore();
     // An account's sync switched on or off (0 Trakt, 1 Simkl).
     callback sync-account(int, bool);
     // `mobile`: a phone or tablet build. `compact`: a phone's screen,
@@ -2652,13 +2828,16 @@ export component AppWindow inherits Window {
     in-out property <bool> explore-picking;
     // The navigation bar along the bottom.
     private property <length> nav-height: root.player-open ? 0px : (root.compact ? 78px : 92px) + root.safe-area-insets.bottom;
-    // Something fills Home: a media server, an add-on or the TMDB catalogue.
-    private property <bool> home-has-sources: root.addons.length > 0 || root.servers.length > 0 || root.catalog-shelves.length > 0;
+    // Something fills Home: the built-in catalogue's shelves (and any
+    // add-on's), a media server or the TMDB catalogue.
+    private property <bool> home-has-sources: root.shelves.length > 0 || root.servers.length > 0 || root.catalog-shelves.length > 0;
 
     callback page-selected(int);
     callback dark-toggled(bool);
+    // addons:begin
     callback install-addon(string);
     callback remove-addon(string);
+    // addons:end
     callback search(string);
     callback open-title(Poster);
     callback close-detail();
@@ -2686,9 +2865,14 @@ export component AppWindow inherits Window {
     callback plex-sign-in();
     callback plex-cancel();
     callback remove-server(int);
+    // addons:begin
     // Switch an add-on (by address), a media server (by number) or a
     // television source (by address) on or off without removing it.
     callback set-addon-enabled(string, bool);
+    // addons:else
+    // Switch a media server (by number) or a television source (by
+    // address) on or off without removing it.
+    // addons:end
     callback set-server-enabled(int, bool);
     callback set-tv-source-enabled(string, bool);
     callback filter-categories(bool, string);
@@ -2700,12 +2884,17 @@ export component AppWindow inherits Window {
     callback fav-close();
     callback explore-filter(string);
     callback country-selected(int);
+    // addons:begin
     // Installs a media server's add-on in Haven; -1 for all of them.
     callback install-shared(int);
+    // addons:end
     // Deletes the pictures kept on this computer.
     callback clear-cache();
     // Asks every media server again whether it answers.
     callback check-servers();
+    // Haven Hub: hand it this device's whole setup, or take the Hub's.
+    callback hub-send();
+    callback hub-get();
     // Explore: the source, kind and genre chosen (genre -1 for all).
     callback explore-pick(int, int, int);
     callback explore-load-more();
@@ -3035,8 +3224,8 @@ export component AppWindow inherits Window {
                                             height: 52px;
                                             border-radius: 12px;
                                             background: offer.tint;
-                                            border-width: tile-touch.has-hover ? 2px : 1px;
-                                            border-color: tile-touch.has-hover ? Theme.accent : #ffffff14;
+                                            border-width: (tile-touch.has-hover && !Theme.touch) ? 2px : 1px;
+                                            border-color: (tile-touch.has-hover && !Theme.touch) ? Theme.accent : #ffffff14;
                                             accessible-role: button;
                                             accessible-label: offer.name + ", " + offer.ways + ". Opens JustWatch";
                                             accessible-action-default => {
@@ -3297,7 +3486,11 @@ export component AppWindow inherits Window {
                             font-size: 13px;
                         }
                         if root.streams-loading: Text {
+                            // addons:begin
                             text: root.streams.length > 0 ? "More are still coming in…" : root.addons-hidden ? "Asking your media servers…" : "Asking your media servers and add-ons…";
+                            // addons:else
+                            text: root.streams.length > 0 ? "More are still coming in…" : "Asking your media servers…";
+                            // addons:end
                             color: Theme.text-dim;
                             font-size: 13px;
                         }
@@ -3415,7 +3608,7 @@ export component AppWindow inherits Window {
                     }
                     Rectangle { horizontal-stretch: 1; }
                     if !root.compact: Segments {
-                        labels: ["Downloads", "Watchlist", "History"];
+                        labels: ["Local", "Downloads", "Watchlist", "History"];
                         current <=> root.library-tab;
                     }
                 }
@@ -3423,13 +3616,85 @@ export component AppWindow inherits Window {
                 if root.compact: HorizontalLayout {
                     alignment: start;
                     Segments {
-                        labels: ["Downloads", "Watchlist", "History"];
+                        labels: ["Local", "Downloads", "Watchlist", "History"];
                         current <=> root.library-tab;
                     }
                 }
 
-                // ---- Downloads: films, then series by name.
+                // ---- Local: videos already on this device.
                 if root.library-tab == 0: HorizontalLayout {
+                    spacing: 10px;
+                    Text {
+                        horizontal-stretch: 1;
+                        text: root.local-place + (root.local-status == "" ? "" : "  ·  " + root.local-status);
+                        color: Theme.text-dim;
+                        font-size: 12px;
+                        vertical-alignment: center;
+                        wrap: word-wrap;
+                    }
+                    Button {
+                        text: root.local-busy ? "Looking…" : "Look again";
+                        enabled: !root.local-busy;
+                        clicked => { root.local-open(); }
+                    }
+                }
+                if root.library-tab == 0 && root.local-rows.length > 0: local-scroll := ScrollView {
+                    vertical-stretch: 1;
+                    content-width: self.visible-width;
+                    content-height: local-list.preferred-height;
+                    local-list := VerticalLayout {
+                        width: local-scroll.visible-width;
+                        alignment: start;
+                        spacing: 8px;
+                        padding-bottom: 16px;
+                        for row[index] in root.local-rows: Rectangle {
+                            height: 56px;
+                            border-radius: 10px;
+                            background: Theme.surface;
+                            border-width: 1px;
+                            border-color: (local-touch.has-hover && !Theme.touch) ? Theme.accent : Theme.border;
+                            accessible-role: button;
+                            accessible-label: "Play " + row.title;
+                            accessible-action-default => { root.local-play(index); }
+                            local-touch := TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => { root.local-play(index); }
+                            }
+                            HorizontalLayout {
+                                padding-left: 14px;
+                                padding-right: 14px;
+                                spacing: 12px;
+                                Icon {
+                                    y: (parent.height - self.height) / 2;
+                                    name: "play";
+                                    size: 18px;
+                                    tint: Theme.accent;
+                                }
+                                VerticalLayout {
+                                    alignment: center;
+                                    spacing: 2px;
+                                    Text {
+                                        text: row.title;
+                                        color: Theme.text;
+                                        font-size: 14px;
+                                        font-weight: 600;
+                                        overflow: elide;
+                                    }
+                                    Text {
+                                        text: row.detail;
+                                        color: Theme.text-dim;
+                                        font-size: 12px;
+                                        overflow: elide;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                if root.library-tab == 0 && root.local-rows.length == 0: Rectangle { vertical-stretch: 1; }
+
+                // ---- Downloads: films, then series by name.
+                if root.library-tab == 1: HorizontalLayout {
                     spacing: 10px;
                     Icon {
                         name: "folder";
@@ -3450,7 +3715,7 @@ export component AppWindow inherits Window {
                         clicked => { root.open-downloads-folder(); }
                     }
                 }
-                if root.library-tab == 0 && root.download-rows.length == 0: VerticalLayout {
+                if root.library-tab == 1 && root.download-rows.length == 0: VerticalLayout {
                     vertical-stretch: 1;
                     alignment: start;
                     Text {
@@ -3459,7 +3724,7 @@ export component AppWindow inherits Window {
                         wrap: word-wrap;
                     }
                 }
-                if root.library-tab == 0 && root.download-rows.length > 0: dl-scroll := ScrollView {
+                if root.library-tab == 1 && root.download-rows.length > 0: dl-scroll := ScrollView {
                     vertical-stretch: 1;
                     content-width: self.visible-width;
                     content-height: dl-list.preferred-height;
@@ -3494,7 +3759,7 @@ export component AppWindow inherits Window {
                 }
 
                 // ---- Watchlist and History: posters.
-                if root.library-tab == 1 && root.watchlist.length == 0: VerticalLayout {
+                if root.library-tab == 2 && root.watchlist.length == 0: VerticalLayout {
                     vertical-stretch: 1;
                     alignment: start;
                     Text {
@@ -3503,7 +3768,7 @@ export component AppWindow inherits Window {
                         wrap: word-wrap;
                     }
                 }
-                if root.library-tab == 2 && root.history.length == 0: VerticalLayout {
+                if root.library-tab == 3 && root.history.length == 0: VerticalLayout {
                     vertical-stretch: 1;
                     alignment: start;
                     Text {
@@ -3512,19 +3777,21 @@ export component AppWindow inherits Window {
                         wrap: word-wrap;
                     }
                 }
-                if (root.library-tab == 1 && root.watchlist.length > 0) || (root.library-tab == 2 && root.history.length > 0): grid-view := ScrollView {
-                    private property <[Poster]> items: root.library-tab == 1 ? root.watchlist : root.history;
-                    private property <length> step: 162px;
-                    private property <length> line: 286px;
-                    private property <int> columns: max(1, floor((self.visible-width + 12px) / self.step));
+                if (root.library-tab == 2 && root.watchlist.length > 0) || (root.library-tab == 3 && root.history.length > 0): grid-view := ScrollView {
+                    private property <[Poster]> items: root.library-tab == 2 ? root.watchlist : root.history;
+                    private property <length> card-w: Theme.grid-card-width(self.visible-width);
+                    private property <length> step: self.card-w + (Theme.phone ? 10px : 12px);
+                    private property <length> line: self.card-w * 1.5 + (Theme.phone ? 44px : 61px);
+                    private property <int> columns: Theme.phone ? 3 : max(1, floor((self.visible-width + 12px) / self.step));
                     vertical-stretch: 1;
                     content-width: self.visible-width;
                     content-height: ceil(self.items.length / self.columns) * self.line + 16px;
                     for poster[index] in grid-view.items: PosterCard {
+                        card-width: grid-view.card-w;
                         x: mod(index, grid-view.columns) * grid-view.step;
                         y: floor(index / grid-view.columns) * grid-view.line;
                         poster: poster;
-                        remove-label: root.library-tab == 2 ? "Remove from History" : "";
+                        remove-label: root.library-tab == 3 ? "Remove from History" : "";
                         clicked => { root.open-title(poster); }
                         remove => { root.remove-continue(poster); }
                     }
@@ -3923,7 +4190,7 @@ export component AppWindow inherits Window {
                                         border-radius: 10px;
                                         background: day-entry-touch.has-hover ? Theme.hover : Theme.background.with-alpha(0.55);
                                         border-width: 1px;
-                                        border-color: day-entry-touch.has-hover ? Theme.accent : Theme.border;
+                                        border-color: (day-entry-touch.has-hover && !Theme.touch) ? Theme.accent : Theme.border;
                                         day-entry-touch := TouchArea {
                                             mouse-cursor: pointer;
                                             clicked => { root.calendar-open(entry); }
@@ -3992,7 +4259,7 @@ export component AppWindow inherits Window {
                                             border-radius: 10px;
                                             background: agenda-touch.has-hover ? Theme.hover : Theme.background.with-alpha(0.55);
                                             border-width: 1px;
-                                            border-color: agenda-touch.has-hover ? Theme.accent : Theme.border;
+                                            border-color: (agenda-touch.has-hover && !Theme.touch) ? Theme.accent : Theme.border;
                                             agenda-touch := TouchArea {
                                                 mouse-cursor: pointer;
                                                 clicked => { root.calendar-open(row.entry); }
@@ -4103,9 +4370,13 @@ export component AppWindow inherits Window {
 
                 PageTitle { text: "Home"; }
                 Text {
+                    // addons:begin
                     text: root.addons-hidden
                         ? "Home fills with shelves of films and series from your media servers and the TMDB catalogue. Add a media server or a TMDB key in Settings."
                         : "Home fills with shelves of films and series from your media servers, your add-ons and the TMDB catalogue. Add a media server or a TMDB key in Settings, or install an add-on.";
+                    // addons:else
+                    text: "Home fills with shelves of films and series from your media servers and the TMDB catalogue. Add a media server or a TMDB key in Settings.";
+                    // addons:end
                     color: Theme.text-dim;
                     wrap: word-wrap;
                 }
@@ -4119,6 +4390,7 @@ export component AppWindow inherits Window {
                             root.page-selected(root.settings-page);
                         }
                     }
+                    // addons:begin
                     if !root.addons-hidden: Button {
                         text: "Add-ons";
                         clicked => {
@@ -4128,6 +4400,7 @@ export component AppWindow inherits Window {
                             root.page-selected(root.settings-page);
                         }
                     }
+                    // addons:end
                 }
                 if root.continue-shelf.items.length > 0: ShelfRow {
                     shelf: root.continue-shelf;
@@ -4211,7 +4484,18 @@ export component AppWindow inherits Window {
                                 padding-bottom: root.compact ? 22px : 34px;
                                 spacing: 10px;
                                 alignment: end;
-                                Text {
+                                // The title as its logo when there is one.
+                                if hero-card.slide.has-logo: HorizontalLayout {
+                                    alignment: root.compact ? center : start;
+                                    Image {
+                                        source: hero-card.slide.logo;
+                                        height: root.compact ? 96px : clamp(hero-card.height * 0.22, 70px, 130px);
+                                        width: min(self.height * (self.source.width / max(1, self.source.height)), hero-card.width - (root.compact ? 40px : 80px), root.compact ? 320px : 460px);
+                                        image-fit: contain;
+                                        accessible-role: none;
+                                    }
+                                }
+                                if !hero-card.slide.has-logo: Text {
                                     text: hero-card.slide.title;
                                     color: #ffffff;
                                     font-size: root.compact ? 30px : clamp(hero-card.height * 0.11, 34px, 60px);
@@ -4227,6 +4511,12 @@ export component AppWindow inherits Window {
                                     horizontal-alignment: root.compact ? center : left;
                                     font-size: root.compact ? 13px : 15px;
                                     font-weight: 600;
+                                    wrap: word-wrap;
+                                }
+                                if hero-card.slide.scores.length > 0: HorizontalLayout {
+                                    alignment: root.compact ? center : start;
+                                    spacing: 8px;
+                                    for pill in hero-card.slide.scores: ScoreTag { pill: pill; }
                                 }
                                 if hero-card.slide.description != "": Text {
                                     text: hero-card.slide.description;
@@ -4234,7 +4524,7 @@ export component AppWindow inherits Window {
                                     font-size: root.compact ? 13px : 14px;
                                     wrap: word-wrap;
                                     overflow: elide;
-                                    max-height: 40px;
+                                    max-height: root.compact ? 54px : 40px;
                                     horizontal-alignment: root.compact ? center : left;
                                 }
                                 HorizontalLayout {
@@ -4365,8 +4655,8 @@ export component AppWindow inherits Window {
                                         border-radius: 16px;
                                         clip: true;
                                         background: Theme.surface;
-                                        border-width: card-touch.has-hover ? 2px : 1px;
-                                        border-color: card-touch.has-hover ? Theme.accent : Theme.border;
+                                        border-width: (card-touch.has-hover && !Theme.touch) ? 2px : 1px;
+                                        border-color: (card-touch.has-hover && !Theme.touch) ? Theme.accent : Theme.border;
                                         if card.has-image: Image {
                                             width: 100%;
                                             height: 100%;
@@ -4442,7 +4732,7 @@ export component AppWindow inherits Window {
                                 TouchArea {
                                     mouse-cursor: pointer;
                                     clicked => {
-                                        root.library-tab = 2;
+                                        root.library-tab = 3;
                                         root.page = root.library-page;
                                         root.page-selected(root.library-page);
                                     }
@@ -4487,8 +4777,8 @@ export component AppWindow inherits Window {
                                         border-radius: 16px;
                                         clip: true;
                                         background: Theme.surface;
-                                        border-width: cw-touch.has-hover ? 2px : 1px;
-                                        border-color: cw-touch.has-hover ? Theme.accent : Theme.border;
+                                        border-width: (cw-touch.has-hover && !Theme.touch) ? 2px : 1px;
+                                        border-color: (cw-touch.has-hover && !Theme.touch) ? Theme.accent : Theme.border;
                                         if card.has-image: Image {
                                             width: 100%;
                                             height: 100%;
@@ -4580,7 +4870,7 @@ export component AppWindow inherits Window {
                                 TouchArea {
                                     mouse-cursor: pointer;
                                     clicked => {
-                                        root.library-tab = 1;
+                                        root.library-tab = 2;
                                         root.page = root.library-page;
                                         root.page-selected(root.library-page);
                                     }
@@ -4592,15 +4882,18 @@ export component AppWindow inherits Window {
                                 }
                             }
                         }
-                        Rectangle {
-                            height: 270px;
+                        watch-row := Rectangle {
+                            private property <length> card-w: Theme.card-width(self.width);
+                            private property <length> step: self.card-w + (Theme.phone ? 10px : 12px);
+                            height: self.card-w * 1.5 + (Theme.phone ? 30px : 45px);
                             Flickable {
                                 width: parent.width;
                                 height: parent.height;
-                                content-width: root.watchlist.length * 162px;
+                                content-width: root.watchlist.length * watch-row.step;
                                 content-height: self.height;
                                 for poster[index] in root.watchlist: PosterCard {
-                                    x: index * 162px;
+                                    x: index * watch-row.step;
+                                    card-width: watch-row.card-w;
                                     poster: poster;
                                     clicked => { root.open-title(poster); }
                                 }
@@ -4608,7 +4901,11 @@ export component AppWindow inherits Window {
                         }
                     }
                     if root.shelves.length == 0 && root.server-shelves.length == 0 && root.catalog-shelves.length == 0: Text {
+                        // addons:begin
                         text: root.servers.length > 0 ? "Waiting for your media servers…" : root.addons-hidden ? "Nothing to show here yet." : "Your add-ons have no catalogues to show here.";
+                        // addons:else
+                        text: root.servers.length > 0 ? "Waiting for your media servers…" : "Nothing to show here yet.";
+                        // addons:end
                         color: Theme.text-dim;
                         wrap: word-wrap;
                     }
@@ -4762,9 +5059,13 @@ export component AppWindow inherits Window {
                     }
                 }
                 if !root.explore-searching && root.explore-count == 0: Text {
+                    // addons:begin
                     text: root.addons-hidden
                         ? "Explore browses everything you can watch. Add a media server or a TMDB key in Settings and it shows here."
                         : "Explore browses everything you can watch. Add a media server or a TMDB key in Settings, or install an add-on, and it shows here.";
+                    // addons:else
+                    text: "Explore browses everything you can watch. Add a media server or a TMDB key in Settings and it shows here.";
+                    // addons:end
                     color: Theme.text-dim;
                     wrap: word-wrap;
                 }
@@ -4850,9 +5151,10 @@ export component AppWindow inherits Window {
                             overflow: elide;
                         }
                           explore-view := ScrollView {
-                            private property <length> step: 162px;
-                            private property <length> line: 286px;
-                            private property <int> columns: max(1, floor((self.visible-width + 12px) / self.step));
+                            private property <length> card-w: Theme.grid-card-width(self.visible-width);
+                            private property <length> step: self.card-w + (Theme.phone ? 10px : 12px);
+                            private property <length> line: self.card-w * 1.5 + (Theme.phone ? 44px : 61px);
+                            private property <int> columns: Theme.phone ? 3 : max(1, floor((self.visible-width + 12px) / self.step));
                             private property <length> grid-height: ceil(root.explore-items.length / self.columns) * self.line;
                             // The pull-to-refresh strip above the top (RefreshStrip).
                             private property <length> zone: 64px;
@@ -4880,6 +5182,7 @@ export component AppWindow inherits Window {
                             }
 
                             for poster[index] in root.explore-items: PosterCard {
+                                card-width: explore-view.card-w;
                                 x: mod(index, explore-view.columns) * explore-view.step;
                                 y: explore-view.zone + floor(index / explore-view.columns) * explore-view.line;
                                 poster: poster;
@@ -4921,7 +5224,9 @@ export component AppWindow inherits Window {
                         { head: "", icon: "account", label: "Accounts", index: 1 },
                         { head: "", icon: "sync", label: "Sync options", index: 7 },
                         { head: "", icon: "server", label: "Media servers", index: 2 },
+                        // addons:begin
                         { head: "", icon: "addon", label: "Add-ons", index: 3 },
+                        // addons:end
                         { head: "", icon: "livetv", label: "Live TV", index: 4 },
                         { head: "Haven", icon: "", label: "", index: -1 },
                         { head: "", icon: "info", label: "About", index: 6 },
@@ -5010,7 +5315,11 @@ export component AppWindow inherits Window {
                             }
                         }
                         Text {
+                            // addons:begin
                             text: ["General", "Accounts", "Media servers", "Add-ons", "Live TV", "Downloads & storage", "About", "Sync options"][root.settings-section];
+                            // addons:else
+                            text: ["General", "Accounts", "Media servers", "", "Live TV", "Downloads & storage", "About", "Sync options"][root.settings-section];
+                            // addons:end
                             font-family: Theme.heading-font;
                             color: Theme.text;
                             font-size: root.compact ? 22px : 26px;
@@ -5082,16 +5391,24 @@ export component AppWindow inherits Window {
                         color: Theme.text-dim;
                         wrap: word-wrap;
                     }
+                    // With Haven's own player the list starts with it, so
+                    // the row's place in the list is the choice itself.
                     if root.ios: SettingsRow {
                         label: "Play videos with";
-                        detail: "Videos open in this app, which has to be installed.";
+                        detail: !root.player-own-works
+                            ? "Videos open in this app, which has to be installed."
+                            : root.player-choice == 0
+                            ? "Haven's own player keeps your place and plays the next episode."
+                            : "Streams open in this app, which has to be installed. Videos kept on this device play in Haven's own player.";
                         ComboBox {
-                            width: 150px;
-                            model: ["VLC", "Infuse", "Outplayer"];
-                            current-index: max(0, root.player-choice - 1);
+                            width: root.player-own-works ? 190px : 150px;
+                            model: root.player-own-works
+                                ? ["Haven's own player", "VLC", "Infuse", "Outplayer"]
+                                : ["VLC", "Infuse", "Outplayer"];
+                            current-index: root.player-own-works ? root.player-choice : max(0, root.player-choice - 1);
                             selected => {
-                                root.player-choice = self.current-index + 1;
-                                root.set-player-choice(self.current-index + 1);
+                                root.player-choice = root.player-own-works ? self.current-index : self.current-index + 1;
+                                root.set-player-choice(root.player-choice);
                             }
                         }
                     }
@@ -5232,6 +5549,18 @@ export component AppWindow inherits Window {
                                 accessible-label: "Simkl client ID";
                             }
                         }
+                        Row {
+                            Text {
+                                text: "OMDb API key";
+                                color: Theme.text;
+                                vertical-alignment: center;
+                            }
+                            Field {
+                                text <=> root.keys-omdb;
+                                placeholder-text: "For Rotten Tomatoes scores (omdbapi.com)";
+                                accessible-label: "OMDb API key";
+                            }
+                        }
                     }
                     HorizontalLayout {
                         spacing: 12px;
@@ -5360,6 +5689,27 @@ export component AppWindow inherits Window {
                                     }
                                 }
                             }
+                            SettingsCard {
+                                title: "Backup";
+                                note: root.backup-status;
+                                SettingsRow {
+                                    label: root.backup-where;
+                                    detail: "Restore puts back anything missing on this device and removes nothing.";
+                                    HorizontalLayout {
+                                        spacing: 8px;
+                                        Button {
+                                            text: root.backup-busy ? "Working…" : "Back up now";
+                                            enabled: !root.backup-busy;
+                                            clicked => { root.backup-now(); }
+                                        }
+                                        Button {
+                                            text: "Restore";
+                                            enabled: !root.backup-busy;
+                                            clicked => { root.backup-restore(); }
+                                        }
+                                    }
+                                }
+                            }
                         }
 
                         // ---- Media servers
@@ -5367,14 +5717,31 @@ export component AppWindow inherits Window {
                             spacing: 20px;
                             SettingsCard {
                     Text {
-                        text: "Sign in to your own Jellyfin, Emby or Plex server. Its libraries then show as shelves on Home, in Explore and in Search, and it is offered as a place to watch whatever it holds.";
+                        text: "Sign in to your own Jellyfin, Emby or Plex server, or pair with your Haven Hub.";
                         color: Theme.text-dim;
                         wrap: word-wrap;
+                    }
+                    if root.own-network-only: HorizontalLayout {
+                        alignment: start;
+                        Rectangle {
+                            width: lan-label.preferred-width + 24px;
+                            height: 28px;
+                            border-radius: 14px;
+                            background: #e5484d26;
+                            border-width: 1px;
+                            border-color: #e5484d;
+                            lan-label := Text {
+                                text: "Only works over Local Area Network";
+                                color: #ff6b6f;
+                                font-size: 12px;
+                                font-weight: 700;
+                            }
+                        }
                     }
                     HorizontalLayout {
                         spacing: 8px;
                         alignment: start;
-                        for name[index] in ["Jellyfin", "Emby", "Plex"]: Chip {
+                        for name[index] in ["Jellyfin", "Emby", "Plex", "Haven Hub"]: Chip {
                             label: name;
                             selected: root.server-kind == index;
                             clicked => {
@@ -5384,7 +5751,7 @@ export component AppWindow inherits Window {
                             }
                         }
                     }
-                    if !root.compact && (root.server-kind != 2): HorizontalLayout {
+                    if !root.compact && (root.server-kind < 2): HorizontalLayout {
                         spacing: 8px;
                         Field {
                             horizontal-stretch: 3;
@@ -5415,7 +5782,7 @@ export component AppWindow inherits Window {
                             clicked => { root.server-sign-in(root.server-kind, root.server-address, root.server-user, root.server-password); }
                         }
                     }
-                    if root.compact && (root.server-kind != 2): VerticalLayout {
+                    if root.compact && (root.server-kind < 2): VerticalLayout {
                         spacing: 8px;
                         Field {
                             text <=> root.server-address;
@@ -5441,6 +5808,29 @@ export component AppWindow inherits Window {
                             text: root.server-busy ? "Signing in…" : "Sign in";
                             enabled: !root.server-busy && root.server-address != "" && root.server-user != "";
                             clicked => { root.server-sign-in(root.server-kind, root.server-address, root.server-user, root.server-password); }
+                        }
+                    }
+                    if root.server-kind == 3: HorizontalLayout {
+                        spacing: 8px;
+                        Field {
+                            horizontal-stretch: 3;
+                            text <=> root.server-address;
+                            placeholder-text: "Hub address, for example 192.168.1.20";
+                            enabled: !root.server-busy;
+                            accessible-label: "Hub address";
+                        }
+                        Field {
+                            horizontal-stretch: 2;
+                            text <=> root.server-user;
+                            placeholder-text: "Pairing code";
+                            enabled: !root.server-busy;
+                            accessible-label: "Pairing code";
+                            accepted => { root.server-sign-in(3, root.server-address, root.server-user, ""); }
+                        }
+                        PrimaryButton {
+                            text: root.server-busy ? "Pairing…" : "Pair";
+                            enabled: !root.server-busy && root.server-address != "" && root.server-user != "";
+                            clicked => { root.server-sign-in(3, root.server-address, root.server-user, ""); }
                         }
                     }
                     if root.server-kind == 2: HorizontalLayout {
@@ -5519,14 +5909,39 @@ export component AppWindow inherits Window {
                             clicked => { root.check-servers(); }
                         }
                     }
+                    if root.has-hub: Text {
+                        text: "Haven Hub";
+                        color: Theme.text-dim;
+                        wrap: word-wrap;
+                    }
+                    if root.has-hub: HorizontalLayout {
+                        alignment: start;
+                        spacing: 8px;
+                        PrimaryButton {
+                            text: root.hub-busy ? "Working…" : "Send everything to the Hub";
+                            enabled: !root.hub-busy;
+                            clicked => { root.hub-send(); }
+                        }
+                        Button {
+                            text: "Get the Hub's setup";
+                            enabled: !root.hub-busy;
+                            clicked => { root.hub-get(); }
+                        }
+                    }
+                    if root.has-hub && root.hub-status != "": Text {
+                        text: root.hub-status;
+                        color: Theme.text-dim;
+                        wrap: word-wrap;
+                    }
                             }
                         }
 
+                        // addons:begin
                         // ---- Add-ons
                         if root.settings-section == 3: VerticalLayout {
                             spacing: 12px;
                     Text {
-                        text: "Paste an add-on's address to install it. Its catalogues show up as shelves on Home. Cinemeta, a free catalogue of films and series, comes installed; switch it off or remove it if you do not want it.";
+                        text: "Paste an add-on's address to install it. Its catalogues show up as shelves on Home, next to Cinemeta, the free catalogue of films and series built into Haven.";
                         color: Theme.text-dim;
                         wrap: word-wrap;
                     }
@@ -5586,6 +6001,7 @@ export component AppWindow inherits Window {
                         }
                     }
                         }
+                        // addons:end
 
                         // ---- Live TV sources
                         if root.settings-section == 4: VerticalLayout {
@@ -5739,7 +6155,7 @@ export component AppWindow inherits Window {
                                     Button {
                                         text: "Open in Library";
                                         clicked => {
-                                            root.library-tab = 0;
+                                            root.library-tab = 1;
                                             root.page = root.library-page;
                                             root.page-selected(root.library-page);
                                         }
@@ -5919,7 +6335,7 @@ export component AppWindow inherits Window {
                         }
                     }
                     Text {
-                        text: "Haven © 2026 TinusTK. Free software under the GNU GPL version 3.\nMade with Slint. Video playback by mpv (libmpv, LGPL).\nThis product uses the TMDB API but is not endorsed or certified by TMDB.";
+                        text: "Haven: a media player and tracker for the films and TV shows you love.\n\nHaven © 2026 TinusTK. Free open source software under the GNU GPL version 3.\nMade with Slint. Video playback by mpv (libmpv, LGPL).\n\nData sources\nFilm and TV information from TMDB and Cinemeta. Tracking with Trakt and Simkl.\nThis product uses the TMDB API but is not endorsed or certified by TMDB.";
                         color: Theme.text-dim;
                         font-size: 12px;
                         wrap: word-wrap;
@@ -6210,6 +6626,10 @@ export component AppWindow inherits Window {
         remaining-text: root.player-remaining;
         ends-at: root.player-ends-at;
         net: root.player-net;
+        inset-top: root.safe-area-insets.top;
+        inset-bottom: root.safe-area-insets.bottom;
+        inset-left: root.safe-area-insets.left;
+        inset-right: root.safe-area-insets.right;
         buffered: root.player-buffered;
         volume: root.player-volume;
         muted: root.player-muted;
@@ -6315,6 +6735,157 @@ export component AppWindow inherits Window {
             color: Theme.text-dim;
             font-size: 13px;
             horizontal-alignment: center;
+        }
+    }
+
+    // ---- "What's new": this version's notes, after the loading screen.
+    in property <bool> whats-new-shown;
+    in property <[WhatsNewSection]> whats-new-sections;
+    // "Haven 0.2.3".
+    in property <string> whats-new-version;
+    // Done was pressed; true when "Don't show again" was ticked.
+    callback whats-new-done(bool);
+    if root.whats-new-shown: whats-new := Rectangle {
+        private property <bool> hide;
+        background: Theme.background;
+        accessible-role: none;
+        // Nothing underneath can be touched while it shows.
+        TouchArea { }
+        VerticalLayout {
+            padding-top: root.safe-area-insets.top + 20px;
+            padding-bottom: root.safe-area-insets.bottom + 16px;
+            padding-left: root.safe-area-insets.left + 16px;
+            padding-right: root.safe-area-insets.right + 16px;
+            spacing: 14px;
+            alignment: stretch;
+            VerticalLayout {
+                spacing: 2px;
+                Text {
+                    text: "What's New";
+                    font-family: Theme.heading-font;
+                    color: Theme.text;
+                    font-size: 40px;
+                    font-weight: 700;
+                    horizontal-alignment: center;
+                }
+                Text {
+                    text: root.whats-new-version;
+                    color: Theme.text-dim;
+                    font-size: 14px;
+                    horizontal-alignment: center;
+                }
+            }
+            notes := ScrollView {
+                vertical-stretch: 1;
+                content-width: self.visible-width;
+                content-height: notes-list.preferred-height;
+                notes-list := VerticalLayout {
+                    x: max(0px, (notes.visible-width - self.width) / 2);
+                    width: min(notes.visible-width, 560px);
+                    spacing: 12px;
+                    padding-bottom: 4px;
+                    for section in root.whats-new-sections: Rectangle {
+                        border-radius: 14px;
+                        background: Theme.surface;
+                        border-width: 1px;
+                        border-color: Theme.border;
+                        clip: true;
+                        VerticalLayout {
+                            Rectangle {
+                                height: 40px;
+                                background: Theme.accent;
+                                Text {
+                                    x: 14px;
+                                    text: section.title;
+                                    font-family: Theme.heading-font;
+                                    color: #171a22;
+                                    font-size: 18px;
+                                    font-weight: 700;
+                                    vertical-alignment: center;
+                                }
+                            }
+                            VerticalLayout {
+                                padding: 14px;
+                                spacing: 8px;
+                                for line in section.lines: HorizontalLayout {
+                                    spacing: 10px;
+                                    Rectangle {
+                                        width: 7px;
+                                        VerticalLayout {
+                                            padding-top: 8px;
+                                            alignment: start;
+                                            Rectangle {
+                                                width: 7px;
+                                                height: 7px;
+                                                border-radius: 2px;
+                                                background: Theme.accent;
+                                            }
+                                        }
+                                    }
+                                    Text {
+                                        horizontal-stretch: 1;
+                                        text: line;
+                                        color: Theme.text;
+                                        font-size: 14px;
+                                        wrap: word-wrap;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            HorizontalLayout {
+                alignment: center;
+                Rectangle {
+                    width: box-row.preferred-width + 24px;
+                    height: 40px;
+                    accessible-role: checkbox;
+                    accessible-checked: whats-new.hide;
+                    accessible-label: "Don't show again";
+                    accessible-action-default => { whats-new.hide = !whats-new.hide; }
+                    TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { whats-new.hide = !whats-new.hide; }
+                    }
+                    box-row := HorizontalLayout {
+                        x: 12px;
+                        spacing: 10px;
+                        alignment: center;
+                        Rectangle {
+                            y: (parent.height - self.height) / 2;
+                            width: 24px;
+                            height: 24px;
+                            border-radius: 6px;
+                            border-width: 2px;
+                            border-color: whats-new.hide ? Theme.accent : Theme.text-dim;
+                            background: whats-new.hide ? Theme.accent : transparent;
+                            if whats-new.hide: Icon {
+                                x: 3px;
+                                y: 3px;
+                                name: "check";
+                                size: 18px;
+                                tint: #171a22;
+                            }
+                        }
+                        Text {
+                            text: "Don't show again";
+                            color: Theme.text;
+                            font-size: 16px;
+                            font-weight: 600;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+            }
+            HorizontalLayout {
+                alignment: center;
+                PrimaryButton {
+                    width: 220px;
+                    text: "Done";
+                    clicked => { root.whats-new-done(whats-new.hide); }
+                }
+            }
         }
     }
 }

@@ -8,7 +8,7 @@ publish.workspace = true
 # `cargo build --workspace` or `cargo test --workspace` does not need libmpv
 # on the machine. The rules (resume, tracks, addresses) build everywhere.
 [features]
-mpv = ["dep:glow", "dep:libmpv2", "dep:slint"]
+mpv = ["dep:glow", "dep:libmpv2", "dep:slint", "dep:objc2", "dep:objc2-metal"]
 mpv-spike = ["mpv", "dep:png"]
 
 [dependencies]
@@ -22,3 +22,11 @@ slint = { workspace = true, optional = true }
 [[example]]
 name = "mpv_spike"
 required-features = ["mpv-spike"]
+
+# iPhone and iPad: Slint draws with Skia on Metal (through wgpu), so mpv
+# draws with its own OpenGL ES context into a picture shared with Metal
+# (`src/video_ios.rs`).
+[target.'cfg(target_os = "ios")'.dependencies]
+slint = { workspace = true, optional = true, features = ["unstable-wgpu-30"] }
+objc2 = { version = "0.6", optional = true }
+objc2-metal = { version = "0.3", optional = true, default-features = false, features = ["std", "MTLTexture", "MTLResource", "MTLDevice", "MTLPixelFormat", "MTLAllocation"] }

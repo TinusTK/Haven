@@ -23,16 +23,22 @@ crate-type = ["lib", "cdylib"]
 # `cargo run -p haven-app --features player`. Without it Haven builds
 # everywhere and lists streams without playing them.
 [features]
+default = ["addons"]
 player = ["haven-player/mpv"]
-# A build for the App Store (TestFlight) or Google Play: no Add-ons page
-# and no mention of add-ons. The builds on GitHub keep add-ons.
-store = []
+# Add-ons: the builds on GitHub have them.
+addons = ["dep:haven-addons", "haven-servers/shared-addons"]
+# A build for the App Store (TestFlight) or Google Play: no add-on code at
+# all and media servers only on the home network or Tailscale. Build it
+# with `--no-default-features --features store,player`.
+store = ["haven-servers/own-network"]
 
 [dependencies]
 ring = "0.17"
 serde_json.workspace = true
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
-haven-addons.workspace = true
+haven-addons = { workspace = true, optional = true }
+haven-titles.workspace = true
+directories.workspace = true
 haven-cast.workspace = true
 haven-core.workspace = true
 haven-livetv.workspace = true
@@ -90,6 +96,8 @@ jni = "0.21"
 package = "net.haven.app"
 build_targets = ["aarch64-linux-android"]
 resources = "../../../android/res"
+# libmpv for the player, put there by android/fetch-libmpv.sh.
+runtime_libs = "../../../android/libmpv"
 
 [package.metadata.android.sdk]
 min_sdk_version = 26
@@ -102,11 +110,22 @@ icon = "@mipmap/ic_launcher"
 [[package.metadata.android.uses_permission]]
 name = "android.permission.INTERNET"
 
+# Library > Local: the phone's videos (asked for when the tab opens).
+[[package.metadata.android.uses_permission]]
+name = "android.permission.READ_MEDIA_VIDEO"
+
+[[package.metadata.android.uses_permission]]
+name = "android.permission.READ_EXTERNAL_STORAGE"
+max_sdk_version = 32
+
 [package.metadata.android.application.activity]
 config_changes = "orientation|screenSize|screenLayout|keyboardHidden|keyboard|uiMode"
 
 # iOS: opening a web address or another app (a video player) goes
 # through the system; there are no programs to start.
 [target.'cfg(target_os = "ios")'.dependencies]
+# The player hides the status bar and home bar through the window.
+slint = { workspace = true, features = ["unstable-winit-030"] }
+winit = { version = "0.30", default-features = false }
 webbrowser = "1"
 libc = "0.2"

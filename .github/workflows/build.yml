@@ -24,6 +24,8 @@ env:
   HAVEN_TRAKT_CLIENT_SECRET: ${{ secrets.TRAKT_CLIENT_SECRET }}
   # Haven's own Simkl app (simkl.com/settings/developer), for Link in Settings.
   HAVEN_SIMKL_CLIENT_ID: ${{ secrets.SIMKL_CLIENT_ID }}
+  # Haven's own OMDb key (omdbapi.com), for Rotten Tomatoes scores.
+  HAVEN_OMDB_API_KEY: ${{ secrets.OMDB_API_KEY }}
 
 jobs:
   windows:
@@ -229,6 +231,12 @@ jobs:
           key: android
       - name: Install cargo-apk
         run: cargo install cargo-apk --locked
+      # Haven's own player: libmpv, from the copy kept as a release of
+      # this repository.
+      - name: Fetch libmpv for Android
+        run: ../android/fetch-libmpv.sh
+        env:
+          GH_TOKEN: ${{ github.token }}
       # The APK is signed with Haven's own key, kept in the repository's
       # secrets, so that a newer one installs over an older one. Pull
       # requests from forks get no secrets: their APK is signed with a
@@ -253,7 +261,7 @@ jobs:
             suffix=android-test
           fi
           export CARGO_APK_RELEASE_KEYSTORE="$keystore"
-          cargo apk build -p haven-app --lib --release
+          cargo apk build -p haven-app --lib --release --features player
           rm -f "$keystore"
           version="$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json,sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"]=="haven-app"))')"
           mkdir -p target/android
@@ -284,6 +292,12 @@ jobs:
         with:
           workspaces: app
           key: ios
+      # Haven's own player: libmpv and FFmpeg as frameworks, from the copy
+      # kept as a release of this repository.
+      - name: Fetch libmpv for iOS
+        run: ../ios/fetch-libmpv.sh
+        env:
+          GH_TOKEN: ${{ github.token }}
       # An IPA that is not signed: whoever installs it signs it with
       # their own Apple ID (AltStore, Sideloadly and the like).
       - name: Build the unsigned IPA
@@ -292,4 +306,119 @@ jobs:
         with:
           name: haven-ios-ipa
           path: app/target/ios/*.ipa
+          if-no-files-found: error
+
+  # ---- Store builds (App Store, Google Play) ----------------------------
+  # No add-on code at all, and media servers only on the home network or
+  # over Tailscale. Each job fails if add-on code or wording gets in.
+  # Uploading to the stores is done by hand for now.
+
+  android-store:
+    name: Android (Google Play build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app
+          key: android-store
+      - name: Install cargo-apk
+        run: cargo install cargo-apk --locked
+      # Haven's own player: libmpv, from the copy kept as a release of
+      # this repository.
+      - name: Fetch libmpv for Android
+        run: ../android/fetch-libmpv.sh
+        env:
+          GH_TOKEN: ${{ github.token }}
+      # Signed with the Google Play upload key from the secrets when there
+      # is one, else with a throwaway key (fine for testing only).
+      - name: Build the store APK
+        env:
+          PLAY_UPLOAD_KEYSTORE_BASE64: ${{ secrets.PLAY_UPLOAD_KEYSTORE_BASE64 }}
+          PLAY_UPLOAD_KEYSTORE_PASSWORD: ${{ secrets.PLAY_UPLOAD_KEYSTORE_PASSWORD }}
+        run: |
+          keystore="$RUNNER_TEMP/haven-upload.jks"
+          if [ -n "$PLAY_UPLOAD_KEYSTORE_BASE64" ]; then
+            echo "$PLAY_UPLOAD_KEYSTORE_BASE64" | base64 -d > "$keystore"
+            export CARGO_APK_RELEASE_KEYSTORE_PASSWORD="$PLAY_UPLOAD_KEYSTORE_PASSWORD"
+            suffix=android-store
+          else
+            echo "No Google Play upload key in the secrets: signing with a throwaway key."
+            export CARGO_APK_RELEASE_KEYSTORE_PASSWORD="throwaway"
+            keytool -genkeypair -keystore "$keystore" -storepass throwaway -keypass throwaway \
+              -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 1 -dname "CN=Haven test build"
+            suffix=android-store-test
+          fi
+          export CARGO_APK_RELEASE_KEYSTORE="$keystore"
+          cargo apk build -p haven-app --lib --release --no-default-features --features store,player
+          rm -f "$keystore"
+          ./store-check.sh target/aarch64-linux-android/release/libhaven_app.so aarch64-linux-android
+          version="$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json,sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"]=="haven-app"))')"
+          mkdir -p target/android-store
+          cp target/release/apk/haven_app.apk "target/android-store/Haven-$version-$suffix.apk"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: haven-android-store
+          path: app/target/android-store/*.apk
+          if-no-files-found: error
+
+  ios-store:
+    name: iOS (App Store build)
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app
+          key: ios-store
+      - name: Fetch libmpv for iOS
+        run: ../ios/fetch-libmpv.sh
+        env:
+          GH_TOKEN: ${{ github.token }}
+      # With an Apple Distribution certificate and an App Store
+      # provisioning profile in the secrets the IPA is signed for the App
+      # Store; without, it is built unsigned (for testing).
+      - name: Set up signing
+        env:
+          IOS_DIST_CERT_P12_BASE64: ${{ secrets.IOS_DIST_CERT_P12_BASE64 }}
+          IOS_DIST_CERT_PASSWORD: ${{ secrets.IOS_DIST_CERT_PASSWORD }}
+          IOS_PROFILE_BASE64: ${{ secrets.IOS_APPSTORE_PROFILE_BASE64 }}
+        run: |
+          if [ -z "$IOS_DIST_CERT_P12_BASE64" ] || [ -z "$IOS_PROFILE_BASE64" ]; then
+            echo "No App Store certificate or profile in the secrets: the IPA is left unsigned."
+            exit 0
+          fi
+          keychain="$RUNNER_TEMP/haven-ios.keychain-db"
+          lock="$(uuidgen)"
+          security create-keychain -p "$lock" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$lock" "$keychain"
+          echo "$IOS_DIST_CERT_P12_BASE64" | base64 -d > "$RUNNER_TEMP/dist.p12"
+          security import "$RUNNER_TEMP/dist.p12" -P "$IOS_DIST_CERT_PASSWORD" -A -t cert -f pkcs12 -k "$keychain"
+          rm -f "$RUNNER_TEMP/dist.p12"
+          security set-key-partition-list -S apple-tool:,apple: -k "$lock" "$keychain" > /dev/null
+          security list-keychain -d user -s "$keychain" login.keychain-db
+          identity="$(security find-identity -v -p codesigning "$keychain" | grep -E "Apple Distribution|iPhone Distribution" | head -1 | sed -E 's/.*"(.*)"/\1/')"
+          [ -n "$identity" ] || { echo "The certificate in the secrets is not an Apple Distribution one."; exit 1; }
+          echo "$IOS_PROFILE_BASE64" | base64 -d > "$RUNNER_TEMP/appstore.mobileprovision"
+          echo "HAVEN_IOS_SIGN_IDENTITY=$identity" >> "$GITHUB_ENV"
+          echo "HAVEN_IOS_PROFILE=$RUNNER_TEMP/appstore.mobileprovision" >> "$GITHUB_ENV"
+      - name: Build the store IPA
+        run: ../ios/bundle.sh store
+      - uses: actions/upload-artifact@v4
+        with:
+          name: haven-ios-store
+          path: app/target/ios-store/*.ipa
           if-no-files-found: error

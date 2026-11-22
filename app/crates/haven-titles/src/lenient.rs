@@ -1,4 +1,4 @@
-//! Add-ons are written by many hands: the same field can arrive as text,
+//! Titles come from many sources: the same field can arrive as text,
 //! a number, a list or nothing. These readers accept all of those.
 
 use serde::{Deserialize, Deserializer};

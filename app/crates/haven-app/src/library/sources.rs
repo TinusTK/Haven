@@ -2,13 +2,13 @@
 //! media server that has it, and every stream the add-ons offer for it.
 //! The user picks one from the list on the title's page.
 
-use haven_addons::{Stream, StreamKind};
+use haven_titles::{Stream, StreamKind};
 use haven_metadata::is_imdb_id;
 use haven_player::source::web_address;
 use haven_servers::{Wanted, split_id, title_id};
 use slint::Model;
 
-use haven_addons::Video;
+use haven_titles::Video;
 
 use super::{Library, Listed, PlayRequest, Played, on_ui};
 use crate::StreamRow;
@@ -29,6 +29,36 @@ pub(super) struct StreamSource {
 }
 
 impl Library {
+    /// Whether the stream at `address` was downloaded: 0 no, 1 on its way,
+    /// 2 saved.
+    pub(super) fn saved_state(&self, address: &str) -> i32 {
+        self.store
+            .downloads()
+            .unwrap_or_default()
+            .iter()
+            .find(|d| d.url == address && d.state != "failed")
+            .map_or(0, |d| if d.state == "done" { 2 } else { 1 })
+    }
+
+    /// Brings every source row's download mark up to date.
+    pub(super) fn refresh_saved_marks(&self) {
+        let downloads = self.store.downloads().unwrap_or_default();
+        let sources = self.stream_sources.borrow();
+        for (at, source) in sources.iter().enumerate() {
+            let Some(address) = source.address.as_deref() else { continue };
+            let saved = downloads
+                .iter()
+                .find(|d| d.url == address && d.state != "failed")
+                .map_or(0, |d| if d.state == "done" { 2 } else { 1 });
+            if let Some(mut row) = self.streams.row_data(at) {
+                if row.saved != saved {
+                    row.saved = saved;
+                    self.streams.set_row_data(at, row);
+                }
+            }
+        }
+    }
+
     pub(super) fn clear_streams(&self) {
         self.streams.set_vec(Vec::new());
         self.stream_sources.borrow_mut().clear();
@@ -98,13 +128,12 @@ impl Library {
             .unwrap_or(false);
         // Where an IMDb id can be looked up by name when none is known:
         // the catalogues of this kind that can be searched.
-        let lookups: Vec<(String, haven_addons::Catalog)> = self
+        let lookups: Vec<(String, haven_titles::Catalog)> = self
             .installed
             .borrow()
             .iter()
             .flat_map(|addon| {
                 addon
-                    .manifest
                     .catalogs
                     .iter()
                     .filter(|catalog| catalog.kind == kind && catalog.searchable())
@@ -127,7 +156,7 @@ impl Library {
             }
             pending += 1;
             let (client, mut wanted) = (self.server_client.clone(), wanted.clone());
-            let (addons, lookups) = (self.addons.clone(), lookups.clone());
+            let (addons, lookups) = (self.catalogues.clone(), lookups.clone());
             let current = self.stream_generation.shared();
             self.tasks.spawn(async move {
                 let source = format!("{} ({})", server.name, server.kind.label());
@@ -179,24 +208,12 @@ impl Library {
                 _ => None,
             }
         };
+        #[cfg(feature = "addons")]
         if let Some(addon_id) = addon_id {
-            let sources: Vec<(String, String)> = self
-                .installed
-                .borrow()
-                .iter()
-                .filter(|addon| addon.manifest.provides("stream", kind, &addon_id))
-                .map(|addon| (addon.url.clone(), addon.manifest.name.clone()))
-                .collect();
-            for (url, name) in sources {
-                pending += 1;
-                let (addons, kind, addon_id) = (self.addons.clone(), kind.to_owned(), addon_id.clone());
-                self.tasks.spawn(async move {
-                    let streams =
-                        addons.streams(&url, &kind, &addon_id).await.map_err(|err| err.to_string());
-                    on_ui(move |library| library.streams_loaded(generation, &name, None, streams));
-                });
-            }
+            pending += self.ask_addons_for_streams(generation, kind, &addon_id);
         }
+        #[cfg(not(feature = "addons"))]
+        let _ = addon_id;
 
         // The films and series of the user's Xtream Codes accounts.
         pending += self.ask_accounts(generation, &wanted);
@@ -207,11 +224,10 @@ impl Library {
             return self.set_streams_state(
                 Some(heading),
                 false,
-                if super::NO_ADDONS {
-                    "Nothing you have added can play this. Add a media server or an Xtream Codes account in Settings."
-                } else {
+                super::words!(
+                    "Nothing you have added can play this. Add a media server or an Xtream Codes account in Settings.",
                     "Nothing you have added can play this. Add a media server or an Xtream Codes account in Settings, or install an add-on that offers streams."
-                },
+                ),
             );
         }
         self.set_streams_state(Some(heading), true, "");
@@ -245,6 +261,7 @@ impl Library {
                 .and_then(web_address)
                 .map(str::to_owned);
             row.playable = address.is_some();
+            row.saved = address.as_deref().map_or(0, |address| self.saved_state(address));
             let source = StreamSource { address, server_item: server_item.clone() };
             // Your own servers stay above the add-ons, and each
             // provider's rows stay together under its heading.
@@ -352,11 +369,10 @@ impl Library {
         if pending == 0 {
             self.give_up_autoplay();
             let note = if self.streams.row_count() == 0 {
-                if super::NO_ADDONS {
-                    "None of your media servers or accounts has this."
-                } else {
+                super::words!(
+                    "None of your media servers or accounts has this.",
                     "None of your media servers, accounts or add-ons has this."
-                }
+                )
             } else {
                 ""
             };
@@ -573,14 +589,15 @@ fn stream_row(source: &str, stream: &Stream) -> Option<StreamRow> {
         shown: true,
         heading: "".into(),
         more: 0,
+        saved: 0,
     })
 }
 
 /// Looks a title's IMDb id up by its name and year in the catalogues
 /// that can be searched (the built-in free one, for a start).
 async fn imdb_by_name(
-    addons: &haven_addons::Client,
-    lookups: &[(String, haven_addons::Catalog)],
+    addons: &haven_titles::Catalogues,
+    lookups: &[(String, haven_titles::Catalog)],
     wanted: &Wanted,
 ) -> Option<String> {
     let plain = |name: &str| {

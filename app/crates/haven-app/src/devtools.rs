@@ -17,7 +17,8 @@
 //!   `continue <card>` (open a Continue Watching card), `watchlist`
 //!   (add or remove the open title), `page <index>`, `addtv <address>`,
 //!   `channel <n>`, `station <n>`, `tvfilter <words>`, `tvgroup <name>`,
-//!   `tvstate`, `signin <jellyfin|emby> <address> <user> [password]`,
+//!   `tvstate`, `signin <jellyfin|emby|hub> <address> <user or pairing code> [password]`,
+//!   `hubstatus` (print the Haven Hub line),
 //!   `open <type> <id>`, `servers`, `connect <0|1>` (Trakt, Simkl),
 //!   `tracking`, `findcast`, `cast` (print the casting state),
 //!   `checkservers`, `xtream <server> <user> <password>`,
@@ -97,6 +98,7 @@ fn act(ui: &AppWindow, action: &str) {
             ui.set_page(number as i32);
         }
         "addtv" => ui.invoke_add_tv_source(rest.trim().into()),
+        "removetv" => ui.invoke_remove_tv_source(rest.trim().into()),
         "channel" => ui.invoke_play_channel(false, number as i32),
         "station" => ui.invoke_play_channel(true, number as i32),
         "tvfilter" => {
@@ -129,6 +131,7 @@ fn act(ui: &AppWindow, action: &str) {
                 ui.invoke_set_tv_source_enabled(source.url, on);
             }
         }
+        #[cfg(feature = "addons")]
         "addon" => {
             // addon <on|off> <row>
             let mut parts = rest.split_whitespace();
@@ -147,7 +150,9 @@ fn act(ui: &AppWindow, action: &str) {
                 ui.invoke_set_server_enabled(server.id, on);
             }
         }
+        #[cfg(feature = "addons")]
         "installshared" => ui.invoke_install_shared(number as i32),
+        #[cfg(feature = "addons")]
         "addons" => eprintln!(
             "haven-addons: status=\"{}\" installed=[{}] shared=[{}]",
             ui.get_addon_status(),
@@ -219,12 +224,31 @@ fn act(ui: &AppWindow, action: &str) {
         "signin" => {
             // signin <jellyfin|emby> <address> <user> [password]
             let mut parts = rest.split_whitespace();
-            let kind = if parts.next() == Some("emby") { 1 } else { 0 };
+            let kind = match parts.next() {
+                Some("emby") => 1,
+                Some("hub") => 3,
+                _ => 0,
+            };
             let address = parts.next().unwrap_or_default();
             let user = parts.next().unwrap_or_default();
             let password = parts.next().unwrap_or_default();
             ui.invoke_server_sign_in(kind, address.into(), user.into(), password.into());
         }
+        "hubstatus" => eprintln!("haven-hub: has={} status=\"{}\"", ui.get_has_hub(), ui.get_hub_status()),
+        "hubsend" => ui.invoke_hub_send(),
+        "showsources" => ui.invoke_show_sources(),
+        "backupnow" => ui.invoke_backup_now(),
+        "whatsnew" => eprintln!("haven-whatsnew: shown={} version=\"{}\" sections={}", ui.get_whats_new_shown(), ui.get_whats_new_version(), ui.get_whats_new_sections().row_count()),
+        "whatsnewdone" => ui.invoke_whats_new_done(true),
+        "local" => eprintln!(
+            "haven-local: status=\"{}\" rows=[{}]",
+            ui.get_local_status(),
+            ui.get_local_rows().iter().take(5).map(|r| format!("{} ({})", r.title, r.detail)).collect::<Vec<_>>().join(" | ")
+        ),
+        "localopen" => ui.invoke_local_open(),
+        "localplay" => ui.invoke_local_play(number as i32),
+        "restore" => ui.invoke_backup_restore(),
+        "backupstatus" => eprintln!("haven-backup: busy={} where=\"{}\" status=\"{}\"", ui.get_backup_busy(), ui.get_backup_where(), ui.get_backup_status()),
         "open" => {
             if let Some((kind, id)) = rest.trim().split_once(' ') {
                 ui.invoke_open_title(Poster { id: id.into(), kind: kind.into(), ..Poster::default() });
@@ -287,7 +311,7 @@ fn act(ui: &AppWindow, action: &str) {
         }
         // settingsy <y>: scrolls the Settings page down that far.
         "settingsy" => ui.set_settings_scroll(-number),
-        // librarytab <0|1|2>, section <0..6> (a part of Settings),
+        // librarytab <0|1|2|3> (Local, Downloads, Watchlist, History), section <0..6> (a part of Settings),
         // band <0|1> (Live TV or Radio), week <0|1> (the calendar).
         "librarytab" => ui.set_library_tab(number as i32),
         "section" => {
@@ -416,14 +440,14 @@ fn act(ui: &AppWindow, action: &str) {
                             shelf.source,
                             shelf.items.row_count(),
                             shelf.items.iter().filter(|poster| poster.has_image).count(),
-                            if shelf.error.is_empty() { String::new() } else { format!(" ERROR {}", shelf.error) },
+                            if !shelf.error.is_empty() { format!(" ERROR {}", shelf.error) } else if shelf.loading { " loading".to_owned() } else { String::new() },
                         ))
                         .collect::<Vec<_>>()
                         .join(" | "),
                 );
             };
             list("servers", ui.get_server_shelves());
-            list("addons", ui.get_shelves());
+            list("catalogues", ui.get_shelves());
             list("tmdb", ui.get_catalog_shelves());
             list("search", ui.get_search_shelves());
         }
@@ -449,8 +473,9 @@ fn act(ui: &AppWindow, action: &str) {
                 ui.get_streams()
                     .iter()
                     .map(|row| format!(
-                        "{}{} · {} · {} · {}",
+                        "{}{}{} · {} · {} · {}",
                         if row.playable { "▶ " } else { "" },
+                        ["", "[downloading] ", "[saved] "][row.saved.clamp(0, 2) as usize],
                         row.name,
                         row.source,
                         [row.detail.as_str(), row.detail2.as_str()]
@@ -541,6 +566,7 @@ pub fn start(ui: &AppWindow) -> Vec<Timer> {
     if let Some(page) = std::env::var("HAVEN_PAGE").ok().and_then(|page| page.parse().ok()) {
         ui.set_page(page);
     }
+    #[cfg(feature = "addons")]
     if let Ok(address) = std::env::var("HAVEN_INSTALL") {
         ui.invoke_install_addon(address.into());
     }

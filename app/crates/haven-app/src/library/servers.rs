@@ -46,6 +46,9 @@ impl Library {
         ui.on_server_sign_in({
             let library = self.clone();
             move |kind, address, user, password| {
+                if kind == 3 {
+                    return library.pair_hub(address.as_str(), user.as_str());
+                }
                 let kind = if kind == 1 { Kind::Emby } else { Kind::Jellyfin };
                 library.sign_in(kind, address.as_str(), user.as_str(), password.as_str());
             }
@@ -66,10 +69,6 @@ impl Library {
         ui.on_set_server_enabled({
             let library = self.clone();
             move |id, on| library.set_server_enabled(id as i64, on)
-        });
-        ui.on_install_shared({
-            let library = self.clone();
-            move |index| library.install_shared(index)
         });
         ui.on_check_servers({
             let library = self.clone();
@@ -103,6 +102,7 @@ impl Library {
             .collect();
         if let Some(ui) = self.ui.upgrade() {
             ui.set_servers(ModelRc::new(VecModel::from(rows)));
+            ui.set_has_hub(self.hub().is_some());
         }
     }
 
@@ -144,7 +144,7 @@ impl Library {
     }
 
     /// Reads the servers from the database into memory and the page.
-    fn load_servers(&self) {
+    pub(super) fn load_servers(&self) {
         let servers: Vec<Server> = self
             .store
             .servers()
@@ -185,14 +185,14 @@ impl Library {
         Some((server, item.to_owned()))
     }
 
-    fn server_status(&self, text: &str, is_error: bool) {
+    pub(super) fn server_status(&self, text: &str, is_error: bool) {
         if let Some(ui) = self.ui.upgrade() {
             ui.set_server_status(text.into());
             ui.set_server_status_is_error(is_error);
         }
     }
 
-    fn server_busy(&self, busy: bool) {
+    pub(super) fn server_busy(&self, busy: bool) {
         if let Some(ui) = self.ui.upgrade() {
             ui.set_server_busy(busy);
         }
@@ -206,8 +206,11 @@ impl Library {
         let servers = self.servers.borrow().clone();
         if servers.is_empty() {
             self.server_libraries.borrow_mut().clear();
-            self.shared_addons.borrow_mut().clear();
-            self.show_shared_addons();
+            #[cfg(feature = "addons")]
+            {
+                self.shared_addons.borrow_mut().clear();
+                self.show_shared_addons();
+            }
             self.rebuild_explore();
             return self.fill(Board::Servers, Vec::new(), None);
         }
@@ -269,6 +272,7 @@ impl Library {
                     library.server_states.borrow_mut().insert(id, if fine { ONLINE } else { OFFLINE });
                 }
                 library.show_servers();
+                #[cfg(feature = "addons")]
                 library.load_shared_addons();
                 // The same shelves as the kept ones on screen: keep those
                 // (each is already being fetched afresh).
@@ -281,72 +285,6 @@ impl Library {
                 library.fill(Board::Servers, plans, None);
             });
         });
-    }
-
-    /// Asks each server for the add-ons it uses and shares (Trellis does,
-    /// with its owner), so they can be installed in Haven with a click.
-    fn load_shared_addons(&self) {
-        let servers = self.servers.borrow().clone();
-        let client = self.server_client.clone();
-        self.tasks.spawn(async move {
-            let mut shared = Vec::new();
-            for server in servers {
-                match client.shared_addons(&server).await {
-                    Ok(addons) => {
-                        shared.extend(addons.into_iter().map(|addon| (server.name.clone(), addon)))
-                    }
-                    // Only its owner may read a server's add-on list.
-                    Err(err) => haven_core::diag::note(&format!(
-                        "{} did not share its add-on list: {err}",
-                        server.name
-                    )),
-                }
-            }
-            on_ui(move |library| {
-                *library.shared_addons.borrow_mut() = shared;
-                library.show_shared_addons();
-            });
-        });
-    }
-
-    /// Fills the list of servers' add-ons on the Add-ons page.
-    pub(super) fn show_shared_addons(&self) {
-        let installed = self.addon_urls.borrow();
-        let rows: Vec<crate::SharedAddonRow> = self
-            .shared_addons
-            .borrow()
-            .iter()
-            .enumerate()
-            .map(|(index, (server, addon))| crate::SharedAddonRow {
-                index: index as i32,
-                name: addon.name.as_str().into(),
-                server: server.as_str().into(),
-                installed: haven_addons::manifest_url(&addon.manifest_url)
-                    .is_ok_and(|url| installed.contains(&url)),
-            })
-            .collect();
-        if let Some(ui) = self.ui.upgrade() {
-            ui.set_shared_addons(ModelRc::new(VecModel::from(rows)));
-        }
-    }
-
-    /// Installs one of the servers' add-ons in Haven; `index` -1 installs
-    /// every one that is not installed yet.
-    fn install_shared(&self, index: i32) {
-        let wanted: Vec<String> = self
-            .shared_addons
-            .borrow()
-            .iter()
-            .enumerate()
-            .filter(|(at, _)| index < 0 || *at as i32 == index)
-            .map(|(_, (_, addon))| addon.manifest_url.clone())
-            .collect();
-        let installed = self.addon_urls.borrow().clone();
-        for address in wanted {
-            if !haven_addons::manifest_url(&address).is_ok_and(|url| installed.contains(&url)) {
-                self.install(&address);
-            }
-        }
     }
 
     /// Signs in to a Jellyfin or Emby server. The password is passed on
@@ -436,7 +374,7 @@ impl Library {
         }
     }
 
-    fn servers_added(&self, added: Result<Vec<Server>, String>) {
+    pub(super) fn servers_added(&self, added: Result<Vec<Server>, String>) {
         self.server_busy(false);
         if let Some(ui) = self.ui.upgrade() {
             ui.set_plex_code("".into());
@@ -487,6 +425,8 @@ impl Library {
 
     /// Tells the server a film or episode came from how far it was watched.
     pub(super) fn report_played(&self, played: &Played) {
+        // A Hub hears what was watched, and passes it on to other devices.
+        self.hub_send(true);
         // What played may be another server's copy of the open title.
         let played_item = self.playing_item.borrow_mut().take();
         let Some((server, item)) =

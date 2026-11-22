@@ -7,6 +7,7 @@
 use serde_json::Value;
 
 mod catalog;
+pub mod omdb;
 
 pub use catalog::{Genre, List, Offers, Service, Tmdb, split_id, title_id};
 

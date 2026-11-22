@@ -1,9 +1,9 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::{Error, Result, lenient};
 
 /// One way to watch a title, as offered by an add-on.
-#[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize, Serialize)]
 pub struct Stream {
     /// Short label, often the quality ("1080p").
     #[serde(default, deserialize_with = "lenient::text_or_number")]

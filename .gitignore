@@ -19,3 +19,9 @@ CLAUDE.md
 
 # libmpv for the Mac build is fetched, not kept in git
 /mac/libmpv/
+
+# libmpv for the iPhone and iPad build is fetched, not kept in git
+/ios/libmpv/
+
+# libmpv for the Android build is fetched, not kept in git
+/android/libmpv/

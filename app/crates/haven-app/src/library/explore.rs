@@ -8,7 +8,7 @@ use std::{
     rc::Rc,
 };
 
-use haven_addons::{Catalog, MetaPreview};
+use haven_titles::{Catalog, MetaPreview};
 use haven_metadata::Genre;
 use slint::{Image, Model, ModelRc, SharedString, VecModel};
 
@@ -119,10 +119,10 @@ impl Library {
             sources.push(Source::Library { server: server.clone(), library: library.clone() });
         }
         for addon in self.installed.borrow().iter() {
-            for catalog in addon.manifest.catalogs.iter().filter(|catalog| catalog.browsable()) {
+            for catalog in addon.catalogs.iter().filter(|catalog| catalog.browsable()) {
                 sources.push(Source::Addon {
                     url: addon.url.clone(),
-                    addon: addon.manifest.name.clone(),
+                    addon: addon.name.clone(),
                     catalog: catalog.clone(),
                 });
             }
@@ -297,6 +297,7 @@ impl Library {
                 name: poster.title.to_string(),
                 poster: None,
                 release_info: Some(poster.year.to_string()).filter(|year| !year.is_empty()),
+                rating: Some(poster.rating.to_string()).filter(|r| !r.is_empty()),
             })
             .collect();
         let images: HashMap<String, Image> = explore
@@ -347,7 +348,7 @@ impl Library {
         if let Some(ui) = self.ui.upgrade() {
             ui.set_explore_loading(true);
         }
-        let (addons, servers, tmdb) = (self.addons.clone(), self.server_client.clone(), self.tmdb());
+        let (addons, servers, tmdb) = (self.catalogues.clone(), self.server_client.clone(), self.tmdb());
         let tmdb_genre = usize::try_from(genre)
             .ok()
             .and_then(|at| explore.tmdb_genres.borrow().get(at).map(|genre| genre.id));
@@ -456,13 +457,13 @@ impl Library {
     fn explore_add(&self, generation: u64, titles: Vec<MetaPreview>, on_hand: &HashMap<String, Image>) -> usize {
         let explore = &self.explore;
         let mut added = 0;
-        for title in haven_addons::without_repeats(titles) {
+        for title in haven_titles::without_repeats(titles) {
             // Pages can overlap, and the same film can be listed again
             // on a later page under another id.
-            let key = haven_addons::title_key(&title.kind, &title.name, title.release_info.as_deref());
+            let key = haven_titles::title_key(&title.kind, &title.name, title.release_info.as_deref());
             let known = explore.items.iter().any(|known| {
                 (known.id == title.id.as_str() && known.kind == title.kind.as_str())
-                    || haven_addons::title_key(
+                    || haven_titles::title_key(
                         known.kind.as_str(),
                         known.title.as_str(),
                         Some(known.year.as_str()).filter(|year| !year.is_empty()),
@@ -482,6 +483,8 @@ impl Library {
                 video: "".into(),
                 progress: 0.0,
                 watched: self.film_watched(&title.kind, &title.id),
+                rating: title.rating.as_deref().unwrap_or_default().into(),
+                rank: 0,
             });
             added += 1;
             if on_hand.contains_key(&title.id) {

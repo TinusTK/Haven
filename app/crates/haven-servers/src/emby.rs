@@ -1,11 +1,11 @@
 //! Jellyfin and Emby. Jellyfin grew out of Emby and the two still share
 //! the parts of the API used here; they differ in the sign-in header.
 
-use haven_addons::{MetaDetail, MetaPreview, Stream, Video};
+use haven_titles::{MetaDetail, MetaPreview, Stream, Video};
 use serde_json::{Value, json};
 
 use crate::{
-    Candidate, Client, Error, Kind, Library, Result, Server, SharedAddon, Wanted, best_match, list,
+    Candidate, Client, Error, Kind, Library, Result, Server, Wanted, best_match, list,
     number, quality, query, size, text, title_id,
 };
 
@@ -115,7 +115,8 @@ pub async fn genres(client: &Client, server: &Server, library: &str) -> Vec<Stri
 
 /// Trellis tells its owner which add-ons it uses, at `/api/config`.
 /// Any other server has no such page, which reads as no add-ons.
-pub async fn shared_addons(client: &Client, server: &Server) -> Result<Vec<SharedAddon>> {
+#[cfg(feature = "shared-addons")]
+pub async fn shared_addons(client: &Client, server: &Server) -> Result<Vec<crate::SharedAddon>> {
     match get(client, server, "/api/config").await {
         Ok(config) => Ok(read_shared_addons(&config)),
         Err(Error::Status(_) | Error::BadAnswer) => Ok(Vec::new()),
@@ -123,14 +124,15 @@ pub async fn shared_addons(client: &Client, server: &Server) -> Result<Vec<Share
     }
 }
 
-pub(crate) fn read_shared_addons(config: &Value) -> Vec<SharedAddon> {
+#[cfg(feature = "shared-addons")]
+pub(crate) fn read_shared_addons(config: &Value) -> Vec<crate::SharedAddon> {
     list(config, "addons")
         .iter()
         .filter(|addon| addon.get("disabled").and_then(Value::as_bool) != Some(true))
         .filter_map(|addon| {
             let manifest_url = text(addon, "manifestUrl")
                 .filter(|url| url.starts_with("http://") || url.starts_with("https://"))?;
-            Some(SharedAddon {
+            Some(crate::SharedAddon {
                 name: text(addon, "nameOverride").or_else(|| text(addon, "name"))?,
                 manifest_url,
             })
@@ -329,6 +331,7 @@ pub(crate) fn read_previews(server: &Server, items: &[Value]) -> Vec<MetaPreview
             name,
             poster: Some(image(server, &id, "Primary", 450, tag.as_deref())),
             release_info: text(item, "ProductionYear"),
+            rating: number(item, "CommunityRating").filter(|r| *r > 0.0).map(|r| format!("{r:.1}")),
         });
     }
     previews
@@ -388,6 +391,7 @@ pub(crate) fn read_detail(server: &Server, detail: &Value, episodes: &Value) -> 
         id: title_id(server.id, &id),
         kind: if series { "series" } else { "movie" }.to_owned(),
         name: text(detail, "Name")?,
+        logo: None,
         poster: remote_image(detail, "Primary")
             .or_else(|| Some(image(server, &id, "Primary", 450, poster_tag(detail).as_deref()))),
         // Asked for even when the item lists no backdrop: a server that
@@ -877,7 +881,11 @@ mod tests {
             read_collections(&found),
             [Library { id: "c1".into(), name: "Popular films".into(), collection: true }]
         );
+    }
 
+    #[cfg(feature = "shared-addons")]
+    #[test]
+    fn shared_addons_are_read() {
         let config = json!({"addons": [
             {"name": "One", "manifestUrl": "https://one.example/key123/manifest.json"},
             {"name": "Two", "nameOverride": "Second", "manifestUrl": "https://two.example/manifest.json"},

@@ -6,6 +6,7 @@ publish.workspace = true
 
 [dependencies]
 haven-core.workspace = true
+haven-titles.workspace = true
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
