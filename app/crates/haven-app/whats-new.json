@@ -38,7 +38,10 @@
       "title": "Fixes",
       "lines": [
         "Watchlist posters show again for titles brought in from Trakt or Simkl.",
-        "Smoother sideways scrolling: posters no longer light up as you swipe past them."
+        "Smoother sideways scrolling: posters no longer light up as you swipe past them.",
+        "Android's Back button closes the player, not Haven.",
+        "On phones, a tap outside a text field closes the keyboard.",
+        "Home no longer leaves gaps where empty shelves were."
       ]
     }
   ]

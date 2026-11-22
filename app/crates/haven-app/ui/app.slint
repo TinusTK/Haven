@@ -720,6 +720,22 @@ export global Device {
     in-out property <bool> touch;
 }
 
+// A text field is being typed in (the phone's keyboard is up). On a touch
+// screen a tap anywhere but the field closes the keyboard: the window lays
+// a clear layer around the field, and its tap bumps `closes`, which makes
+// every field let go of the focus.
+export global Typing {
+    // How many fields have the focus (0 or 1; a count so a hand-over
+    // between two fields never leaves it wrong).
+    in-out property <int> fields;
+    // Where the field with the focus is, in window coordinates.
+    in-out property <length> x;
+    in-out property <length> y;
+    in-out property <length> width;
+    in-out property <length> height;
+    in-out property <int> closes;
+}
+
 // A one-line text field. On a phone or tablet it has a Paste button,
 // since the system's own paste menu does not reach Haven's fields there.
 component Field inherits HorizontalLayout {
@@ -732,6 +748,21 @@ component Field inherits HorizontalLayout {
     spacing: 6px;
     // The label goes to the field inside, for screen readers.
     accessible-role: none;
+    // Tell the window while this field has the keyboard (see Typing).
+    private property <bool> typing: edit.has-focus;
+    changed typing => {
+        if (self.typing) {
+            Typing.x = edit.absolute-position.x;
+            Typing.y = edit.absolute-position.y;
+            Typing.width = edit.width;
+            Typing.height = edit.height;
+            Typing.fields += 1;
+        } else {
+            Typing.fields = max(0, Typing.fields - 1);
+        }
+    }
+    private property <int> closes: Typing.closes;
+    changed closes => { edit.clear-focus(); }
     edit := LineEdit {
         horizontal-stretch: 1;
         placeholder-text: root.placeholder-text;
@@ -941,7 +972,9 @@ component ShelfRow inherits VerticalLayout {
     max-height: root.hidden ? 0px : 100000px;
     padding-bottom: root.hidden ? 0px : root.gap;
 
-    HorizontalLayout {
+    // Left out while hidden: the title's own height would otherwise win
+    // over max-height 0 and leave a strip behind.
+    if !root.hidden: HorizontalLayout {
         spacing: 10px;
         alignment: start;
         Text {
@@ -1709,7 +1742,10 @@ component PlayerView inherits Rectangle {
                 root.toggle-fullscreen();
                 return accept;
             }
-            if (event.text == Key.Escape) {
+            // Escape, or the phone's Back button (Android): close the open
+            // menu, then full screen, then the player. Accepting Back keeps
+            // Android from closing Haven itself.
+            if (event.text == Key.Escape || event.text == Key.Back) {
                 if (root.menu != 0) {
                     root.menu = 0;
                 } else if (root.fullscreen) {
@@ -4972,6 +5008,20 @@ export component AppWindow inherits Window {
                             single-line: true;
                             accessible-role: text-input;
                             accessible-label: "Search films and series";
+                            // The keyboard closes on a tap elsewhere (see Typing).
+                            changed has-focus => {
+                                if (self.has-focus) {
+                                    Typing.x = self.absolute-position.x;
+                                    Typing.y = self.absolute-position.y;
+                                    Typing.width = self.width;
+                                    Typing.height = self.height;
+                                    Typing.fields += 1;
+                                } else {
+                                    Typing.fields = max(0, Typing.fields - 1);
+                                }
+                            }
+                            property <int> closes: Typing.closes;
+                            changed closes => { self.clear-focus(); }
                             accepted => {
                                 root.explore-searching = self.text != "";
                                 root.search(self.text);
@@ -6886,6 +6936,41 @@ export component AppWindow inherits Window {
                     clicked => { root.whats-new-done(whats-new.hide); }
                 }
             }
+        }
+    }
+
+    // A text field has the keyboard on a phone or tablet: a clear layer
+    // over everything but that field, so a tap anywhere else closes the
+    // keyboard (that tap does nothing else). Four pieces around the field
+    // leave the field itself free for moving the cursor.
+    if Device.touch && Typing.fields > 0: Rectangle {
+        TouchArea {
+            x: 0;
+            y: 0;
+            width: root.width;
+            height: max(0px, Typing.y);
+            clicked => { Typing.closes += 1; }
+        }
+        TouchArea {
+            x: 0;
+            y: Typing.y + Typing.height;
+            width: root.width;
+            height: max(0px, root.height - Typing.y - Typing.height);
+            clicked => { Typing.closes += 1; }
+        }
+        TouchArea {
+            x: 0;
+            y: Typing.y;
+            width: max(0px, Typing.x);
+            height: Typing.height;
+            clicked => { Typing.closes += 1; }
+        }
+        TouchArea {
+            x: Typing.x + Typing.width;
+            y: Typing.y;
+            width: max(0px, root.width - Typing.x - Typing.width);
+            height: Typing.height;
+            clicked => { Typing.closes += 1; }
         }
     }
 }

@@ -1275,10 +1275,20 @@ impl Library {
         self.watchlist.set_vec(rows);
         self.refresh_calendar();
         for (item, saved) in missing {
-            let Some(details) = self.details_of(&saved.kind, &saved.title_id) else { continue };
+            let details = self.details_of(&saved.kind, &saved.title_id);
+            // An IMDb title nobody has details (or a poster) for yet, such as
+            // a brand-new series: the picture service Cinemeta itself uses.
+            let fallback = haven_metadata::is_imdb_id(&saved.title_id)
+                .then(|| format!("https://images.metahub.space/poster/medium/{}/img", saved.title_id));
+            if details.is_none() && fallback.is_none() {
+                continue;
+            }
             self.tasks.spawn(async move {
-                let Ok(meta) = details.await else { return };
-                let Some(url) = meta.poster else { return };
+                let found = match details {
+                    Some(details) => details.await.ok().and_then(|meta| meta.poster),
+                    None => None,
+                };
+                let Some(url) = found.or(fallback) else { return };
                 on_ui(move |library| {
                     let _ = library.store.add_to_watchlist(&Saved { poster: Some(url.clone()), ..saved });
                     if generation != library.watchlist_generation.get() {
