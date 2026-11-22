@@ -1,11 +1,15 @@
-name: SideStore source
+name: Website and SideStore source
 
-# Rebuilds Haven's official AltStore / SideStore source whenever a release
-# is published, and puts it on GitHub Pages:
-# https://tinustk.github.io/Haven/source.json
+# Publishes Haven's website (the `website/` folder: home page, privacy
+# policy, terms) and the official AltStore / SideStore source on GitHub
+# Pages: https://tinustk.github.io/Haven/ and .../source.json. Runs when a
+# release is published (the source lists it) and when the website changes.
 on:
   release:
     types: [published, edited, deleted]
+  push:
+    branches: [main]
+    paths: ["website/**"]
   workflow_dispatch:
 
 permissions:
@@ -29,6 +33,8 @@ jobs:
         run: python3 ios/sidestore_source.py site
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Add the website
+        run: cp -R website/. site/
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

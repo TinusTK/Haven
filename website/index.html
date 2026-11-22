@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Haven</title>
+<meta name="description" content="Haven is a media player and tracker: keep track of the films and TV shows you love and play from your own media servers on your home network. Haven contains no films or TV shows.">
+<meta property="og:title" content="Haven">
+<meta property="og:description" content="A media player and tracker for the films and TV shows you love.">
+<meta property="og:image" content="https://tinustk.github.io/Haven/icon.png">
+<link rel="icon" href="icon.png">
+<link rel="apple-touch-icon" href="icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700;800&family=Pixelify+Sans:wght@600;700&display=swap" rel="stylesheet">
+<style>
+  /* Haven's own colours: the app's dark background and gold accent. */
+  :root {
+    --bg: #0d0f14;
+    --surface: #151821;
+    --surface-hi: #1c202b;
+    --border: #232733;
+    --text: #eef0f5;
+    --dim: #9aa1b2;
+    --gold: #f2c66d;
+    --gold-deep: #e0a93b;
+    --heading: "Pixelify Sans", ui-monospace, monospace;
+    --body: "Figtree", system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 17px/1.6 var(--body);
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--gold); }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 0 16px; }
+
+  /* Top bar */
+  header.bar { position: sticky; top: 0; z-index: 5; background: color-mix(in srgb, var(--bg) 86%, transparent); backdrop-filter: blur(10px); border-bottom: 1px solid var(--border); }
+  header.bar .wrap { display: flex; align-items: center; gap: 12px; height: 60px; }
+  header.bar img { width: 32px; height: 32px; border-radius: 8px; }
+  header.bar .name { font: 700 22px var(--heading); color: var(--text); text-decoration: none; }
+  header.bar nav { margin-left: auto; display: flex; gap: 18px; }
+  header.bar nav a { color: var(--dim); text-decoration: none; font-weight: 600; font-size: 15px; }
+  header.bar nav a:hover { color: var(--text); }
+  @media (max-width: 560px) { header.bar nav .wide { display: none; } }
+
+  /* Hero */
+  .hero { position: relative; overflow: hidden; padding: 72px 0 56px; text-align: center; }
+  .hero::before { content: ""; position: absolute; inset: -40% -10% auto; height: 520px; background: radial-gradient(closest-side, rgba(242,198,109,.20), transparent); pointer-events: none; }
+  .hero img.icon { position: relative; width: 112px; height: 112px; border-radius: 26px; box-shadow: 0 0 0 1px rgba(242,198,109,.35), 0 10px 40px rgba(242,198,109,.25); }
+  .hero h1 { position: relative; font: 700 clamp(44px, 9vw, 76px)/1.05 var(--heading); margin: 22px 0 10px; letter-spacing: .5px; }
+  .hero .tag { position: relative; display: inline-block; padding: 4px 14px; border-radius: 999px; background: linear-gradient(90deg, var(--gold-deep), var(--gold)); color: #171a22; font-weight: 800; font-size: 14px; }
+  .hero p.lead { position: relative; max-width: 620px; margin: 18px auto 0; color: #c9cdd8; font-size: clamp(17px, 2.4vw, 20px); }
+  .hero .cta { position: relative; display: flex; flex-wrap: wrap; justify-content: center; gap: 12px; margin-top: 30px; }
+  .btn { display: inline-flex; align-items: center; gap: 8px; padding: 12px 22px; border-radius: 999px; font-weight: 700; text-decoration: none; }
+  .btn.gold { background: var(--gold); color: #171a22; }
+  .btn.gold:hover { background: #f6d48a; }
+  .btn.ghost { border: 1px solid var(--border); color: var(--text); background: var(--surface); }
+  .btn.ghost:hover { border-color: var(--gold); }
+
+  /* Sections */
+  section { padding: 56px 0; border-top: 1px solid var(--border); }
+  section h2 { font: 700 clamp(28px, 5vw, 38px)/1.15 var(--heading); margin: 0 0 8px; }
+  section p.intro { color: var(--dim); margin: 0 0 28px; max-width: 64ch; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 18px; padding: 20px; }
+  .card h3 { margin: 0 0 6px; font-size: 18px; }
+  .card p { margin: 0; color: var(--dim); font-size: 15px; }
+  .card .mark { display: inline-grid; place-items: center; width: 38px; height: 38px; border-radius: 11px; background: rgba(242,198,109,.14); color: var(--gold); font-size: 19px; margin-bottom: 12px; }
+
+  /* Downloads */
+  .downloads { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; }
+  .dl { display: flex; flex-direction: column; gap: 2px; padding: 16px 18px; border-radius: 16px; background: var(--surface); border: 1px solid var(--border); color: var(--text); text-decoration: none; }
+  .dl:hover { border-color: var(--gold); background: var(--surface-hi); }
+  .dl strong { font-size: 17px; }
+  .dl span { color: var(--dim); font-size: 13px; }
+  .dl em { margin-top: 8px; font-style: normal; color: var(--gold); font-weight: 700; font-size: 14px; }
+  .note { margin-top: 16px; color: var(--dim); font-size: 14px; }
+  .note code { background: var(--surface); border: 1px solid var(--border); padding: 2px 6px; border-radius: 6px; font-size: 13px; word-break: break-all; }
+
+  footer { border-top: 1px solid var(--border); padding: 28px 0 48px; color: var(--dim); font-size: 14px; }
+  footer .wrap { display: flex; flex-wrap: wrap; gap: 10px 24px; align-items: center; justify-content: space-between; }
+  footer nav { display: flex; flex-wrap: wrap; gap: 18px; }
+  footer a { color: var(--dim); }
+  footer a:hover { color: var(--text); }
+</style>
+</head>
+<body>
+<header class="bar">
+  <div class="wrap">
+    <img src="icon.png" alt="" width="32" height="32">
+    <a class="name" href="./">Haven</a>
+    <nav>
+      <a class="wide" href="#features">Features</a>
+      <a href="#download">Download</a>
+      <a href="privacy-policy.html">Privacy</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <div class="hero">
+    <div class="wrap">
+      <img class="icon" src="icon.png" alt="Haven's icon" width="112" height="112">
+      <h1>Haven</h1>
+      <span class="tag">Media player &amp; tracker</span>
+      <p class="lead">Keep track of the films and TV shows you love. Know what's next, see what's coming out, and play from your own media servers on your home network.</p>
+      <div class="cta">
+        <a class="btn gold" href="#download">Download</a>
+        <a class="btn ghost" href="#features">What it does</a>
+      </div>
+    </div>
+  </div>
+
+  <section id="features">
+    <div class="wrap">
+      <h2>Your films and shows, in one place</h2>
+      <p class="intro">Haven contains no films or TV shows. It gives you information about them and keeps track of what you watch, and it plays only from your own media servers on your local network. Free and open source, with no ads and no account to make: everything stays on your own devices.</p>
+      <div class="grid">
+        <div class="card"><div class="mark">★</div><h3>Track what you watch</h3><p>A Watchlist, your history, watched marks on every episode, and Continue Watching to pick up where you left off.</p></div>
+        <div class="card"><div class="mark">📅</div><h3>Never miss an episode</h3><p>A calendar of what's coming out from the shows on your Watchlist, and an Upcoming row on Home.</p></div>
+        <div class="card"><div class="mark">⟳</div><h3>Trakt and Simkl</h3><p>Link your accounts and Haven keeps your watched history and Watchlist in step, both ways.</p></div>
+        <div class="card"><div class="mark">▶</div><h3>Your own media servers</h3><p>Play from your own Jellyfin, Plex, Emby and Haven Hub servers on your local network.</p></div>
+        <div class="card"><div class="mark">📺</div><h3>Live TV and radio</h3><p>Add your own TV provider's playlist or account, with favourites and groups.</p></div>
+        <div class="card"><div class="mark">◎</div><h3>Ratings and where to watch</h3><p>IMDb, TMDB and Rotten Tomatoes scores, and which streaming services have a title in your country.</p></div>
+        <div class="card"><div class="mark">☁</div><h3>Backups</h3><p>Your servers, accounts, lists and settings are backed up, to iCloud Drive on iPhone and to your device elsewhere.</p></div>
+        <div class="card"><div class="mark">⊘</div><h3>No films or shows inside</h3><p>Haven doesn't host, sell or provide any films, shows or channels. It shows information and tracks what you watch.</p></div>
+        <div class="card"><div class="mark">⇪</div><h3>Cast to your TV</h3><p>Send what's playing to a Chromecast on your network.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="download">
+    <div class="wrap">
+      <h2>Download</h2>
+      <p class="intro">Haven runs on Windows, Mac, Linux, iPhone, iPad and Android. Haven is still in beta: feedback is very welcome.</p>
+      <div class="downloads">
+        <a class="dl" href="https://github.com/TinusTK/Haven/releases/latest/download/Haven-windows-x64-setup.exe"><strong>Windows</strong><span>Installer · 64-bit</span><em>Download</em></a>
+        <a class="dl" href="https://github.com/TinusTK/Haven/releases/latest/download/Haven-macos.dmg"><strong>Mac</strong><span>Disk image · Apple silicon &amp; Intel</span><em>Download</em></a>
+        <a class="dl" href="https://github.com/TinusTK/Haven/releases/latest/download/haven_amd64.deb"><strong>Linux</strong><span>.deb · Debian, Ubuntu</span><em>Download</em></a>
+        <a class="dl" href="https://github.com/TinusTK/Haven/releases/latest/download/Haven-ios-unsigned.ipa"><strong>iPhone &amp; iPad</strong><span>IPA · for AltStore or SideStore</span><em>Download</em></a>
+        <a class="dl" href="https://github.com/TinusTK/Haven/releases/latest/download/Haven-android.apk"><strong>Android</strong><span>APK · phones &amp; tablets</span><em>Download</em></a>
+      </div>
+      <p class="note">AltStore or SideStore source: <code>https://tinustk.github.io/Haven/source.json</code><br>
+        Every version and what changed: <a href="https://github.com/TinusTK/Haven/releases">releases on GitHub</a>.</p>
+    </div>
+  </section>
+
+  <section id="help">
+    <div class="wrap">
+      <h2>Help and feedback</h2>
+      <p class="intro">Found something that doesn't work, or have an idea? Tell us on GitHub, or use Report an issue in Haven's Settings › About.</p>
+      <div class="cta" style="display:flex;flex-wrap:wrap;gap:12px">
+        <a class="btn gold" href="https://github.com/TinusTK/Haven/issues">Report an issue</a>
+        <a class="btn ghost" href="mailto:t.k.business@outlook.com">Email us</a>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>Haven © 2026 TinusTK · Free open source software under the GNU GPL version 3.<br>This product uses the TMDB API but is not endorsed or certified by TMDB.</span>
+    <nav>
+      <a href="privacy-policy.html">Privacy Policy</a>
+      <a href="terms-of-service.html">Terms of Service</a>
+      <a href="https://github.com/TinusTK/Haven">Source code</a>
+    </nav>
+  </div>
+</footer>
+</body>
+</html>
