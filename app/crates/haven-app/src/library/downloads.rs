@@ -1,8 +1,9 @@
 //! Downloads: a film or episode saved to this device from one of its
-//! places to watch, and the Library's list of them. Films go in
-//! `Movies/`, episodes in `Series/<show>/Season <n>/`, under Haven's
-//! folder in the user's videos folder. Removing one in Haven deletes its
-//! file too.
+//! places to watch, and the Library's list of them. On a computer films go
+//! in `Movies/`, episodes in `Series/<show>/Season <n>/`, under Haven's
+//! folder in the user's videos folder. On an iPhone or iPad every file sits
+//! straight in Files › On My iPhone › Haven › Downloads (Haven's list groups
+//! them by film and series). Removing one in Haven deletes its file too.
 
 use std::{
     cell::RefCell,
@@ -86,24 +87,60 @@ pub(super) fn extension_of(address: &str) -> &'static str {
     "mkv"
 }
 
-/// Where a download is saved, relative to the downloads folder.
+/// Where a download is saved, relative to the downloads folder: in
+/// `Movies/` and `Series/<show>/Season <n>/` on a computer, straight in the
+/// folder on an iPhone or iPad.
 pub(super) fn relative_path(d: &Download, extension: &str) -> PathBuf {
-    let show = safe_name(&d.title);
-    if d.kind == "movie" || d.season.is_none() {
-        return PathBuf::from("Movies").join(format!("{show}.{extension}"));
+    if cfg!(target_os = "ios") { PathBuf::from(file_name(d, extension)) } else { sorted_path(d, extension) }
+}
+
+/// `Movies/<film>.mkv` or `Series/<show>/Season <n>/<episode>.mkv`.
+fn sorted_path(d: &Download, extension: &str) -> PathBuf {
+    let file = file_name(d, extension);
+    match d.season {
+        Some(season) if d.kind != "movie" => {
+            PathBuf::from("Series").join(safe_name(&d.title)).join(format!("Season {season}")).join(file)
+        }
+        _ => PathBuf::from("Movies").join(file),
     }
-    let season = d.season.unwrap_or(0);
+}
+
+/// The file's name: `Dune.mkv`, or `Show - S01E02 - Its name.mkv`.
+fn file_name(d: &Download, extension: &str) -> String {
+    let show = safe_name(&d.title);
+    let Some(season) = d.season.filter(|_| d.kind != "movie") else { return format!("{show}.{extension}") };
     let number = match d.episode {
         Some(episode) => format!("S{season:02}E{episode:02}"),
         None => format!("S{season:02}"),
     };
     // "S1 E2 · Its name" gives the episode's name after the dot.
-    let name = d.detail.split_once(" · ").map(|(_, name)| safe_name(name));
-    let file = match name {
+    match d.detail.split_once(" · ").map(|(_, name)| safe_name(name)) {
         Some(name) => format!("{show} - {number} - {name}.{extension}"),
         None => format!("{show} - {number}.{extension}"),
-    };
-    PathBuf::from("Series").join(&show).join(format!("Season {season}")).join(file)
+    }
+}
+
+/// A saved path under `root`. An iPhone app's folder moves with every
+/// update (its path holds a new number), so a path saved by an older
+/// version is looked for again under today's downloads folder.
+pub(super) fn current_path(saved: &str, root: &Path) -> PathBuf {
+    let path = PathBuf::from(saved);
+    if !cfg!(target_os = "ios") || path.starts_with(root) {
+        return path;
+    }
+    moved_path(saved, root).unwrap_or(path)
+}
+
+/// The part of `saved` after its `Documents/Downloads/`, under `root`.
+fn moved_path(saved: &str, root: &Path) -> Option<PathBuf> {
+    const MARK: &str = "/Documents/Downloads/";
+    let at = saved.find(MARK)?;
+    Some(root.join(&saved[at + MARK.len()..]))
+}
+
+/// Where downloads go, in words for the screen.
+fn place_words(folder: &Path) -> String {
+    if cfg!(target_os = "ios") { "On My iPhone › Haven › Downloads".to_owned() } else { folder.display().to_string() }
 }
 
 fn size_words(bytes: i64) -> String {
@@ -125,7 +162,11 @@ impl Library {
 
     pub(super) fn start_downloads(self: &Rc<Self>, ui: &crate::AppWindow) {
         ui.set_download_rows(ModelRc::from(self.downloads.rows.clone()));
-        ui.set_downloads_folder(self.downloads_folder().display().to_string().into());
+        // On an iPhone the folder shows in the Files app only once it exists.
+        if cfg!(target_os = "ios") {
+            let _ = std::fs::create_dir_all(self.downloads_folder());
+        }
+        ui.set_downloads_folder(place_words(&self.downloads_folder()).into());
         ui.on_download_stream({
             let library = self.clone();
             move |row| library.download_stream(row)
@@ -211,7 +252,8 @@ impl Library {
         match self.store.add_download(&d) {
             Ok(_) => {
                 if let Some(ui) = self.ui.upgrade() {
-                    ui.set_play_note(format!("Downloading to {}. It is in your Library under Downloads.", d.path).into());
+                    let place = if cfg!(target_os = "ios") { place_words(&path) } else { d.path.clone() };
+                    ui.set_play_note(format!("Downloading to {place}. It is in your Library under Downloads.").into());
                 }
                 self.next_downloads();
                 self.show_downloads();
@@ -237,7 +279,8 @@ impl Library {
         }
     }
 
-    fn run_download(&self, d: Download) {
+    fn run_download(&self, mut d: Download) {
+        d.path = current_path(&d.path, &self.downloads_folder()).display().to_string();
         let stop = Arc::new(AtomicBool::new(false));
         self.downloads.running.borrow_mut().insert(d.id, stop.clone());
         let _ = self.store.update_download(d.id, d.size, d.received, "loading");
@@ -287,8 +330,8 @@ impl Library {
             stop.store(true, Ordering::Relaxed);
         }
         let Some(d) = self.store.downloads().unwrap_or_default().into_iter().find(|d| d.id == id) else { return };
-        let path = PathBuf::from(&d.path);
         let root = self.downloads_folder();
+        let path = current_path(&d.path, &root);
         // Only ever delete inside Haven's downloads folder.
         if path.starts_with(&root) {
             let _ = std::fs::remove_file(&path);
@@ -307,11 +350,12 @@ impl Library {
 
     fn play_download(&self, id: i64) {
         let Some(d) = self.store.downloads().unwrap_or_default().into_iter().find(|d| d.id == id) else { return };
-        if d.state != "done" || !Path::new(&d.path).exists() {
+        let path = current_path(&d.path, &self.downloads_folder());
+        if d.state != "done" || !path.exists() {
             return;
         }
         let request = PlayRequest {
-            address: d.path.clone(),
+            address: path.display().to_string(),
             title: d.title.clone(),
             detail: d.detail.clone(),
             kind: d.kind.clone(),
@@ -463,11 +507,25 @@ mod tests {
 
     #[test]
     fn films_and_episodes_go_in_their_own_folders() {
-        assert_eq!(relative_path(&sample("movie", None, None, ""), "mkv"), PathBuf::from("Movies/Dune Part Two.mkv"));
+        assert_eq!(sorted_path(&sample("movie", None, None, ""), "mkv"), PathBuf::from("Movies/Dune Part Two.mkv"));
         assert_eq!(
-            relative_path(&sample("series", Some(1), Some(2), "S1 E2 · The Gift / of Men"), "mp4"),
+            sorted_path(&sample("series", Some(1), Some(2), "S1 E2 · The Gift / of Men"), "mp4"),
             PathBuf::from("Series/Dune Part Two/Season 1/Dune Part Two - S01E02 - The Gift of Men.mp4")
         );
+    }
+
+    #[test]
+    fn phone_files_sit_straight_in_the_folder() {
+        assert_eq!(file_name(&sample("movie", None, None, ""), "mkv"), "Dune Part Two.mkv");
+        assert_eq!(file_name(&sample("series", Some(1), Some(2), "S1 E2"), "mp4"), "Dune Part Two - S01E02.mp4");
+    }
+
+    #[test]
+    fn a_moved_phone_folder_is_found_again() {
+        let old = "/private/var/mobile/Containers/Data/Application/AAAA/Documents/Downloads/Movies/Dune.mkv";
+        let root = Path::new("/var/mobile/Containers/Data/Application/BBBB/Documents/Downloads");
+        assert_eq!(moved_path(old, root), Some(root.join("Movies/Dune.mkv")));
+        assert_eq!(moved_path("/Users/me/Movies/Haven/Movies/Dune.mkv", root), None);
     }
 
     #[test]

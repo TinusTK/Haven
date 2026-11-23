@@ -6872,8 +6872,12 @@ export component AppWindow inherits Window {
                                             }
                                         }
                                     }
+                                    // A set width: without it the list's height
+                                    // counts each line as unwrapped (Slint, in a
+                                    // `for`), so the last notes were cut off.
+                                    // 45px: the card's padding, bullet and gap.
                                     Text {
-                                        horizontal-stretch: 1;
+                                        width: min(notes.visible-width, 560px) - 45px;
                                         text: line;
                                         color: Theme.text;
                                         font-size: 14px;
