@@ -19,7 +19,6 @@ mod kept;
 mod local;
 mod marks;
 mod home;
-mod hub;
 mod offers;
 mod ondemand;
 mod servers;
@@ -488,7 +487,6 @@ impl Library {
         }
         #[cfg(feature = "addons")]
         library.connect_addons(ui);
-        library.connect_hub(ui);
         connect!(on_search, |query| |l: &Rc<Self>| l.run_search(query.as_str()));
         connect!(on_open_title, |poster| |l: &Rc<Self>| l.open_title(poster));
         connect!(on_close_detail, | | |l: &Rc<Self>| l.close_detail());
@@ -529,7 +527,6 @@ impl Library {
         library.start_servers(ui);
         library.start_backup(ui);
         library.start_local(ui);
-        library.hub_sync();
         library.start_casting(ui);
         library.reload_catalog();
         Ok(library)
@@ -992,9 +989,10 @@ impl Library {
                         continue;
                     }
                     let Some(url) = meta.poster else { continue };
+                    let id = meta.id;
                     let pause = (board != Board::Search).then(|| self.home_pause.clone());
                     self.fetch_image_for(pause, url, POSTER_SIZE, move |library, pixels| {
-                        library.poster_loaded(board, generation, shelf, item, pixels);
+                        library.poster_loaded(board, generation, shelf, item, &id, pixels);
                     });
                 }
             }
@@ -1002,7 +1000,7 @@ impl Library {
         set.shelves.set_row_data(shelf, row);
     }
 
-    fn poster_loaded(&self, board: Board, generation: u64, shelf: usize, item: usize, pixels: Pixels) {
+    fn poster_loaded(&self, board: Board, generation: u64, shelf: usize, item: usize, id: &str, pixels: Pixels) {
         let set = self.board(board);
         if generation != set.generation.get() {
             return;
@@ -1010,11 +1008,7 @@ impl Library {
         let Some(items) = set.posters.borrow().get(shelf).cloned() else {
             return;
         };
-        if let Some(mut poster) = items.row_data(item) {
-            poster.image = Image::from_rgba8(pixels);
-            poster.has_image = true;
-            items.set_row_data(item, poster);
-        }
+        put_picture(&items, item, id, pixels);
     }
 
     /// Downloads and shrinks a picture off the UI thread, a few at a time,
@@ -1115,7 +1109,7 @@ impl Library {
                     .find(|old| old.has_image && old.id == progress.title_id && old.kind == progress.kind);
                 if old.is_none() {
                     if let Some(url) = &progress.poster {
-                        wanted.push((item, url.clone()));
+                        wanted.push((item, url.clone(), progress.title_id.clone()));
                     }
                 }
                 let left = format!("{} left", clock(progress.duration - progress.position));
@@ -1137,16 +1131,12 @@ impl Library {
         self.continuing.set_vec(rows);
         self.fill_continue_cards(&watched);
         self.reload_history();
-        for (item, url) in wanted {
+        for (item, url, id) in wanted {
             self.fetch_image(url, POSTER_SIZE, move |library, pixels| {
                 if generation != library.continue_generation.get() {
                     return;
                 }
-                if let Some(mut poster) = library.continuing.row_data(item) {
-                    poster.image = Image::from_rgba8(pixels);
-                    poster.has_image = true;
-                    library.continuing.set_row_data(item, poster);
-                }
+                put_picture(&library.continuing, item, &id, pixels);
             });
         }
     }
@@ -1173,7 +1163,7 @@ impl Library {
                     .find(|old| old.has_image && old.id == progress.title_id && old.kind == progress.kind);
                 if old.is_none() {
                     if let Some(url) = &progress.poster {
-                        wanted.push((item, url.clone()));
+                        wanted.push((item, url.clone(), progress.title_id.clone()));
                     }
                 }
                 let note = if !progress.detail.is_empty() {
@@ -1199,16 +1189,12 @@ impl Library {
             })
             .collect();
         self.history.set_vec(rows);
-        for (item, url) in wanted {
+        for (item, url, id) in wanted {
             self.fetch_image(url, POSTER_SIZE, move |library, pixels| {
                 if generation != library.history_generation.get() {
                     return;
                 }
-                if let Some(mut poster) = library.history.row_data(item) {
-                    poster.image = Image::from_rgba8(pixels);
-                    poster.has_image = true;
-                    library.history.set_row_data(item, poster);
-                }
+                put_picture(&library.history, item, &id, pixels);
             });
         }
     }
@@ -1253,7 +1239,7 @@ impl Library {
                         Some(kept)
                     });
                     match poster {
-                        Some(url) => wanted.push((item, url)),
+                        Some(url) => wanted.push((item, url, saved.title_id.clone())),
                         None => missing.push((item, saved.clone())),
                     }
                 }
@@ -1275,6 +1261,7 @@ impl Library {
         self.watchlist.set_vec(rows);
         self.refresh_calendar();
         for (item, saved) in missing {
+            let id = saved.title_id.clone();
             let details = self.details_of(&saved.kind, &saved.title_id);
             // An IMDb title nobody has details (or a poster) for yet, such as
             // a brand-new series: the picture service Cinemeta itself uses.
@@ -1298,25 +1285,17 @@ impl Library {
                         if generation != library.watchlist_generation.get() {
                             return;
                         }
-                        if let Some(mut poster) = library.watchlist.row_data(item) {
-                            poster.image = Image::from_rgba8(pixels);
-                            poster.has_image = true;
-                            library.watchlist.set_row_data(item, poster);
-                        }
+                        put_picture(&library.watchlist, item, &id, pixels);
                     });
                 });
             });
         }
-        for (item, url) in wanted {
+        for (item, url, id) in wanted {
             self.fetch_image(url, POSTER_SIZE, move |library, pixels| {
                 if generation != library.watchlist_generation.get() {
                     return;
                 }
-                if let Some(mut poster) = library.watchlist.row_data(item) {
-                    poster.image = Image::from_rgba8(pixels);
-                    poster.has_image = true;
-                    library.watchlist.set_row_data(item, poster);
-                }
+                put_picture(&library.watchlist, item, &id, pixels);
             });
         }
     }
@@ -1799,6 +1778,27 @@ fn episode_row(video: &Video) -> EpisodeRow {
     }
 }
 
+/// The row of `items` a picture fetched for row `item` (title `id`)
+/// belongs on now: that row if it still holds the title, else the first
+/// row with the title that has no picture yet (the list may have changed
+/// while the picture came), else none.
+fn row_for(items: &VecModel<Poster>, item: usize, id: &str) -> Option<usize> {
+    if items.row_data(item).is_some_and(|p| p.id.as_str() == id) {
+        return Some(item);
+    }
+    items.iter().position(|p| p.id.as_str() == id && !p.has_image)
+}
+
+/// Puts a fetched picture on the card of title `id`.
+fn put_picture(items: &VecModel<Poster>, item: usize, id: &str, pixels: Pixels) {
+    let Some(at) = row_for(items, item, id) else { return };
+    if let Some(mut poster) = items.row_data(at) {
+        poster.image = Image::from_rgba8(pixels);
+        poster.has_image = true;
+        items.set_row_data(at, poster);
+    }
+}
+
 /// The file a picture is kept in: named after its address (without what
 /// follows `?`, so a new sign-in token does not make it a new picture)
 /// and the size asked for, which some addresses only carry after `?`.
@@ -1894,4 +1894,27 @@ fn device_id(store: &Store) -> String {
         eprintln!("haven: could not save the device id: {err}");
     }
     id
+}
+
+#[cfg(test)]
+mod tests {
+    use slint::{Model, VecModel};
+
+    use super::{Poster, row_for};
+
+    fn card(id: &str, has_image: bool) -> Poster {
+        Poster { id: id.into(), has_image, ..Poster::default() }
+    }
+
+    #[test]
+    fn a_late_picture_goes_to_its_own_title() {
+        // Asked for when row 0 held The Hunger Games; the fresh list put
+        // The Odyssey there and moved The Hunger Games to row 1.
+        let items = VecModel::from(vec![card("odyssey", false), card("hunger-games", false)]);
+        assert_eq!(row_for(&items, 0, "hunger-games"), Some(1));
+        assert_eq!(row_for(&items, 0, "odyssey"), Some(0));
+        // A title no longer listed gets no picture.
+        assert_eq!(row_for(&items, 0, "gone"), None);
+        assert_eq!(items.row_count(), 2);
+    }
 }

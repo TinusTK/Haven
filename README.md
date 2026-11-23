@@ -74,7 +74,7 @@ Add-ons and Settings are under **More**.
 ## Getting started
 
 Setting up your media servers, Live TV, tracking, using servers away from
-home and setting up **Haven Hub**: see **[Getting started](GettingStarted.md)**.
+home and backing up to a new device: see **[Getting started](GettingStarted.md)**.
 
 ## Found a problem?
 

@@ -17,8 +17,7 @@
 //!   `continue <card>` (open a Continue Watching card), `watchlist`
 //!   (add or remove the open title), `page <index>`, `addtv <address>`,
 //!   `channel <n>`, `station <n>`, `tvfilter <words>`, `tvgroup <name>`,
-//!   `tvstate`, `signin <jellyfin|emby|hub> <address> <user or pairing code> [password]`,
-//!   `hubstatus` (print the Haven Hub line),
+//!   `tvstate`, `signin <jellyfin|emby> <address> <user> [password]`,
 //!   `open <type> <id>`, `servers`, `connect <0|1>` (Trakt, Simkl),
 //!   `tracking`, `findcast`, `cast` (print the casting state),
 //!   `checkservers`, `xtream <server> <user> <password>`,
@@ -226,7 +225,6 @@ fn act(ui: &AppWindow, action: &str) {
             let mut parts = rest.split_whitespace();
             let kind = match parts.next() {
                 Some("emby") => 1,
-                Some("hub") => 3,
                 _ => 0,
             };
             let address = parts.next().unwrap_or_default();
@@ -234,8 +232,6 @@ fn act(ui: &AppWindow, action: &str) {
             let password = parts.next().unwrap_or_default();
             ui.invoke_server_sign_in(kind, address.into(), user.into(), password.into());
         }
-        "hubstatus" => eprintln!("haven-hub: has={} status=\"{}\"", ui.get_has_hub(), ui.get_hub_status()),
-        "hubsend" => ui.invoke_hub_send(),
         "showsources" => ui.invoke_show_sources(),
         "backupnow" => ui.invoke_backup_now(),
         "whatsnew" => eprintln!("haven-whatsnew: shown={} version=\"{}\" sections={}", ui.get_whats_new_shown(), ui.get_whats_new_version(), ui.get_whats_new_sections().row_count()),

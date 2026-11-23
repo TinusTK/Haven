@@ -736,6 +736,76 @@ export global Typing {
     in-out property <int> closes;
 }
 
+// A shelf (or any sideways row) is being swiped. The page around it then
+// leaves the swipe alone: Slint's page scroller would otherwise take it
+// over as soon as the finger drifts a little up or down, which made
+// sideways swiping on a phone stop and start. `moves` counts the shelf's
+// steps; the window clears `moving` once they stop (`seen` is the count
+// it last saw).
+export global Sideways {
+    in-out property <bool> moving;
+    in-out property <int> moves;
+    in-out property <int> seen;
+}
+
+// A row that scrolls sideways (shelves, chips, cast…). Use it for every
+// sideways row inside a PageScroll.
+component SideScroll inherits Flickable {
+    flicked => {
+        Sideways.moves += 1;
+        Sideways.moving = true;
+    }
+}
+
+// A page that scrolls up and down, like ScrollView, but that lets a
+// sideways row inside it keep a swipe once the row has started moving
+// (ScrollView has no `interactive` to turn that off). The bar on the right
+// shows where the page is; on a computer it can be dragged.
+component PageScroll inherits Rectangle {
+    in-out property <length> content-width <=> flick.content-width;
+    in-out property <length> content-height <=> flick.content-height;
+    in-out property <length> content-x <=> flick.content-x;
+    in-out property <length> content-y <=> flick.content-y;
+    out property <length> visible-width <=> flick.width;
+    out property <length> visible-height <=> flick.height;
+    private property <length> range: max(0px, root.content-height - root.visible-height);
+
+    flick := Flickable {
+        width: parent.width;
+        height: parent.height;
+        interactive: !Sideways.moving;
+        mouse-drag-pan-enabled: false;
+        @children
+    }
+    if root.range > 1px: Rectangle {
+        x: parent.width - self.width;
+        width: Device.touch ? 6px : 12px;
+        height: parent.height;
+        thumb := Rectangle {
+            x: parent.width - self.width - 2px;
+            width: Device.touch || !(bar-touch.has-hover || bar-touch.pressed) ? 3px : 6px;
+            height: max(24px, parent.height * root.visible-height / root.content-height);
+            y: (parent.height - self.height) * clamp(-root.content-y / root.range, 0, 1);
+            border-radius: self.width / 2;
+            background: Theme.text-dim;
+            opacity: Device.touch ? 0.5 : 0.7;
+        }
+        bar-touch := TouchArea {
+            enabled: !Device.touch;
+            moved => {
+                if (self.pressed) {
+                    root.content-y = -clamp((self.mouse-y - thumb.height / 2) / max(1px, self.height - thumb.height), 0, 1) * root.range;
+                }
+            }
+            pointer-event(event) => {
+                if (event.kind == PointerEventKind.down) {
+                    root.content-y = -clamp((self.mouse-y - thumb.height / 2) / max(1px, self.height - thumb.height), 0, 1) * root.range;
+                }
+            }
+        }
+    }
+}
+
 // A one-line text field. On a phone or tablet it has a Paste button,
 // since the system's own paste menu does not reach Haven's fields there.
 component Field inherits HorizontalLayout {
@@ -1007,7 +1077,7 @@ component ShelfRow inherits VerticalLayout {
     }
     if root.shelf.items.length > 0: Rectangle {
         height: root.card-w * 1.5 + (Theme.phone ? 30px : 45px);
-        Flickable {
+        SideScroll {
             width: parent.width;
             height: parent.height;
             content-width: root.shelf.items.length * root.step;
@@ -2680,10 +2750,6 @@ export component AppWindow inherits Window {
     in property <string> tracking-link;
 
     in property <[ServerRow]> servers;
-    // A Haven Hub is among the servers; what the last send or fetch did.
-    in property <bool> has-hub;
-    in property <bool> hub-busy;
-    in property <string> hub-status;
     // One "New in" and one A to Z shelf per library of each media server.
     in property <[Shelf]> server-shelves;
     // Shelves from the built-in TMDB catalogue; empty without a TMDB key.
@@ -2928,9 +2994,6 @@ export component AppWindow inherits Window {
     callback clear-cache();
     // Asks every media server again whether it answers.
     callback check-servers();
-    // Haven Hub: hand it this device's whole setup, or take the Hub's.
-    callback hub-send();
-    callback hub-get();
     // Explore: the source, kind and genre chosen (genre -1 for all).
     callback explore-pick(int, int, int);
     callback explore-load-more();
@@ -3091,7 +3154,7 @@ export component AppWindow inherits Window {
                 // ---- The title, on the left over the picture.
                 // Scrolls when the window is too short for it all; when it
                 // fits, the details sit low on the picture as before.
-                info-scroll := ScrollView {
+                info-scroll := PageScroll {
                     x: root.compact ? 16px : 40px;
                     y: 0px;
                     width: root.compact ? parent.width - 32px : detail-view.panel ? parent.width - detail-view.panel-width - 24px - 40px - 36px : min(parent.width - 80px, 820px);
@@ -3236,7 +3299,7 @@ export component AppWindow inherits Window {
                         }
                         Rectangle {
                             height: 92px;
-                            Flickable {
+                            SideScroll {
                                 width: parent.width;
                                 height: parent.height;
                                 content-width: offer-tiles.preferred-width;
@@ -3339,7 +3402,7 @@ export component AppWindow inherits Window {
                     // A series: its seasons; picking one lists its episodes.
                     if root.seasons.length > 0 && !(root.compact && detail-view.panel): Rectangle {
                         height: 38px;
-                        Flickable {
+                        SideScroll {
                             width: parent.width;
                             height: parent.height;
                             content-width: root.seasons.length * 112px;
@@ -3401,7 +3464,7 @@ export component AppWindow inherits Window {
                         }
                         if root.seasons.length > 0: Rectangle {
                             height: 32px;
-                            Flickable {
+                            SideScroll {
                                 width: parent.width;
                                 height: parent.height;
                                 content-width: root.seasons.length * 108px;
@@ -3495,7 +3558,7 @@ export component AppWindow inherits Window {
                         // Narrow the list to one provider when there are several.
                         if root.stream-groups.length > 1: Rectangle {
                             height: 30px;
-                            Flickable {
+                            SideScroll {
                                 width: parent.width;
                                 height: parent.height;
                                 content-width: group-chips.preferred-width;
@@ -3584,7 +3647,7 @@ export component AppWindow inherits Window {
                         }
                         Rectangle {
                             height: 30px;
-                            Flickable {
+                            SideScroll {
                                 width: parent.width;
                                 height: parent.height;
                                 content-width: cast-chips.preferred-width;
@@ -4445,7 +4508,7 @@ export component AppWindow inherits Window {
                     remove(poster) => { root.remove-continue(poster); }
                 }
             }
-            if !root.detail-open && root.page == root.home-page && root.home-has-sources: home := ScrollView {
+            if !root.detail-open && root.page == root.home-page && root.home-has-sources: home := PageScroll {
                 // Two wide cards across a phone, as in Strand.
                 private property <length> card-w: root.compact ? (self.visible-width - 32px - 14px) / 2 : 328px;
                 private property <length> card-h: home.card-w * 0.5625;
@@ -4668,7 +4731,7 @@ export component AppWindow inherits Window {
                         }
                         Rectangle {
                             height: home.card-h + 64px;
-                            Flickable {
+                            SideScroll {
                                 width: parent.width;
                                 height: parent.height;
                                 content-width: root.upcoming.length * (home.card-w + 16px);
@@ -4782,7 +4845,7 @@ export component AppWindow inherits Window {
                         }
                         Rectangle {
                             height: home.card-h + 64px;
-                            Flickable {
+                            SideScroll {
                                 width: parent.width;
                                 height: parent.height;
                                 content-width: root.continue-cards.length * (home.card-w + 16px);
@@ -4922,7 +4985,7 @@ export component AppWindow inherits Window {
                             private property <length> card-w: Theme.card-width(self.width);
                             private property <length> step: self.card-w + (Theme.phone ? 10px : 12px);
                             height: self.card-w * 1.5 + (Theme.phone ? 30px : 45px);
-                            Flickable {
+                            SideScroll {
                                 width: parent.width;
                                 height: parent.height;
                                 content-width: root.watchlist.length * watch-row.step;
@@ -5080,7 +5143,7 @@ export component AppWindow inherits Window {
                         }
                     }
                 }
-                if root.explore-searching: search-view := ScrollView {
+                if root.explore-searching: search-view := PageScroll {
                     vertical-stretch: 1;
                     content-width: self.visible-width;
                     content-height: search-content.preferred-height;
@@ -5767,7 +5830,7 @@ export component AppWindow inherits Window {
                             spacing: 20px;
                             SettingsCard {
                     Text {
-                        text: "Sign in to your own Jellyfin, Emby or Plex server, or pair with your Haven Hub.";
+                        text: "Sign in to your own Jellyfin, Emby or Plex server.";
                         color: Theme.text-dim;
                         wrap: word-wrap;
                     }
@@ -5791,7 +5854,7 @@ export component AppWindow inherits Window {
                     HorizontalLayout {
                         spacing: 8px;
                         alignment: start;
-                        for name[index] in ["Jellyfin", "Emby", "Plex", "Haven Hub"]: Chip {
+                        for name[index] in ["Jellyfin", "Emby", "Plex"]: Chip {
                             label: name;
                             selected: root.server-kind == index;
                             clicked => {
@@ -5858,29 +5921,6 @@ export component AppWindow inherits Window {
                             text: root.server-busy ? "Signing in…" : "Sign in";
                             enabled: !root.server-busy && root.server-address != "" && root.server-user != "";
                             clicked => { root.server-sign-in(root.server-kind, root.server-address, root.server-user, root.server-password); }
-                        }
-                    }
-                    if root.server-kind == 3: HorizontalLayout {
-                        spacing: 8px;
-                        Field {
-                            horizontal-stretch: 3;
-                            text <=> root.server-address;
-                            placeholder-text: "Hub address, for example 192.168.1.20";
-                            enabled: !root.server-busy;
-                            accessible-label: "Hub address";
-                        }
-                        Field {
-                            horizontal-stretch: 2;
-                            text <=> root.server-user;
-                            placeholder-text: "Pairing code";
-                            enabled: !root.server-busy;
-                            accessible-label: "Pairing code";
-                            accepted => { root.server-sign-in(3, root.server-address, root.server-user, ""); }
-                        }
-                        PrimaryButton {
-                            text: root.server-busy ? "Pairing…" : "Pair";
-                            enabled: !root.server-busy && root.server-address != "" && root.server-user != "";
-                            clicked => { root.server-sign-in(3, root.server-address, root.server-user, ""); }
                         }
                     }
                     if root.server-kind == 2: HorizontalLayout {
@@ -5958,30 +5998,6 @@ export component AppWindow inherits Window {
                             text: "Check again";
                             clicked => { root.check-servers(); }
                         }
-                    }
-                    if root.has-hub: Text {
-                        text: "Haven Hub";
-                        color: Theme.text-dim;
-                        wrap: word-wrap;
-                    }
-                    if root.has-hub: HorizontalLayout {
-                        alignment: start;
-                        spacing: 8px;
-                        PrimaryButton {
-                            text: root.hub-busy ? "Working…" : "Send everything to the Hub";
-                            enabled: !root.hub-busy;
-                            clicked => { root.hub-send(); }
-                        }
-                        Button {
-                            text: "Get the Hub's setup";
-                            enabled: !root.hub-busy;
-                            clicked => { root.hub-get(); }
-                        }
-                    }
-                    if root.has-hub && root.hub-status != "": Text {
-                        text: root.hub-status;
-                        color: Theme.text-dim;
-                        wrap: word-wrap;
                     }
                             }
                         }
@@ -6940,6 +6956,19 @@ export component AppWindow inherits Window {
                     clicked => { root.whats-new-done(whats-new.hide); }
                 }
             }
+        }
+    }
+
+    // A sideways swipe has ended once its row stops moving for a moment:
+    // the page may scroll again.
+    Timer {
+        interval: 150ms;
+        running: Sideways.moving;
+        triggered => {
+            if (Sideways.moves == Sideways.seen) {
+                Sideways.moving = false;
+            }
+            Sideways.seen = Sideways.moves;
         }
     }
 

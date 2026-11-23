@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     Result,
-    hub::{Include, Merged, Setup},
+    setup::{Include, Merged, Setup},
     storage::Store,
 };
 
@@ -94,7 +94,7 @@ mod tests {
         .unwrap();
         from.put("settings", &serde_json::json!({"theme": "light", "last_page": 2})).unwrap();
         from.put("device_id", &"abc").unwrap();
-        let include = Include { sources: true, hubs: false };
+        let include = Include { sources: true };
         let backup = Backup::of(&from, include, 100).unwrap();
         assert!(!backup.settings.contains_key("device_id"));
 

@@ -6,7 +6,6 @@
 //! `<server>` is the server's number in Haven's database.
 
 mod emby;
-mod hub;
 mod own_network;
 mod plex;
 
@@ -42,8 +41,6 @@ pub enum Kind {
     Jellyfin,
     Emby,
     Plex,
-    /// Haven Hub: Haven without a screen, on a Pi or a small server.
-    Hub,
 }
 
 impl Kind {
@@ -52,7 +49,6 @@ impl Kind {
             Kind::Jellyfin => "jellyfin",
             Kind::Emby => "emby",
             Kind::Plex => "plex",
-            Kind::Hub => "hub",
         }
     }
 
@@ -61,7 +57,6 @@ impl Kind {
             "jellyfin" => Some(Kind::Jellyfin),
             "emby" => Some(Kind::Emby),
             "plex" => Some(Kind::Plex),
-            "hub" => Some(Kind::Hub),
             _ => None,
         }
     }
@@ -72,7 +67,6 @@ impl Kind {
             Kind::Jellyfin => "Jellyfin",
             Kind::Emby => "Emby",
             Kind::Plex => "Plex",
-            Kind::Hub => "Haven Hub",
         }
     }
 }
@@ -352,39 +346,10 @@ impl Client {
         emby::sign_in(self, kind, &server_address(address)?, user, password).await
     }
 
-    /// Pairs with a Haven Hub using the code on its page. The Hub listens
-    /// on port 8590 unless the address says otherwise.
-    pub async fn pair_hub(&self, address: &str, code: &str) -> Result<Server> {
-        let mut address = server_address(address)?;
-        if let Ok(mut url) = reqwest::Url::parse(&address) {
-            if url.port().is_none() {
-                let _ = url.set_port(Some(haven_core::hub::DEFAULT_PORT));
-                address = url.as_str().trim_end_matches('/').to_owned();
-            }
-        }
-        hub::pair(self, &address, code).await
-    }
-
-    /// Hands a Haven Hub a whole setup; how many things were new to it.
-    pub async fn send_setup(&self, server: &Server, setup: &haven_core::hub::Setup) -> Result<(u64, Option<u64>)> {
-        hub::send_setup(self, server, setup).await
-    }
-
-    /// The details of the series a Haven Hub follows, for a calendar.
-    pub async fn hub_calendar(&self, server: &Server) -> Result<Vec<MetaDetail>> {
-        hub::calendar(self, server).await
-    }
-
-    /// A Haven Hub's whole setup.
-    pub async fn fetch_setup(&self, server: &Server) -> Result<haven_core::hub::Setup> {
-        hub::fetch_setup(self, server).await
-    }
-
     /// The server's libraries of films and series.
     pub async fn libraries(&self, server: &Server) -> Result<Vec<Library>> {
         match server.kind {
             Kind::Plex => plex::libraries(self, server).await,
-            Kind::Hub => hub::libraries(self, server).await,
             _ => emby::libraries(self, server).await,
         }
     }
@@ -393,7 +358,6 @@ impl Client {
     pub async fn latest(&self, server: &Server, library: &str) -> Result<Vec<MetaPreview>> {
         match server.kind {
             Kind::Plex => plex::titles(self, server, library, true).await,
-            Kind::Hub => hub::page(self, server, library, None, 0).await,
             _ => emby::latest(self, server, library).await,
         }
     }
@@ -415,7 +379,6 @@ impl Client {
     ) -> Result<Vec<MetaPreview>> {
         match server.kind {
             Kind::Plex => plex::page(self, server, library, start, length).await,
-            Kind::Hub => hub::page(self, server, library, genre, start).await,
             _ => emby::page(self, server, library, genre, start, length).await,
         }
     }
@@ -425,7 +388,6 @@ impl Client {
     pub async fn genres(&self, server: &Server, library: &str) -> Vec<String> {
         match server.kind {
             Kind::Plex => Vec::new(),
-            Kind::Hub => hub::genres(self, server, library).await,
             _ => emby::genres(self, server, library).await,
         }
     }
@@ -445,7 +407,6 @@ impl Client {
     pub async fn online(&self, server: &Server) -> bool {
         match server.kind {
             Kind::Plex => plex::online(self, server).await,
-            Kind::Hub => hub::online(self, server).await,
             _ => emby::online(self, server).await,
         }
     }
@@ -456,7 +417,6 @@ impl Client {
     pub async fn find(&self, server: &Server, wanted: &Wanted) -> Result<Option<String>> {
         match server.kind {
             Kind::Plex => plex::find(self, server, wanted).await,
-            Kind::Hub => Ok(hub::find(wanted)),
             _ => emby::find(self, server, wanted).await,
         }
     }
@@ -465,7 +425,6 @@ impl Client {
     pub async fn search(&self, server: &Server, words: &str) -> Result<Vec<MetaPreview>> {
         match server.kind {
             Kind::Plex => plex::search(self, server, words).await,
-            Kind::Hub => hub::search(self, server, words).await,
             _ => emby::search(self, server, words).await,
         }
     }
@@ -475,7 +434,6 @@ impl Client {
     pub async fn meta(&self, server: &Server, item: &str) -> Result<MetaDetail> {
         match server.kind {
             Kind::Plex => plex::meta(self, server, item).await,
-            Kind::Hub => hub::meta(self, server, item).await,
             _ => emby::meta(self, server, item).await,
         }
     }
@@ -484,7 +442,6 @@ impl Client {
     pub async fn streams(&self, server: &Server, item: &str) -> Result<Vec<Stream>> {
         match server.kind {
             Kind::Plex => plex::streams(self, server, item).await,
-            Kind::Hub => hub::streams(self, server, item).await,
             _ => emby::streams(self, server, item).await,
         }
     }
@@ -503,10 +460,6 @@ impl Client {
                 let _ = found(plex::streams(self, server, item).await?);
                 Ok(())
             }
-            Kind::Hub => {
-                let _ = found(hub::streams(self, server, item).await?);
-                Ok(())
-            }
             _ => emby::streams_live(self, server, item, found).await,
         }
     }
@@ -522,8 +475,6 @@ impl Client {
     ) -> Result<()> {
         match server.kind {
             Kind::Plex => plex::report(self, server, item, position, duration, finished).await,
-            // The Hub hears about progress through the shared setup.
-            Kind::Hub => Ok(()),
             _ => emby::report(self, server, item, position, finished).await,
         }
     }

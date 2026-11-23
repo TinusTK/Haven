@@ -29,12 +29,6 @@
       ]
     },
     {
-      "title": "Haven Hub",
-      "lines": [
-        "Run Haven on a Raspberry Pi or a small server and pair it in Settings › Media servers."
-      ]
-    },
-    {
       "title": "Fixes",
       "lines": [
         "Watchlist posters show again for titles brought in from Trakt or Simkl.",

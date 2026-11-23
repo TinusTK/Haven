@@ -1,5 +1,4 @@
-//! One round of keeping Haven and the linked accounts in step, shared by
-//! the app and Haven Hub:
+//! One round of keeping Haven and the linked accounts in step:
 //!
 //! 1. [`exchange`] (off the database, may take a while): renews tokens
 //!    about to run out, sends the queued changes, and with `pull` brings

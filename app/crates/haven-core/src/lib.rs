@@ -5,7 +5,7 @@ pub mod backup;
 pub mod diag;
 pub mod error;
 pub mod http;
-pub mod hub;
+pub mod setup;
 pub mod paths;
 pub mod secrets;
 pub mod settings;

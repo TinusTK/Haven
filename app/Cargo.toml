@@ -10,7 +10,6 @@ members = [
     "crates/haven-tracking",
     "crates/haven-cast",
     "crates/haven-app",
-    "crates/haven-hub",
     "crates/haven-player",
 ]
 

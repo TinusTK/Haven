@@ -80,6 +80,8 @@ const MIGRATIONS: &[&str] = &[
         video_id   TEXT NOT NULL,
         created_at INTEGER NOT NULL
     ) STRICT;",
+    // Haven Hub is gone (0.2.4): forget any pairing with one.
+    "DELETE FROM servers WHERE kind = 'hub';",
 ];
 
 /// A change made in Haven that is still to be sent to the linked
@@ -549,7 +551,7 @@ impl Store {
     }
 
     /// Every film and episode with a position or a watched mark, newest
-    /// first (for handing the whole record to Haven Hub).
+    /// first (for a backup).
     pub fn all_progress(&self) -> Result<Vec<Progress>> {
         let mut query = self
             .conn
@@ -956,5 +958,27 @@ mod tests {
             Store::open(&path),
             Err(Error::DatabaseTooNew { found: 999, .. })
         ));
+    }
+
+    #[test]
+    fn a_haven_hub_pairing_is_forgotten() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        let before = MIGRATIONS.len() - 1;
+        let tx = conn.transaction().unwrap();
+        for step in &MIGRATIONS[..before] {
+            tx.execute_batch(step).unwrap();
+        }
+        tx.execute(&format!("PRAGMA user_version = {before}"), []).unwrap();
+        tx.execute(
+            "INSERT INTO servers (kind, name, address, user_id, token) VALUES ('hub', 'Den', 'http://den', 'u', 't'),
+             ('plex', 'Plex', 'http://plex', 'u', 't')",
+            [],
+        )
+        .unwrap();
+        tx.commit().unwrap();
+        migrate(&mut conn).unwrap();
+        let kinds: Vec<String> =
+            conn.prepare("SELECT kind FROM servers").unwrap().query_map([], |row| row.get(0)).unwrap().map(|k| k.unwrap()).collect();
+        assert_eq!(kinds, ["plex"]);
     }
 }

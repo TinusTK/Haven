@@ -21,14 +21,14 @@ use std::{
 
 use haven_core::{
     backup::{Backup, FILE_NAME},
-    hub::Include,
+    setup::Include,
 };
 
 use super::{Library, NO_ADDONS, on_ui};
 use crate::AppWindow;
 
-/// A backup keeps the Hub pairing too (a Hub is never handed to a Hub).
-const INCLUDE: Include = Include { sources: !NO_ADDONS, hubs: true };
+/// What a backup holds (add-ons only in builds that have them).
+const INCLUDE: Include = Include { sources: !NO_ADDONS };
 /// How often the backup is brought up to date while Haven is open.
 const EVERY: Duration = Duration::from_secs(10 * 60);
 /// The first backup waits for start-up to settle.

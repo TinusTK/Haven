@@ -46,9 +46,6 @@ impl Library {
         ui.on_server_sign_in({
             let library = self.clone();
             move |kind, address, user, password| {
-                if kind == 3 {
-                    return library.pair_hub(address.as_str(), user.as_str());
-                }
                 let kind = if kind == 1 { Kind::Emby } else { Kind::Jellyfin };
                 library.sign_in(kind, address.as_str(), user.as_str(), password.as_str());
             }
@@ -102,7 +99,6 @@ impl Library {
             .collect();
         if let Some(ui) = self.ui.upgrade() {
             ui.set_servers(ModelRc::new(VecModel::from(rows)));
-            ui.set_has_hub(self.hub().is_some());
         }
     }
 
@@ -425,8 +421,6 @@ impl Library {
 
     /// Tells the server a film or episode came from how far it was watched.
     pub(super) fn report_played(&self, played: &Played) {
-        // A Hub hears what was watched, and passes it on to other devices.
-        self.hub_send(true);
         // What played may be another server's copy of the open title.
         let played_item = self.playing_item.borrow_mut().take();
         let Some((server, item)) =
