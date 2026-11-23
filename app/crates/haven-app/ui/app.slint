@@ -634,6 +634,15 @@ component Segments inherits Rectangle {
 }
 
 // A group of settings on one card, with a heading over it.
+// The width wrapped text gets in Settings: on the page, and inside a card.
+// Set from Settings' scroll area. Without a set width Slint counts a
+// wrapped text as one line when it adds up the page's height (in parts
+// shown with `if`), so the page came out too short to scroll to its end.
+global SettingsText {
+    in-out property <length> page: 300px;
+    in-out property <length> card: 268px;
+}
+
 component SettingsCard inherits VerticalLayout {
     in property <string> title;
     in property <string> note;
@@ -656,6 +665,7 @@ component SettingsCard inherits VerticalLayout {
         }
     }
     if root.note != "": Text {
+        width: SettingsText.page;
         text: root.note;
         color: Theme.text-dim;
         font-size: 12px;
@@ -5650,6 +5660,14 @@ export component AppWindow inherits Window {
                     content-y <=> root.settings-scroll;
                     content-width: self.visible-width;
                     content-height: settings-content.preferred-height;
+                    init => {
+                        SettingsText.page = self.visible-width - (root.compact ? 16px : 32px);
+                        SettingsText.card = SettingsText.page - 32px;
+                    }
+                    changed visible-width => {
+                        SettingsText.page = self.visible-width - (root.compact ? 16px : 32px);
+                        SettingsText.card = SettingsText.page - 32px;
+                    }
 
                     settings-content := VerticalLayout {
                         width: settings-view.visible-width;
@@ -5738,6 +5756,7 @@ export component AppWindow inherits Window {
                         edited(text) => { root.set-player-program(text); }
                     }
                     if root.mobile && !root.ios: Text {
+                        width: SettingsText.card;
                         text: "Videos open in a player app on this device, such as VLC or mpv. Android asks which one the first time.";
                         color: Theme.text-dim;
                         wrap: word-wrap;
@@ -5773,6 +5792,7 @@ export component AppWindow inherits Window {
                         }
                     }
                     Text {
+                        width: SettingsText.card;
                         text: "Off, Haven decodes the sound itself and plays it on whatever this computer has, in surround where the device can. On, Dolby Digital, Dolby TrueHD and DTS sound is passed on as it is in the file for the receiver to decode. Turn it on only with a receiver or soundbar that takes those; without one there may be no sound.";
                         color: Theme.text-dim;
                         font-size: 12px;
@@ -5829,6 +5849,7 @@ export component AppWindow inherits Window {
                         }
                     }
                     if root.tracking-status != "": Text {
+                        width: SettingsText.card;
                         text: root.tracking-status;
                         color: Theme.text-dim;
                         wrap: word-wrap;
@@ -5869,6 +5890,7 @@ export component AppWindow inherits Window {
                                     }
                                 }
                                 if root.stremio-status != "": Text {
+                                    width: SettingsText.card;
                                     text: root.stremio-status;
                                     color: Theme.text-dim;
                                     wrap: word-wrap;
@@ -5885,6 +5907,7 @@ export component AppWindow inherits Window {
                             if root.keys-open: SettingsCard {
                                 title: "Your own keys";
                     Text {
+                        width: SettingsText.card;
                         text: (root.tmdb-built-in
                             ? "Your own keys for outside services. Haven comes with its own TMDB key for the catalogue (shelves on Home, the TMDB source in Explore, posters and pictures), so you can leave the TMDB box empty, or put your own key in to use that instead. A key is free from themoviedb.org: either the API key or the API read access token works."
                             : "Your own keys for outside services. A TMDB key turns on the built-in catalogue (shelves on Home, the TMDB source in Explore, posters and pictures) and fills in missing details. It is free from themoviedb.org: either the API key or the API read access token works.")
@@ -6036,6 +6059,7 @@ export component AppWindow inherits Window {
                                 }
                             }
                             Text {
+                                width: SettingsText.page;
                                 text: root.sync-status;
                                 color: Theme.text-dim;
                                 font-size: 13px;
@@ -6113,6 +6137,7 @@ export component AppWindow inherits Window {
                             spacing: 20px;
                             SettingsCard {
                     Text {
+                        width: SettingsText.card;
                         text: "Sign in to your own Jellyfin, Emby or Plex server.";
                         color: Theme.text-dim;
                         wrap: word-wrap;
@@ -6231,6 +6256,7 @@ export component AppWindow inherits Window {
                         }
                     }
                     if root.server-status != "": Text {
+                        width: SettingsText.card;
                         text: root.server-status;
                         color: root.server-status-is-error ? (Theme.dark ? #ff8b8b : #b3261e) : Theme.text-dim;
                         wrap: word-wrap;
@@ -6290,6 +6316,7 @@ export component AppWindow inherits Window {
                         if root.settings-section == 3: VerticalLayout {
                             spacing: 12px;
                     Text {
+                        width: SettingsText.page;
                         text: "Paste an add-on's address to install it. Its catalogues show up as shelves on Home, next to Cinemeta, the free catalogue of films and series built into Haven.";
                         color: Theme.text-dim;
                         wrap: word-wrap;
@@ -6310,6 +6337,7 @@ export component AppWindow inherits Window {
                         }
                     }
                     if root.addon-status != "": Text {
+                        width: SettingsText.page;
                         text: root.addon-status;
                         color: root.addon-status-is-error ? (Theme.dark ? #ff8b8b : #b3261e) : Theme.text-dim;
                         wrap: word-wrap;
@@ -6327,6 +6355,7 @@ export component AppWindow inherits Window {
                     if root.shared-addons.length > 0: Rectangle { height: 8px; }
                     if root.shared-addons.length > 0: SectionTitle { text: "From your media servers"; }
                     if root.shared-addons.length > 0: Text {
+                        width: SettingsText.page;
                         text: "These add-ons are set up on a media server of yours. The server already uses them for what it shows and plays in Haven. Install one here as well if you want Haven to ask it directly.";
                         color: Theme.text-dim;
                         wrap: word-wrap;
@@ -6357,6 +6386,7 @@ export component AppWindow inherits Window {
                             spacing: 20px;
                             SettingsCard {
                     Text {
+                        width: SettingsText.card;
                         text: "Add your TV provider's channels, either as the address of an M3U playlist or as an Xtream Codes account (server address, user name and password). The channels then show on the Live TV tab, and radio stations on Radio.";
                         color: Theme.text-dim;
                         wrap: word-wrap;
@@ -6377,6 +6407,7 @@ export component AppWindow inherits Window {
                         }
                     }
                     if root.tv-status != "": Text {
+                        width: SettingsText.card;
                         text: root.tv-status;
                         color: root.tv-status-is-error ? (Theme.dark ? #ff8b8b : #b3261e) : Theme.text-dim;
                         wrap: word-wrap;
@@ -6441,6 +6472,7 @@ export component AppWindow inherits Window {
                         }
                     }
                     if root.xtream-status != "": Text {
+                        width: SettingsText.card;
                         text: root.xtream-status;
                         color: root.xtream-status-is-error ? (Theme.dark ? #ff8b8b : #b3261e) : Theme.text-dim;
                         wrap: word-wrap;
@@ -6522,6 +6554,7 @@ export component AppWindow inherits Window {
                         }
                     }
                     Text {
+                        width: SettingsText.card;
                         text: "Posters and other pictures are kept on this computer once fetched, so they show at once the next time. Clearing the cache only removes those copies; they are fetched again when needed.";
                         color: Theme.text-dim;
                         font-size: 12px;
@@ -6689,6 +6722,7 @@ export component AppWindow inherits Window {
                         }
                     }
                     Text {
+                        width: SettingsText.card;
                         text: "Haven: a media player and tracker for the films and TV shows you love.\n\nHaven © 2026 TinusTK. Free open source software under the GNU GPL version 3.\nMade with Slint. Video playback by mpv (libmpv, LGPL).\n\nData sources\nFilm and TV information from TMDB and Cinemeta. Tracking with Trakt and Simkl.\nThis product uses the TMDB API but is not endorsed or certified by TMDB.";
                         color: Theme.text-dim;
                         font-size: 12px;

@@ -22,6 +22,10 @@ crate-type = ["lib", "cdylib"]
 # The player needs libmpv on the machine, so it is opt-in for now:
 # `cargo run -p haven-app --features player`. Without it Haven builds
 # everywhere and lists streams without playing them.
+[dev-dependencies]
+# Headless window for the touch-scrolling tests (tests/swipe.rs).
+i-slint-backend-testing = "=1.18.1"
+
 [features]
 default = ["addons"]
 player = ["haven-player/mpv"]

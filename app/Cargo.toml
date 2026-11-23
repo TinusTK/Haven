@@ -45,3 +45,8 @@ slint-build = "1.18"
 tempfile = "3"
 thiserror = "2"
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros", "time", "net", "fs", "io-util"] }
+
+# Slint's core with two fixes for touch scrolling (a sideways row inside a
+# page that scrolls up and down): see vendor/README.md.
+[patch.crates-io]
+i-slint-core = { path = "vendor/i-slint-core" }

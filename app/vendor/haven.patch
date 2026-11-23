@@ -1,0 +1,39 @@
+--- a/window.rs	2006-07-24 10:51:28
++++ b/window.rs	2026-11-24 01:14:47
+@@ -946,7 +946,13 @@
+         let had_delay = mouse_input_state.has_delayed_event();
+ 
+         let last_top_item = mouse_input_state.top_item_including_delayed();
+-        if released_event {
++        // Haven patch: a press a Flickable is holding back is also handed on
++        // as soon as the pointer moves, not only on release or after the
++        // delay. Otherwise a Flickable inside it (a row that scrolls
++        // sideways) sees the moves of a quick swipe before its press,
++        // ignores them and then jumps.
++        let moved_event = matches!(event, MouseEvent::Moved { .. });
++        if released_event || (had_delay && moved_event) {
+             mouse_input_state =
+                 crate::input::process_delayed_event(&window_adapter, mouse_input_state);
+         }
+--- a/items/flickable.rs	2006-07-24 10:51:28
++++ b/items/flickable.rs	2026-11-24 01:14:47
+@@ -809,10 +809,15 @@
+ 
+         // We should capture the mouse movement, if the flickable can move in this
+         // axis, and the mouse has moved more than the threshold in this axis.
+-        ((content_width > flickable_width || flick.content_x() != zero)
+-            && abs(mouse_delta.x_length()) > DISTANCE_THRESHOLD)
+-            || ((content_height > flickable_height || flick.content_y() != zero)
+-                && abs(mouse_delta.y_length()) > DISTANCE_THRESHOLD)
++        let can_x = content_width > flickable_width || flick.content_x() != zero;
++        let can_y = content_height > flickable_height || flick.content_y() != zero;
++        let (dx, dy) = (abs(mouse_delta.x_length()), abs(mouse_delta.y_length()));
++        // Haven patch: a Flickable that moves along one axis only takes a
++        // drag that went mostly along that axis. Without this the page
++        // takes a sideways swipe on a row inside it as soon as the finger
++        // dips 8 px, however far it went sideways.
++        (can_x && dx > DISTANCE_THRESHOLD && (can_y || dx >= dy))
++            || (can_y && dy > DISTANCE_THRESHOLD && (can_x || dy >= dx))
+     }
+ 
+     /// Whether the flickable has any content to pan in either direction, regardless of mouse movement.

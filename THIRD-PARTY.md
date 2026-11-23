@@ -7,6 +7,9 @@ components that keep their own licences:
 - **Slint** (user interface), used under the Slint Royalty-free Desktop,
   Mobile and Web Applications License. That licence asks for an
   attribution, which Haven shows on its Settings page ("Made with Slint").
+  `app/vendor/i-slint-core` is a copy of Slint's core crate (1.18.1, same
+  licence, its `LICENSES` folder kept) with two small changes to touch
+  scrolling, listed in `app/vendor/README.md`.
 - **mpv / libmpv** (video playback), LGPL-2.1-or-later when built without
   its GPL parts. Haven loads libmpv as a separate shared library
   (`libmpv-2.dll` on Windows, `libmpv.so.2` on Linux) that can be replaced
