@@ -5,12 +5,17 @@
 //! Add-ons are part of the document only as raw records (address and
 //! description). A build without add-ons sends none and leaves any it is
 //! given alone.
+//!
+//! A setup is either added to a store ([`Setup::merge_into`], nothing is
+//! removed) or, when `replace` is set ("Send everything to the Hub"), the
+//! store is made to match it ([`Setup::mirror_into`]): servers, add-ons and
+//! TV sources it lacks are removed, and its on/off switches are taken.
 
 use serde::{Deserialize, Serialize};
 
 use crate::{
     Result,
-    settings::Keys,
+    settings::{Keys, SwitchedOff},
     storage::{Progress, Saved, Store, StoredAddon, StoredServer, TvSource},
 };
 
@@ -35,6 +40,48 @@ pub struct Setup {
     /// with a `service` and, for Trakt, `expires_at`).
     #[serde(default)]
     pub tracking: Vec<serde_json::Value>,
+    /// What is switched off on the device that wrote it (None from older
+    /// versions, which did not say).
+    #[serde(default)]
+    pub off: Option<OffRecord>,
+    /// The receiver should match this setup, not only add to it.
+    #[serde(default)]
+    pub replace: bool,
+    /// The sender has add-ons: a build without them leaves the receiver's
+    /// add-ons alone, even when matching.
+    #[serde(default)]
+    pub has_sources: bool,
+}
+
+/// Switched-off things, named the same way on every device (a server's
+/// number in the database differs from device to device).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct OffRecord {
+    pub servers: Vec<ServerKey>,
+    pub addons: Vec<String>,
+    pub tv_sources: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ServerKey {
+    pub kind: String,
+    pub address: String,
+}
+
+/// What is switched off in `store`, by address.
+fn off_record(store: &Store, include: Include) -> Result<OffRecord> {
+    let off = SwitchedOff::load(store)?;
+    Ok(OffRecord {
+        servers: store
+            .servers()?
+            .into_iter()
+            .filter(|s| off.servers.contains(&s.id) && (include.hubs || s.kind != "hub"))
+            .map(|s| ServerKey { kind: s.kind, address: s.address })
+            .collect(),
+        addons: if include.sources { off.addons } else { Vec::new() },
+        tv_sources: off.tv_sources,
+    })
 }
 
 /// The key tracking sign-ins are kept under in a store.
@@ -51,6 +98,8 @@ pub struct Merged {
     pub watchlist: Vec<(String, String)>,
     /// A tracking sign-in was added or replaced by a newer one.
     pub tracking: bool,
+    /// Servers, add-ons and TV sources removed to match ([`Setup::mirror_into`]).
+    pub removed: usize,
 }
 
 /// When a kept sign-in runs out (0 when it does not say).
@@ -186,10 +235,94 @@ impl Setup {
                 })
                 .collect(),
             tracking: store.get::<Vec<serde_json::Value>>(TRACKING)?.unwrap_or_default(),
+            off: Some(off_record(store, include)?),
+            replace: false,
+            has_sources: include.sources,
         })
     }
 
-    /// Adds this setup to `store`. Nothing is removed: servers, sources
+    /// Makes `store` match this setup: its servers, add-ons (when included)
+    /// and TV sources become this setup's, the keys it gives replace the
+    /// store's, and its on/off switches are taken. The watchlist, watch
+    /// progress and tracking sign-ins are added as in [`Self::merge_into`],
+    /// never removed.
+    pub fn mirror_into(&self, store: &Store, include: Include) -> Result<Merged> {
+        let include = Include { sources: include.sources && self.has_sources, ..include };
+        let mut removed = 0;
+        // Servers taken out only to be put back with a new sign-in.
+        let mut renewed = 0;
+        for h in store.servers()? {
+            if h.kind == "hub" && !include.hubs {
+                continue;
+            }
+            // Gone from the device, or signed in again (a new token).
+            let same = self.servers.iter().any(|s| {
+                s.kind == h.kind && s.address == h.address && s.name == h.name && s.user_id == h.user_id && s.token == h.token
+            });
+            if !same {
+                store.remove_server(h.id)?;
+                if self.servers.iter().any(|s| s.kind == h.kind && s.address == h.address) {
+                    renewed += 1;
+                } else {
+                    removed += 1;
+                }
+            }
+        }
+        if include.sources {
+            for h in store.addons()? {
+                if !self.sources.iter().any(|a| a.url == h.url) {
+                    store.remove_addon(&h.url)?;
+                    removed += 1;
+                }
+            }
+        }
+        for h in store.tv_sources()? {
+            match self.tv_sources.iter().find(|t| t.url == h.url) {
+                Some(t) if t.name == h.name => {}
+                Some(_) => store.remove_tv_source(&h.url)?,
+                None => {
+                    store.remove_tv_source(&h.url)?;
+                    removed += 1;
+                }
+            }
+        }
+        if let Some(keys) = &self.keys {
+            let mut mine = Keys::load(store)?;
+            let take = |mine: &mut String, theirs: &String| {
+                if !theirs.trim().is_empty() {
+                    *mine = theirs.clone();
+                }
+            };
+            take(&mut mine.tmdb, &keys.tmdb);
+            take(&mut mine.trakt_id, &keys.trakt_id);
+            take(&mut mine.trakt_secret, &keys.trakt_secret);
+            take(&mut mine.simkl_id, &keys.simkl_id);
+            take(&mut mine.omdb, &keys.omdb);
+            mine.save(store)?;
+        }
+        let mut merged = self.merge_into(store, include)?;
+        // Put back after a new sign-in: not new to the user.
+        merged.added = merged.added.saturating_sub(renewed);
+        if let Some(off) = &self.off {
+            let mut mine = SwitchedOff::load(store)?;
+            mine.servers = store
+                .servers()?
+                .into_iter()
+                .filter(|h| off.servers.iter().any(|k| k.kind == h.kind && k.address == h.address))
+                .map(|h| h.id)
+                .collect();
+            if include.sources {
+                mine.addons = off.addons.clone();
+            }
+            mine.tv_sources = off.tv_sources.clone();
+            mine.save(store)?;
+        }
+        merged.removed = removed;
+        Ok(merged)
+    }
+
+    /// Adds this setup to `store`; what it adds comes switched on or off as
+    /// the setup has it. Nothing is removed: servers, sources
     /// and TV sources already there by address are kept; watchlist
     /// entries are added; for progress the newer record of the two wins.
     /// Keys only fill in what is blank. A tracking sign-in is taken where
@@ -197,12 +330,17 @@ impl Setup {
     pub fn merge_into(&self, store: &Store, include: Include) -> Result<Merged> {
         let mut merged = Merged::default();
         let mut added = 0;
+        // What arrives switched off stays off here; this store's own
+        // switches are not touched.
+        let off_record = self.off.clone().unwrap_or_default();
+        let mut off = SwitchedOff::load(store)?;
+        let mut off_changed = false;
         let have: Vec<StoredServer> = store.servers()?;
         for s in &self.servers {
             if (s.kind == "hub" && !include.hubs) || have.iter().any(|h| h.address == s.address && h.kind == s.kind) {
                 continue;
             }
-            store.save_server(&StoredServer {
+            let id = store.save_server(&StoredServer {
                 id: 0,
                 kind: s.kind.clone(),
                 name: s.name.clone(),
@@ -210,6 +348,10 @@ impl Setup {
                 user_id: s.user_id.clone(),
                 token: s.token.clone(),
             })?;
+            if off_record.servers.iter().any(|k| k.kind == s.kind && k.address == s.address) {
+                off.servers.push(id);
+                off_changed = true;
+            }
             added += 1;
         }
         if include.sources {
@@ -217,6 +359,10 @@ impl Setup {
             for a in &self.sources {
                 if !have.iter().any(|h| h.url == a.url) {
                     store.save_addon(&a.url, &a.description)?;
+                    if off_record.addons.contains(&a.url) && !off.addons.contains(&a.url) {
+                        off.addons.push(a.url.clone());
+                        off_changed = true;
+                    }
                     added += 1;
                 }
             }
@@ -225,8 +371,15 @@ impl Setup {
         for t in &self.tv_sources {
             if !have.iter().any(|h| h.url == t.url) {
                 store.save_tv_source(&TvSource { url: t.url.clone(), name: t.name.clone(), playlist: String::new() })?;
+                if off_record.tv_sources.contains(&t.url) && !off.tv_sources.contains(&t.url) {
+                    off.tv_sources.push(t.url.clone());
+                    off_changed = true;
+                }
                 added += 1;
             }
+        }
+        if off_changed {
+            off.save(store)?;
         }
         if let Some(keys) = &self.keys {
             let mut mine = Keys::load(store)?;
@@ -401,5 +554,96 @@ mod tests {
         // An older one does not replace it.
         let older = Setup { tracking: vec![serde_json::json!({"service": "Trakt", "token": "old", "expires_at": 10})], ..Setup::default() };
         assert!(!older.merge_into(&store, Include { sources: false, hubs: false }).unwrap().tracking);
+    }
+
+    fn server(name: &str, address: &str, token: &str) -> StoredServer {
+        StoredServer {
+            id: 0,
+            kind: "jellyfin".into(),
+            name: name.into(),
+            address: address.into(),
+            user_id: "u".into(),
+            token: token.into(),
+        }
+    }
+
+    #[test]
+    fn sending_everything_makes_the_receiver_match() {
+        let all = Include { sources: true, hubs: false };
+        let device = Store::in_memory().unwrap();
+        let kept = device.save_server(&server("Den", "http://den", "new")).unwrap();
+        device.save_server(&server("Attic", "http://attic", "a")).unwrap();
+        device.save_addon("https://one/manifest.json", "{}").unwrap();
+        device.save_tv_source(&TvSource { url: "http://tv".into(), name: "TV".into(), playlist: String::new() }).unwrap();
+        let mut off = SwitchedOff::load(&device).unwrap();
+        off.servers.push(kept);
+        off.addons.push("https://one/manifest.json".into());
+        off.save(&device).unwrap();
+
+        let hub = Store::in_memory().unwrap();
+        hub.save_server(&server("Den", "http://den", "old")).unwrap();
+        hub.save_server(&server("Gone", "http://gone", "g")).unwrap();
+        hub.save_addon("https://one/manifest.json", "{}").unwrap();
+        hub.save_addon("https://two/manifest.json", "{}").unwrap();
+        hub.save_tv_source(&TvSource { url: "http://old-tv".into(), name: "Old".into(), playlist: String::new() }).unwrap();
+
+        let mut setup = Setup::read(&device, all).unwrap();
+        setup.replace = true;
+        let merged = setup.mirror_into(&hub, all).unwrap();
+        // Gone, two and old-tv removed; Attic and TV added; Den only renewed.
+        assert_eq!(merged.removed, 3);
+        assert_eq!(merged.added, 2);
+        let servers = hub.servers().unwrap();
+        assert_eq!(servers.len(), 2);
+        let den = servers.iter().find(|s| s.address == "http://den").unwrap();
+        assert_eq!(den.token, "new");
+        assert_eq!(hub.addons().unwrap().len(), 1);
+        assert_eq!(hub.tv_sources().unwrap()[0].url, "http://tv");
+        // The switches came along, by the Hub's own server number.
+        let hub_off = SwitchedOff::load(&hub).unwrap();
+        assert_eq!(hub_off.servers, [den.id]);
+        assert_eq!(hub_off.addons, ["https://one/manifest.json"]);
+        // Again: nothing changes.
+        let again = setup.mirror_into(&hub, all).unwrap();
+        assert_eq!((again.added, again.removed), (0, 0));
+    }
+
+    #[test]
+    fn a_device_without_add_ons_leaves_the_receivers_alone() {
+        let device = Store::in_memory().unwrap();
+        let hub = Store::in_memory().unwrap();
+        hub.save_addon("https://one/manifest.json", "{}").unwrap();
+        let mut off = SwitchedOff::load(&hub).unwrap();
+        off.addons.push("https://one/manifest.json".into());
+        off.save(&hub).unwrap();
+        let setup = Setup::read(&device, Include { sources: false, hubs: false }).unwrap();
+        setup.mirror_into(&hub, Include { sources: true, hubs: false }).unwrap();
+        assert_eq!(hub.addons().unwrap().len(), 1);
+        assert_eq!(SwitchedOff::load(&hub).unwrap().addons.len(), 1);
+    }
+
+    #[test]
+    fn what_arrives_switched_off_stays_off() {
+        let setup = Setup {
+            servers: vec![ServerRecord {
+                kind: "plex".into(),
+                name: "Den".into(),
+                address: "http://den".into(),
+                user_id: "u".into(),
+                token: "t".into(),
+            }],
+            tv_sources: vec![TvRecord { url: "http://tv".into(), name: "TV".into() }],
+            off: Some(OffRecord {
+                servers: vec![ServerKey { kind: "plex".into(), address: "http://den".into() }],
+                addons: Vec::new(),
+                tv_sources: vec!["http://tv".into()],
+            }),
+            ..Setup::default()
+        };
+        let store = Store::in_memory().unwrap();
+        setup.merge_into(&store, Include { sources: false, hubs: false }).unwrap();
+        let off = SwitchedOff::load(&store).unwrap();
+        assert_eq!(off.servers, [store.servers().unwrap()[0].id]);
+        assert_eq!(off.tv_sources, ["http://tv"]);
     }
 }

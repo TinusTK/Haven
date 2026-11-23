@@ -141,8 +141,13 @@ impl Hub {
             .collect()
     }
 
+    /// The add-ons switched on: the only ones the Hub uses.
     fn sources(&self) -> Vec<Source> {
-        self.installed().into_iter().map(|(url, manifest)| manifest.source(&url)).collect()
+        self.installed()
+            .into_iter()
+            .filter(|(url, _)| self.addon_on(url))
+            .map(|(url, manifest)| manifest.source(&url))
+            .collect()
     }
 
     pub async fn install(&self, address: &str) -> Result<String, String> {
@@ -155,6 +160,7 @@ impl Hub {
 
     pub fn remove(&self, url: &str) {
         let _ = self.store.lock().unwrap().remove_addon(url);
+        self.switch_addon(url, true);
     }
 
     /// Fetches every add-on's manifest again, so new catalogues show.

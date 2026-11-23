@@ -366,7 +366,7 @@ impl Client {
     }
 
     /// Hands a Haven Hub a whole setup; how many things were new to it.
-    pub async fn send_setup(&self, server: &Server, setup: &haven_core::hub::Setup) -> Result<u64> {
+    pub async fn send_setup(&self, server: &Server, setup: &haven_core::hub::Setup) -> Result<(u64, Option<u64>)> {
         hub::send_setup(self, server, setup).await
     }
 

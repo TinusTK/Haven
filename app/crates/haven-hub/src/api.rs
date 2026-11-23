@@ -26,6 +26,14 @@ pub fn router(hub: Arc<Hub>) -> Router {
         .route("/", get(status_page))
         .route("/addons/add", post(page_add_addon))
         .route("/addons/remove", post(page_remove_addon))
+        .route("/addons/switch", post(page_switch_addon))
+        .route("/servers/switch", post(page_switch_server))
+        .route("/servers/remove", post(page_remove_server))
+        .route("/tv/add", post(page_add_tv))
+        .route("/tv/switch", post(page_switch_tv))
+        .route("/tv/remove", post(page_remove_tv))
+        .route("/keys", post(page_keys))
+        .route("/tracking/unlink", post(page_unlink))
         .route("/devices/forget", post(page_forget_device))
         .route("/api/hello", get(hello))
         .route("/api/pair", post(pair))
@@ -77,6 +85,77 @@ async fn page_add_addon(State(hub): Shared, Form(form): Form<AddonForm>) -> Redi
 async fn page_remove_addon(State(hub): Shared, Form(form): Form<AddonForm>) -> Redirect {
     hub.remove(&form.address);
     Redirect::to("/")
+}
+
+/// A switch on the page: `on` is "1" to switch on.
+#[derive(Deserialize)]
+struct SwitchForm {
+    address: Option<String>,
+    id: Option<i64>,
+    on: String,
+}
+
+async fn page_switch_addon(State(hub): Shared, Form(form): Form<SwitchForm>) -> Redirect {
+    if let Some(address) = form.address {
+        hub.switch_addon(&address, form.on == "1");
+    }
+    Redirect::to("/#addons")
+}
+
+async fn page_switch_server(State(hub): Shared, Form(form): Form<SwitchForm>) -> Redirect {
+    if let Some(id) = form.id {
+        hub.switch_server(id, form.on == "1");
+    }
+    Redirect::to("/#servers")
+}
+
+#[derive(Deserialize)]
+struct ServerForm {
+    id: i64,
+}
+
+async fn page_remove_server(State(hub): Shared, Form(form): Form<ServerForm>) -> Redirect {
+    hub.remove_server(form.id);
+    Redirect::to("/#servers")
+}
+
+#[derive(Deserialize)]
+struct TvForm {
+    #[serde(default)]
+    name: String,
+    address: String,
+}
+
+async fn page_add_tv(State(hub): Shared, Form(form): Form<TvForm>) -> Redirect {
+    hub.add_tv(&form.name, &form.address);
+    Redirect::to("/#tv")
+}
+
+async fn page_switch_tv(State(hub): Shared, Form(form): Form<SwitchForm>) -> Redirect {
+    if let Some(address) = form.address {
+        hub.switch_tv(&address, form.on == "1");
+    }
+    Redirect::to("/#tv")
+}
+
+async fn page_remove_tv(State(hub): Shared, Form(form): Form<AddonForm>) -> Redirect {
+    hub.remove_tv(&form.address);
+    Redirect::to("/#tv")
+}
+
+async fn page_keys(State(hub): Shared, Form(keys): Form<haven_core::settings::Keys>) -> Redirect {
+    hub.save_keys(&keys);
+    Redirect::to("/#keys")
+}
+
+#[derive(Deserialize)]
+struct UnlinkForm {
+    service: String,
+}
+
+async fn page_unlink(State(hub): Shared, Form(form): Form<UnlinkForm>) -> Redirect {
+    hub.unlink(&form.service);
+    Redirect::to("/#tracking")
 }
 
 #[derive(Deserialize)]
@@ -196,18 +275,22 @@ async fn get_setup(State(hub): Shared, headers: HeaderMap) -> Response {
     }
 }
 
-/// Adds a device's setup to the Hub's ("Send everything to the Hub").
+/// A device's setup. "Send everything to the Hub" (`replace`) makes the
+/// Hub match the device; the quiet sends in the background only add
+/// (what was watched, the Watchlist).
 async fn put_setup(State(hub): Shared, headers: HeaderMap, Json(setup): Json<Setup>) -> Response {
     if !allowed(&hub, &headers) {
         return refused();
     }
     let store = hub.store.lock().unwrap();
-    match setup.merge_into(&store, Include { sources: true, hubs: false }) {
+    let include = Include { sources: true, hubs: false };
+    let result = if setup.replace { setup.mirror_into(&store, include) } else { setup.merge_into(&store, include) };
+    match result {
         Ok(merged) => {
-            let added = merged.added;
+            let (added, removed) = (merged.added, merged.removed);
             drop(store);
             hub.after_merge(merged);
-            Json(json!({"added": added})).into_response()
+            Json(json!({"added": added, "removed": removed})).into_response()
         }
         Err(err) => failed(err.to_string()),
     }

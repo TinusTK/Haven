@@ -145,10 +145,19 @@ pub async fn streams(client: &Client, server: &Server, wanted: &str) -> Result<V
 }
 
 /// Hands the Hub a whole setup to add to its own; how many things were new.
-pub async fn send_setup(client: &Client, server: &Server, setup: &haven_core::hub::Setup) -> Result<u64> {
+/// Answers how many things were added and removed; removed is None from
+/// a Hub too old to match a setup (it only adds).
+pub async fn send_setup(
+    client: &Client,
+    server: &Server,
+    setup: &haven_core::hub::Setup,
+) -> Result<(u64, Option<u64>)> {
     let body = serde_json::to_value(setup).map_err(|_| Error::BadAnswer)?;
     let answer = client.call(&format!("{}/api/setup", server.address), &headers(server), Some(body)).await?;
-    Ok(answer.get("added").and_then(Value::as_u64).unwrap_or(0))
+    Ok((
+        answer.get("added").and_then(Value::as_u64).unwrap_or(0),
+        answer.get("removed").and_then(Value::as_u64),
+    ))
 }
 
 /// The Hub's whole setup.

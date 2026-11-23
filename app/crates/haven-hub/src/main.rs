@@ -13,6 +13,7 @@ mod api;
 mod background;
 mod hub;
 mod page;
+mod settings;
 
 use std::{path::PathBuf, sync::Arc};
 

@@ -61,10 +61,23 @@ impl Library {
     /// Hands the Hub this device's whole setup.
     pub(super) fn hub_send(&self, quiet: bool) {
         let Some(hub) = self.hub() else { return };
-        let setup = match Setup::read(&self.store, INCLUDE) {
+        let mut setup = match Setup::read(&self.store, INCLUDE) {
             Ok(setup) => setup,
             Err(err) => return self.hub_status(&format!("Could not read this device's setup: {err}"), false),
         };
+        if quiet {
+            // In the background only what was watched goes: servers,
+            // add-ons, lists and keys go when "Send everything" is pressed,
+            // so a device never puts back what was removed on the Hub.
+            setup.servers.clear();
+            setup.sources.clear();
+            setup.tv_sources.clear();
+            setup.keys = None;
+            setup.off = None;
+        } else {
+            // "Send everything": the Hub is made to match this device.
+            setup.replace = true;
+        }
         if !quiet {
             self.hub_status("Sending to the Hub…", true);
         }
@@ -72,14 +85,7 @@ impl Library {
         self.tasks.spawn(async move {
             let sent = client.send_setup(&hub, &setup).await;
             on_ui(move |library| match sent {
-                Ok(added) if !quiet => library.hub_status(
-                    &match added {
-                        0 => "The Hub already had everything.".to_owned(),
-                        1 => "Sent. The Hub had 1 new thing.".to_owned(),
-                        n => format!("Sent. The Hub had {n} new things."),
-                    },
-                    false,
-                ),
+                Ok((added, removed)) if !quiet => library.hub_status(&sent_words(added, removed), false),
                 Ok(_) => {}
                 Err(err) if !quiet => library.hub_status(&format!("Could not send to the Hub: {err}."), false),
                 Err(err) => eprintln!("haven: could not send to the Hub: {err}"),
@@ -165,5 +171,23 @@ impl Library {
             self.hub_send(true);
             self.hub_get(true);
         }
+    }
+}
+
+/// What "Send everything to the Hub" did, in words.
+fn sent_words(added: u64, removed: Option<u64>) -> String {
+    let Some(removed) = removed else {
+        // A Hub from before 0.2.4 only adds.
+        return match added {
+            0 => "The Hub already had everything. Update the Hub to have removals and switches sent too.".to_owned(),
+            n => format!("Sent: {n} new on the Hub. Update the Hub to have removals and switches sent too."),
+        };
+    };
+    let things = |n: u64| if n == 1 { "1 thing".to_owned() } else { format!("{n} things") };
+    match (added, removed) {
+        (0, 0) => "Sent. The Hub matches this device.".to_owned(),
+        (a, 0) => format!("Sent. The Hub matches this device ({} added).", things(a)),
+        (0, r) => format!("Sent. The Hub matches this device ({} removed).", things(r)),
+        (a, r) => format!("Sent. The Hub matches this device ({} added, {} removed).", things(a), things(r)),
     }
 }
