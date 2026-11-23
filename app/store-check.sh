@@ -1,5 +1,6 @@
 #!/bin/bash
-# Checks a store build (App Store, Google Play) holds no add-on code:
+# Checks the App Store build holds no add-on code (the Google Play build
+# has it, for the Stremio sign-in, and is not checked):
 #
 #   app/store-check.sh <program> [target]
 #

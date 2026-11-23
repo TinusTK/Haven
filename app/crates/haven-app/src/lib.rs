@@ -19,6 +19,7 @@ mod library;
 mod livetv;
 #[cfg(feature = "player")]
 mod player;
+mod remote;
 mod whats_new;
 
 slint::include_modules!();
@@ -82,13 +83,24 @@ pub fn run(paths: AppPaths, phone: bool) -> Result<(), Box<dyn Error>> {
 
     let ui = AppWindow::new()?;
     // A phone or tablet: updates come as a new APK or IPA.
+    // An Android TV (or, for checks on a computer, HAVEN_TV in a debug build).
+    let tv = TV.load(std::sync::atomic::Ordering::Relaxed)
+        || (cfg!(debug_assertions) && std::env::var_os("HAVEN_TV").is_some());
     ui.set_mobile(cfg!(any(target_os = "android", target_os = "ios")));
+    ui.set_tv(tv);
+    remote::connect(&ui);
     // A store build (App Store, Google Play): no add-ons.
-    ui.set_addons_hidden(library::NO_ADDONS);
+    // Android never shows add-on screens: what a Stremio account uses comes
+    // in through the Stremio sign-in in Settings › Accounts instead.
+    ui.set_addons_hidden(library::NO_ADDONS || cfg!(target_os = "android"));
     ui.set_own_network_only(haven_servers::ONLY_OWN_NETWORK);
     ui.set_compact(phone);
     ui.global::<Theme>().set_phone(phone);
-    ui.global::<Theme>().set_touch(cfg!(any(target_os = "android", target_os = "ios")));
+    ui.global::<Theme>().set_touch(cfg!(any(target_os = "android", target_os = "ios")) && !tv);
+    ui.global::<Remote>().set_on(tv);
+    if tv {
+        ui.invoke_remote_start();
+    }
     ui.set_ios(cfg!(target_os = "ios"));
     ui.set_version(env!("CARGO_PKG_VERSION").into());
     ui.set_data_path(paths.data_dir().display().to_string().into());
@@ -277,6 +289,9 @@ fn save(settings: &Settings, store: &Store) {
 }
 
 /// Android's handle on the running app, for asking the system things.
+/// Haven runs on an Android TV: no touch screen, a remote control.
+static TV: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 #[cfg(target_os = "android")]
 static ANDROID: std::sync::OnceLock<slint::android::AndroidApp> = std::sync::OnceLock::new();
 
@@ -288,9 +303,13 @@ fn android_main(app: slint::android::AndroidApp) {
     let _ = ANDROID.set(app.clone());
     #[cfg(feature = "player")]
     external::player_ready(&app);
+    // An Android TV gets the big-screen layout and the remote control,
+    // whatever its size in dp (a 1080p TV counts as 540 dp across).
+    let tv = app.config().ui_mode_type() == slint::android::android_activity::ndk::configuration::UiModeType::Television;
+    TV.store(tv, std::sync::atomic::Ordering::Relaxed);
     // Under 600 dp across its short side a screen is a phone's; a
     // tablet has room for the layout a computer gets.
-    let phone = app.config().smallest_screen_width_dp().is_none_or(|across| across < 600);
+    let phone = !tv && app.config().smallest_screen_width_dp().is_none_or(|across| across < 600);
     if let Err(err) = slint::android::init(app) {
         eprintln!("haven: could not start on Android: {err}");
         return;

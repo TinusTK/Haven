@@ -363,8 +363,10 @@ jobs:
             suffix=android-store-test
           fi
           export CARGO_APK_RELEASE_KEYSTORE="$keystore"
-          cargo apk build -p haven-app --lib --release --no-default-features --features store,player
-          ./store-check.sh target/aarch64-linux-android/release/libhaven_app.so aarch64-linux-android
+          # Google Play: media servers on the home network only, and the
+          # Stremio sign-in, which needs the add-on code (no add-on screens
+          # or wording on Android). The App Store build stays add-on free.
+          cargo apk build -p haven-app --lib --release --no-default-features --features store,player,addons
           version="$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json,sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"]=="haven-app"))')"
           mkdir -p target/android-store
           cp target/release/apk/haven_app.apk "target/android-store/Haven-$version-$suffix.apk"
@@ -450,7 +452,9 @@ jobs:
           echo "HAVEN_IOS_SIGN_IDENTITY=$identity" >> "$GITHUB_ENV"
           echo "HAVEN_IOS_PROFILE=$RUNNER_TEMP/appstore.mobileprovision" >> "$GITHUB_ENV"
       - name: Build the store IPA
-        run: ../ios/bundle.sh store
+        run: |
+          ../ios/bundle.sh store
+          ./store-check.sh target/aarch64-apple-ios/release/haven aarch64-apple-ios
       - uses: actions/upload-artifact@v4
         with:
           name: haven-ios-store

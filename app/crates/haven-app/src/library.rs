@@ -10,6 +10,8 @@ use std::{
 
 #[cfg(feature = "addons")]
 mod addons;
+#[cfg(feature = "addons")]
+mod stremio;
 mod backup;
 mod calendar;
 mod cast;
@@ -75,8 +77,10 @@ fn on_ui(work: impl FnOnce(&Rc<Library>) + Send + 'static) {
     });
 }
 
-#[cfg(all(feature = "store", feature = "addons"))]
-compile_error!("a store build has no add-ons: build it with --no-default-features --features store");
+// The App Store build has no add-ons. The Google Play build has them for
+// the Stremio sign-in (Android shows no add-on screens).
+#[cfg(all(feature = "store", feature = "addons", not(target_os = "android")))]
+compile_error!("the App Store build has no add-ons: build it with --no-default-features --features store");
 
 /// Picks the words for this build: `$store` where there are no add-ons,
 /// `$addons` where there are. Only the chosen words go into the program.
@@ -508,6 +512,8 @@ impl Library {
         library.load_builtin();
         #[cfg(feature = "addons")]
         library.load_installed();
+        #[cfg(feature = "addons")]
+        library.start_stremio(ui);
         #[cfg(not(feature = "addons"))]
         library.load_sources();
         library.refresh_builtin();

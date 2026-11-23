@@ -400,6 +400,51 @@ export global Theme {
 
 
 
+// The TV remote. On an Android TV (`on`) every button, card and row can
+// hold the focus and shows a ring when it does; the arrows move the focus
+// (Rust's `remote_move`, from where the focused thing reported itself:
+// its centre `x`/`y`, `reports` counting each report), OK presses.
+export global Remote {
+    in-out property <bool> on;
+    in-out property <length> x;
+    in-out property <length> y;
+    in-out property <int> reports;
+    // 0 left, 1 right, 2 up, 3 down.
+    callback move(int);
+}
+
+// Lets a tap-only control hold the remote's focus on a TV: put it last
+// inside the control, filling it. OK (or Enter) runs `activate`. Off
+// everywhere but a TV, so phones and computers are not changed.
+component RemoteFocus inherits FocusScope {
+    in property <length> radius;
+    callback activate();
+    width: 100%;
+    height: 100%;
+    enabled: Remote.on;
+    focus-on-click: false;
+    focus-on-tab-navigation: Remote.on;
+    focus-gained => {
+        Remote.x = self.absolute-position.x + self.width / 2;
+        Remote.y = self.absolute-position.y + self.height / 2;
+        Remote.reports += 1;
+    }
+    key-pressed(event) => {
+        if (event.text == Key.Return || event.text == " ") {
+            root.activate();
+            return accept;
+        }
+        reject
+    }
+    if root.has-focus: Rectangle {
+        border-radius: root.radius;
+        border-width: 3px;
+        // The text colour: seen on gold buttons and dark ones alike.
+        border-color: Theme.text;
+        background: transparent;
+    }
+}
+
 // A line icon drawn on a 24-unit square, by name.
 component Icon inherits Rectangle {
     in property <string> name;
@@ -513,6 +558,7 @@ component NavButton inherits Rectangle {
             horizontal-alignment: center;
         }
     }
+    RemoteFocus { radius: root.border-radius; activate => { root.clicked(); } }
 }
 
 // A round button with an icon (and a name for screen readers).
@@ -539,6 +585,7 @@ component IconButton inherits Rectangle {
         size: root.size * 0.5;
         tint: root.active || (touch.has-hover && !Theme.touch) ? (Theme.dark ? #171a22 : #ffffff) : Theme.accent;
     }
+    RemoteFocus { radius: root.border-radius; activate => { root.clicked(); } }
 }
 
 // A segmented switch of two to four choices, like Month / Week.
@@ -564,6 +611,13 @@ component Segments inherits Rectangle {
         seg-touch := TouchArea {
             mouse-cursor: pointer;
             clicked => {
+                root.current = index;
+                root.chosen(index);
+            }
+        }
+        RemoteFocus {
+            radius: parent.border-radius;
+            activate => {
                 root.current = index;
                 root.chosen(index);
             }
@@ -683,6 +737,7 @@ component DownloadItem inherits Rectangle {
             }
         }
     }
+    RemoteFocus { radius: root.border-radius; activate => { if (root.item.done) { root.play(); } } }
 }
 
 
@@ -712,6 +767,7 @@ component PrimaryButton inherits Rectangle {
         horizontal-alignment: center;
         vertical-alignment: center;
     }
+    RemoteFocus { radius: root.border-radius; activate => { root.clicked(); } }
 }
 
 // What kind of screen Haven runs on, for parts deep inside components.
@@ -878,6 +934,11 @@ component PosterCard inherits Rectangle {
     accessible-action-default => { root.clicked(); }
 
     focus := FocusScope {
+        focus-gained => {
+            Remote.x = self.absolute-position.x + self.width / 2;
+            Remote.y = self.absolute-position.y + self.height / 2;
+            Remote.reports += 1;
+        }
         key-pressed(event) => {
             if (event.text == Key.Return || event.text == " ") {
                 root.clicked();
@@ -904,7 +965,8 @@ component PosterCard inherits Rectangle {
         border-radius: Theme.phone ? 10px : 8px;
         clip: true;
         background: Theme.surface;
-        border-width: root.lit ? 2px : 1px;
+        // Thicker on a TV, to be seen from the sofa.
+        border-width: root.lit ? (Remote.on && focus.has-focus ? 4px : 2px) : 1px;
         border-color: root.lit ? Theme.accent : Theme.border;
 
         if root.poster.has-image: Image {
@@ -1130,6 +1192,7 @@ component Chip inherits Rectangle {
         horizontal-alignment: center;
         vertical-alignment: center;
     }
+    RemoteFocus { radius: root.border-radius; activate => { root.clicked(); } }
 }
 
 component EpisodeItem inherits Rectangle {
@@ -1201,6 +1264,7 @@ component EpisodeItem inherits Rectangle {
             }
         }
     }
+    RemoteFocus { radius: root.border-radius; activate => { root.clicked(); } }
 }
 
 // A place to watch, as a card in the title page's panel.
@@ -1225,6 +1289,11 @@ component SourceCard inherits Rectangle {
     }
 
     focus := FocusScope {
+        focus-gained => {
+            Remote.x = self.absolute-position.x + self.width / 2;
+            Remote.y = self.absolute-position.y + self.height / 2;
+            Remote.reports += 1;
+        }
         enabled: root.stream.playable;
         key-pressed(event) => {
             if (event.text == Key.Return || event.text == " ") {
@@ -1453,6 +1522,7 @@ component RoundButton inherits Rectangle {
         font-weight: 700;
         horizontal-alignment: center;
     }
+    RemoteFocus { radius: root.border-radius; activate => { root.clicked(); } }
 }
 
 // A bar to drag: 0 at the left, 1 at the right.
@@ -1622,6 +1692,7 @@ component TrackItem inherits Rectangle {
         vertical-alignment: center;
         overflow: elide;
     }
+    RemoteFocus { radius: root.border-radius; activate => { root.clicked(); } }
 }
 
 // A value with a button either side to step it down or up.
@@ -2397,6 +2468,7 @@ component SideItem inherits Rectangle {
             }
         }
     }
+    RemoteFocus { radius: root.border-radius; activate => { root.clicked(); } }
 }
 
 component ChannelItem inherits Rectangle {
@@ -2464,6 +2536,7 @@ component ChannelItem inherits Rectangle {
             }
         }
     }
+    RemoteFocus { radius: root.border-radius; activate => { root.clicked(); } }
 }
 
 // Live TV and Radio share this: the categories down the left (Favourites
@@ -2748,6 +2821,17 @@ export component AppWindow inherits Window {
     // While a sign-in waits for approval: the code and the page.
     in property <string> tracking-code;
     in property <string> tracking-link;
+    // Settings › Accounts › Stremio (Android): shown, the signed-in
+    // account's email (empty when signed out), busy, a line of news, and
+    // what is typed into the sign-in fields.
+    in property <bool> stremio-shown;
+    in property <string> stremio-email;
+    in property <bool> stremio-busy;
+    in property <string> stremio-status;
+    in-out property <string> stremio-entered-email;
+    in-out property <string> stremio-entered-password;
+    callback stremio-sign-in(string, string);
+    callback stremio-sign-out();
 
     in property <[ServerRow]> servers;
     // One "New in" and one A to Z shelf per library of each media server.
@@ -2869,6 +2953,10 @@ export component AppWindow inherits Window {
         if (self.page == self.library-page && self.library-tab == 0) {
             self.local-open();
         }
+        // On a TV the remote needs something to start from on every page.
+        if (Remote.on) {
+            remote-keys.focus();
+        }
     }
     // Live TV shows television (0) or radio (1).
     in-out property <int> live-band;
@@ -2922,7 +3010,16 @@ export component AppWindow inherits Window {
     // where the pages are laid out for one column and the side list
     // gives way to tabs. Both are set when Haven starts.
     in property <bool> mobile;
-    changed mobile => { Device.touch = root.mobile; }
+    changed mobile => { Device.touch = root.mobile && !root.tv; }
+    // An Android TV: the big-screen layout, worked with the remote.
+    in property <bool> tv;
+    changed tv => { Device.touch = root.mobile && !root.tv; }
+    // On a TV the remote needs something to start from on every page.
+    changed detail-open => { if (Remote.on) { remote-keys.focus(); } }
+    // At start on a TV: the arrows have somewhere to begin.
+    public function remote-start() {
+        remote-keys.focus();
+    }
     // An iPhone or iPad.
     in property <bool> ios;
     in property <bool> compact;
@@ -3108,13 +3205,47 @@ export component AppWindow inherits Window {
     default-font-family: "Figtree";
 
     init => {
-        Device.touch = root.mobile;
+        Device.touch = root.mobile && !root.tv;
         Palette.color-scheme = root.dark ? ColorScheme.dark : ColorScheme.light;
     }
     changed dark => {
         Palette.color-scheme = root.dark ? ColorScheme.dark : ColorScheme.light;
     }
 
+    // On a TV: the remote's arrows that nothing inside used move the
+    // focus (Remote.move); everywhere else this passes everything on.
+    remote-keys := FocusScope {
+        enabled: Remote.on;
+        focus-on-click: false;
+        focus-on-tab-navigation: false;
+        // Holds the focus when nothing inside does (at start, after a page
+        // change), so the arrows still arrive; it counts as the top left.
+        focus-gained => {
+            Remote.x = 0px;
+            Remote.y = 0px;
+            Remote.reports += 1;
+        }
+        key-pressed(event) => {
+            if (!Remote.on) { return reject; }
+            if (event.text == Key.LeftArrow) { Remote.move(0); return accept; }
+            if (event.text == Key.RightArrow) { Remote.move(1); return accept; }
+            if (event.text == Key.UpArrow) { Remote.move(2); return accept; }
+            if (event.text == Key.DownArrow) { Remote.move(3); return accept; }
+            // Back: off the title page, then to Home; on Home, Android's own
+            // Back (leave Haven).
+            if (event.text == Key.Back || event.text == Key.Escape) {
+                if (root.detail-open) {
+                    root.close-detail();
+                    return accept;
+                }
+                if (root.page != root.home-page) {
+                    root.page = root.home-page;
+                    root.page-selected(root.home-page);
+                    return accept;
+                }
+            }
+            reject
+        }
     VerticalLayout {
         // Clear of the phone's status bar (nothing on a computer).
         padding-top: root.player-open ? 0px : root.safe-area-insets.top;
@@ -3242,6 +3373,11 @@ export component AppWindow inherits Window {
                                     vertical-alignment: center;
                                 }
                             }
+                            RemoteFocus {
+                                activate => {
+                                    root.film-watched(!root.detail.watched);
+                                }
+                            }
                         }
                     }
                     if root.episode-open && root.episode-label != "": Text {
@@ -3347,6 +3483,13 @@ export component AppWindow inherits Window {
                                                 font-weight: 800;
                                                 horizontal-alignment: center;
                                                 vertical-alignment: center;
+                                            }
+                                            RemoteFocus {
+                                                activate => {
+                                                    if (root.offers-link != "") {
+                                                    root.open-link(root.offers-link);
+                                                    }
+                                                }
                                             }
                                         }
                                         Text {
@@ -3787,6 +3930,11 @@ export component AppWindow inherits Window {
                                     }
                                 }
                             }
+                            RemoteFocus {
+                                activate => {
+                                    root.local-play(index);
+                                }
+                            }
                         }
                     }
                 }
@@ -4029,6 +4177,11 @@ export component AppWindow inherits Window {
                                 y: parent.height - self.height - 4px;
                                 size: 16px;
                             }
+                            RemoteFocus {
+                                activate => {
+                                    root.calendar-pick = index;
+                                }
+                            }
                         }
                     }
                     if root.calendar-note != "": Text {
@@ -4109,6 +4262,11 @@ export component AppWindow inherits Window {
                                     if entry.watched: WatchedTick {
                                         y: (parent.height - self.height) / 2;
                                         size: 24px;
+                                    }
+                                }
+                                RemoteFocus {
+                                    activate => {
+                                        root.calendar-open(entry);
                                     }
                                 }
                             }
@@ -4220,6 +4378,11 @@ export component AppWindow inherits Window {
                                     vertical-alignment: center;
                                     overflow: elide;
                                 }
+                                RemoteFocus {
+                                    activate => {
+                                        root.calendar-open(entry);
+                                    }
+                                }
                             }
                             if day.more > 0: Text {
                                 x: 8px;
@@ -4227,6 +4390,12 @@ export component AppWindow inherits Window {
                                 text: "+" + day.more + " more";
                                 color: Theme.text-dim;
                                 font-size: 11px;
+                            }
+                            RemoteFocus {
+                                activate => {
+                                    root.calendar-day-only = !desk-day.picked;
+                                    root.calendar-pick = index;
+                                }
                             }
                         }
                     }
@@ -4328,6 +4497,11 @@ export component AppWindow inherits Window {
                                                 vertical-alignment: center;
                                             }
                                         }
+                                        RemoteFocus {
+                                            activate => {
+                                                root.calendar-open(entry);
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -4395,6 +4569,11 @@ export component AppWindow inherits Window {
                                                     font-size: 13px;
                                                     font-weight: 600;
                                                     vertical-alignment: center;
+                                                }
+                                            }
+                                            RemoteFocus {
+                                                activate => {
+                                                    root.calendar-open(row.entry);
                                                 }
                                             }
                                         }
@@ -4655,6 +4834,12 @@ export component AppWindow inherits Window {
                                             font-size: 14px;
                                             font-weight: 700;
                                         }
+                                        RemoteFocus {
+                                            radius: 21px;
+                                            activate => {
+                                                root.open-title({ id: hero-card.slide.id, kind: hero-card.slide.kind, title: hero-card.slide.title });
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -4726,6 +4911,12 @@ export component AppWindow inherits Window {
                                     name: "forward";
                                     size: 18px;
                                     tint: Theme.text-dim;
+                                }
+                                RemoteFocus {
+                                    activate => {
+                                        root.page = root.calendar-page;
+                                        root.page-selected(root.calendar-page);
+                                    }
                                 }
                             }
                         }
@@ -4805,6 +4996,11 @@ export component AppWindow inherits Window {
                                         font-size: 13px;
                                         overflow: elide;
                                     }
+                                    RemoteFocus {
+                                        activate => {
+                                            root.open-title({ id: card.id, kind: card.kind, title: card.title, video: card.video });
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -4840,6 +5036,13 @@ export component AppWindow inherits Window {
                                     name: "forward";
                                     size: 18px;
                                     tint: Theme.text-dim;
+                                }
+                                RemoteFocus {
+                                    activate => {
+                                        root.library-tab = 3;
+                                        root.page = root.library-page;
+                                        root.page-selected(root.library-page);
+                                    }
                                 }
                             }
                         }
@@ -4944,6 +5147,11 @@ export component AppWindow inherits Window {
                                         font-size: 13px;
                                         overflow: elide;
                                     }
+                                    RemoteFocus {
+                                        activate => {
+                                            root.open-title({ id: card.id, kind: card.kind, title: card.title, video: card.video });
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -4978,6 +5186,13 @@ export component AppWindow inherits Window {
                                     name: "forward";
                                     size: 18px;
                                     tint: Theme.text-dim;
+                                }
+                                RemoteFocus {
+                                    activate => {
+                                        root.library-tab = 2;
+                                        root.page = root.library-page;
+                                        root.page-selected(root.library-page);
+                                    }
                                 }
                             }
                         }
@@ -5118,6 +5333,15 @@ export component AppWindow inherits Window {
                                 size: 16px;
                                 tint: Theme.text-dim;
                             }
+                            RemoteFocus {
+                                activate => {
+                                    search-box.paste();
+                                    if (search-box.text != "") {
+                                    root.explore-searching = true;
+                                    root.search(search-box.text);
+                                    }
+                                }
+                            }
                         }
                         if root.explore-searching || root.search-query != "": Rectangle {
                             x: parent.width - 36px;
@@ -5139,6 +5363,13 @@ export component AppWindow inherits Window {
                                 name: "close";
                                 size: 14px;
                                 tint: Theme.text-dim;
+                            }
+                            RemoteFocus {
+                                activate => {
+                                    root.search-query = "";
+                                    root.explore-searching = false;
+                                    root.search("");
+                                }
                             }
                         }
                     }
@@ -5400,6 +5631,13 @@ export component AppWindow inherits Window {
                                     tint: Theme.text-dim;
                                 }
                             }
+                            RemoteFocus {
+                                activate => {
+                                    root.settings-section = item.index;
+                                    root.settings-picking = false;
+                                    root.settings-scroll = 0px;
+                                }
+                            }
                         }
                     }
                 }
@@ -5596,6 +5834,46 @@ export component AppWindow inherits Window {
                         wrap: word-wrap;
                     }
                             }
+                            if root.stremio-shown: SettingsCard {
+                                title: "Stremio";
+                                if root.stremio-email == "": Field {
+                                    text <=> root.stremio-entered-email;
+                                    placeholder-text: "Email address";
+                                    input-type: InputType.text;
+                                    enabled: !root.stremio-busy;
+                                    accessible-label: "Stremio email address";
+                                }
+                                if root.stremio-email == "": Field {
+                                    text <=> root.stremio-entered-password;
+                                    placeholder-text: "Password";
+                                    input-type: InputType.password;
+                                    enabled: !root.stremio-busy;
+                                    accessible-label: "Stremio password";
+                                    accepted => { root.stremio-sign-in(root.stremio-entered-email, root.stremio-entered-password); }
+                                }
+                                if root.stremio-email == "": HorizontalLayout {
+                                    alignment: start;
+                                    PrimaryButton {
+                                        text: root.stremio-busy ? "Signing in…" : "Sign in";
+                                        enabled: !root.stremio-busy && root.stremio-entered-email != "" && root.stremio-entered-password != "";
+                                        clicked => { root.stremio-sign-in(root.stremio-entered-email, root.stremio-entered-password); }
+                                    }
+                                }
+                                if root.stremio-email != "": SettingsRow {
+                                    label: "Signed in";
+                                    detail: root.stremio-email;
+                                    Button {
+                                        text: "Sign out";
+                                        enabled: !root.stremio-busy;
+                                        clicked => { root.stremio-sign-out(); }
+                                    }
+                                }
+                                if root.stremio-status != "": Text {
+                                    text: root.stremio-status;
+                                    color: Theme.text-dim;
+                                    wrap: word-wrap;
+                                }
+                            }
                             HorizontalLayout {
                                 alignment: start;
                                 Chip {
@@ -5748,6 +6026,11 @@ export component AppWindow inherits Window {
                                                 horizontal-alignment: center;
                                                 vertical-alignment: center;
                                             }
+                                        }
+                                    }
+                                    RemoteFocus {
+                                        activate => {
+                                            root.sync-now();
                                         }
                                     }
                                 }
@@ -6396,6 +6679,11 @@ export component AppWindow inherits Window {
                                         font-weight: 700;
                                         font-size: 13px;
                                     }
+                                    RemoteFocus {
+                                        activate => {
+                                            root.report-issue();
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -6547,6 +6835,11 @@ export component AppWindow inherits Window {
                     font-size: 13px;
                     font-weight: 600;
                 }
+                RemoteFocus {
+                    activate => {
+                        root.install-update();
+                    }
+                }
             }
         }
     }
@@ -6677,6 +6970,7 @@ export component AppWindow inherits Window {
                 }
             }
         }
+    }
     }
 
     if root.player-open: PlayerView {
@@ -6817,6 +7111,27 @@ export component AppWindow inherits Window {
         accessible-role: none;
         // Nothing underneath can be touched while it shows.
         TouchArea { }
+        // The TV remote: OK or Back closes it, up and down scroll the notes.
+        init => { if (Remote.on) { wn-keys.focus(); } }
+        wn-keys := FocusScope {
+            enabled: Remote.on;
+            focus-on-click: false;
+            key-pressed(event) => {
+                if (event.text == Key.Return || event.text == Key.Back || event.text == Key.Escape) {
+                    root.whats-new-done(whats-new.hide);
+                    return accept;
+                }
+                if (event.text == Key.DownArrow) {
+                    notes.content-y = max(notes.visible-height - notes.content-height, notes.content-y - 80px);
+                    return accept;
+                }
+                if (event.text == Key.UpArrow) {
+                    notes.content-y = min(0px, notes.content-y + 80px);
+                    return accept;
+                }
+                reject
+            }
+        }
         VerticalLayout {
             padding-top: root.safe-area-insets.top + 20px;
             padding-bottom: root.safe-area-insets.bottom + 16px;

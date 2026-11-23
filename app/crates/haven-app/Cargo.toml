@@ -27,9 +27,11 @@ default = ["addons"]
 player = ["haven-player/mpv"]
 # Add-ons: the builds on GitHub have them.
 addons = ["dep:haven-addons", "haven-servers/shared-addons"]
-# A build for the App Store (TestFlight) or Google Play: no add-on code at
-# all and media servers only on the home network or Tailscale. Build it
-# with `--no-default-features --features store,player`.
+# A build for the App Store (TestFlight) or Google Play: media servers only
+# on the home network or Tailscale. The App Store build has no add-on code
+# at all: `--no-default-features --features store,player`. The Google Play
+# build adds `addons` for the Stremio sign-in (Android shows no add-on
+# screens): `--no-default-features --features store,player,addons`.
 store = ["haven-servers/own-network"]
 
 [dependencies]
@@ -120,6 +122,22 @@ max_sdk_version = 32
 
 [package.metadata.android.application.activity]
 config_changes = "orientation|screenSize|screenLayout|keyboardHidden|keyboard|uiMode"
+
+# Phones and tablets start Haven from the app list, Android TV from its
+# own launcher (LEANBACK_LAUNCHER).
+[[package.metadata.android.application.activity.intent_filter]]
+actions = ["android.intent.action.MAIN"]
+categories = ["android.intent.category.LAUNCHER", "android.intent.category.LEANBACK_LAUNCHER"]
+
+# Haven also runs on Android TV: it needs neither a touch screen nor the
+# TV's own interface library, so phones and TVs install the same APK.
+[[package.metadata.android.uses_feature]]
+name = "android.software.leanback"
+required = false
+
+[[package.metadata.android.uses_feature]]
+name = "android.hardware.touchscreen"
+required = false
 
 # iOS: opening a web address or another app (a video player) goes
 # through the system; there are no programs to start.

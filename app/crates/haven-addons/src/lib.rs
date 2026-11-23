@@ -8,6 +8,7 @@
 
 mod client;
 mod manifest;
+pub mod stremio;
 mod url;
 
 pub use client::Client;
