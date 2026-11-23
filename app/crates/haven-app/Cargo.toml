@@ -27,11 +27,11 @@ default = ["addons"]
 player = ["haven-player/mpv"]
 # Add-ons: the builds on GitHub have them.
 addons = ["dep:haven-addons", "haven-servers/shared-addons"]
-# A build for the App Store (TestFlight) or Google Play: media servers only
-# on the home network or Tailscale. The App Store build has no add-on code
-# at all: `--no-default-features --features store,player`. The Google Play
-# build adds `addons` for the Stremio sign-in (Android shows no add-on
-# screens): `--no-default-features --features store,player,addons`.
+# The App Store (TestFlight) build: media servers only on the home network
+# or Tailscale, and no add-on code at all:
+# `--no-default-features --features store,player`. (The Google Play build
+# is `--no-default-features --features player,addons`: no limit on server
+# addresses, and the Stremio sign-in; Android shows no add-on screens.)
 store = ["haven-servers/own-network"]
 
 [dependencies]

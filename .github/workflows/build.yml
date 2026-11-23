@@ -363,10 +363,10 @@ jobs:
             suffix=android-store-test
           fi
           export CARGO_APK_RELEASE_KEYSTORE="$keystore"
-          # Google Play: media servers on the home network only, and the
-          # Stremio sign-in, which needs the add-on code (no add-on screens
-          # or wording on Android). The App Store build stays add-on free.
-          cargo apk build -p haven-app --lib --release --no-default-features --features store,player,addons
+          # Google Play: like the GitHub APK (media servers at any address,
+          # the Stremio sign-in), but built separately and signed with the
+          # Play upload key. Android shows no add-on screens or wording.
+          cargo apk build -p haven-app --lib --release --no-default-features --features player,addons
           version="$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json,sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"]=="haven-app"))')"
           mkdir -p target/android-store
           cp target/release/apk/haven_app.apk "target/android-store/Haven-$version-$suffix.apk"

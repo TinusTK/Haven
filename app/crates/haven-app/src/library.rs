@@ -231,7 +231,7 @@ const NO_DETAILS: &str =
 /// A phone or tablet build (updates come as a new APK or IPA).
 pub(crate) const MOBILE: bool = cfg!(any(target_os = "android", target_os = "ios"));
 
-/// A build without add-ons (the App Store and Google Play builds): no
+/// A build without add-ons (the App Store build): no
 /// add-on code, no Add-ons page, never a word about add-ons. Every other
 /// build, the phone ones on GitHub too, has add-ons.
 pub(crate) const NO_ADDONS: bool = cfg!(not(feature = "addons"));

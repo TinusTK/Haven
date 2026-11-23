@@ -1,41 +1,16 @@
 {
-  "version": "0.2.3",
+  "version": "0.2.4",
   "sections": [
     {
-      "title": "Haven's own player on phones",
+      "title": "Android TV",
       "lines": [
-        "iPhone, iPad and Android now play inside Haven, with the same player as the computers.",
-        "Audio and subtitle choices, speed, resume where you left off and the next episode, all in Haven."
+        "Haven now runs on Android TV."
       ]
     },
     {
-      "title": "A new look",
+      "title": "Bug fixes",
       "lines": [
-        "Three posters across on phones, each with its rating.",
-        "Home's banner shows the title's logo with IMDb, TMDB and Rotten Tomatoes scores."
-      ]
-    },
-    {
-      "title": "Library › Local",
-      "lines": [
-        "A new tab for the videos already on your device. Tap one to play it."
-      ]
-    },
-    {
-      "title": "Backups",
-      "lines": [
-        "Your servers, accounts, lists and settings are backed up while Haven is open.",
-        "Restore it any time in Settings › Sync options."
-      ]
-    },
-    {
-      "title": "Fixes",
-      "lines": [
-        "Watchlist posters show again for titles brought in from Trakt or Simkl.",
-        "Smoother sideways scrolling: posters no longer light up as you swipe past them.",
-        "Android's Back button closes the player, not Haven.",
-        "On phones, a tap outside a text field closes the keyboard.",
-        "Home no longer leaves gaps where empty shelves were."
+        "Bug fixes."
       ]
     }
   ]
