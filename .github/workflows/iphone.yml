@@ -1,0 +1,63 @@
+name: iPhone (Swift)
+
+# The Swift iPhone app in iphone/. Runs only when it (or the libmpv
+# script it uses) changes, or by hand; the Rust builds are in build.yml.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "iphone/**"
+      - "ios/fetch-libmpv.sh"
+      - ".github/workflows/iphone.yml"
+  pull_request:
+    paths:
+      - "iphone/**"
+      - "ios/fetch-libmpv.sh"
+      - ".github/workflows/iphone.yml"
+  workflow_dispatch:
+
+# A newer push waits for the running one instead of cutting it short.
+concurrency:
+  group: iphone-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  # No TMDB key is built in: everyone adds their own in Settings › Keys.
+  HAVEN_TRAKT_CLIENT_ID: ${{ secrets.TRAKT_CLIENT_ID }}
+  HAVEN_TRAKT_CLIENT_SECRET: ${{ secrets.TRAKT_CLIENT_SECRET }}
+  HAVEN_SIMKL_CLIENT_ID: ${{ secrets.SIMKL_CLIENT_ID }}
+  HAVEN_OMDB_API_KEY: ${{ secrets.OMDB_API_KEY }}
+
+jobs:
+  iphone:
+    name: Build and test (GitHub and App Store builds)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      # The newest Xcode on the machine: the App Store wants the newest
+      # iOS SDK (iOS 27 from April 2027).
+      - name: Use the newest Xcode
+        run: |
+          newest="$(ls -d /Applications/Xcode_*.app | grep -v -i beta | sort -V | tail -1)"
+          sudo xcode-select -s "$newest/Contents/Developer"
+          xcodebuild -version
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Fetch libmpv for iOS
+        run: ios/fetch-libmpv.sh
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - name: Pick a simulator
+        run: |
+          name="$(xcrun simctl list devices available | grep -E '^\s+iPhone' | tail -1 | sed -E 's/^ +//; s/ \(.*//')"
+          echo "Simulator: $name"
+          echo "HAVEN_SIMULATOR=$name" >> "$GITHUB_ENV"
+      - name: Tests (GitHub build)
+        run: iphone/scripts/build.sh github test
+      - name: Tests (App Store build)
+        run: iphone/scripts/build.sh store test
+      - name: Device build (GitHub, unsigned)
+        run: iphone/scripts/build.sh github device
+      # Includes the store check: no add-on code or wording.
+      - name: Device build (App Store, unsigned)
+        run: iphone/scripts/build.sh store device

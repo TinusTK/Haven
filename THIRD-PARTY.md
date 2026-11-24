@@ -55,6 +55,9 @@ components that keep their own licences:
   in the system's font. Neither font declares a Reserved Font Name. The
   licence texts are `OFL-Figtree.txt` and `OFL-PixelifySans.txt`.
 - **libmpv2** (Rust bindings to libmpv), LGPL-2.1.
+- **GRDB.swift** (SQLite toolkit used by the Swift iPhone app in
+  `iphone/`), copyright Gwendal Roué, MIT licence,
+  https://github.com/groue/GRDB.swift.
 - **SQLite** (public domain), and the Rust crates listed in
   `app/Cargo.lock`, each under its own permissive licence (MIT, Apache-2.0,
   BSD, ISC, Zlib, MPL-2.0 and similar).

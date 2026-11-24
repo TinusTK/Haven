@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key><string>Haven</string>
+    <key>CFBundleDisplayName</key><string>Haven</string>
+    <key>CFBundleIdentifier</key><string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+    <key>CFBundleExecutable</key><string>$(EXECUTABLE_NAME)</string>
+    <key>CFBundlePackageType</key><string>APPL</string>
+    <key>CFBundleShortVersionString</key><string>$(MARKETING_VERSION)</string>
+    <key>CFBundleVersion</key><string>$(CURRENT_PROJECT_VERSION)</string>
+    <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+    <key>CFBundleDevelopmentRegion</key><string>en</string>
+    <key>LSRequiresIPhoneOS</key><true/>
+    <key>UIRequiredDeviceCapabilities</key><array><string>arm64</string></array>
+    <key>UILaunchScreen</key>
+    <dict>
+        <key>UIColorName</key><string>LaunchBackground</string>
+    </dict>
+    <key>UIApplicationSceneManifest</key>
+    <dict>
+        <key>UIApplicationSupportsMultipleScenes</key><false/>
+    </dict>
+    <key>UISupportedInterfaceOrientations</key>
+    <array>
+        <string>UIInterfaceOrientationPortrait</string>
+        <string>UIInterfaceOrientationLandscapeLeft</string>
+        <string>UIInterfaceOrientationLandscapeRight</string>
+    </array>
+    <key>UISupportedInterfaceOrientations~ipad</key>
+    <array>
+        <string>UIInterfaceOrientationPortrait</string>
+        <string>UIInterfaceOrientationPortraitUpsideDown</string>
+        <string>UIInterfaceOrientationLandscapeLeft</string>
+        <string>UIInterfaceOrientationLandscapeRight</string>
+    </array>
+    <!-- Lets animations run at the screen's full rate on iPhones. -->
+    <key>CADisableMinimumFrameDurationOnPhone</key><true/>
+    <!-- Haven's folders (Videos, Downloads, the backup) show in the Files
+         app under On My iPhone › Haven. -->
+    <key>UIFileSharingEnabled</key><true/>
+    <key>LSSupportsOpeningDocumentsInPlace</key><true/>
+    <!-- The App Store build's backup folder in iCloud Drive, named Haven. -->
+    <key>NSUbiquitousContainers</key>
+    <dict>
+        <key>iCloud.net.haven.app</key>
+        <dict>
+            <key>NSUbiquitousContainerIsDocumentScopePublic</key><true/>
+            <key>NSUbiquitousContainerName</key><string>Haven</string>
+            <key>NSUbiquitousContainerSupportedFolderLevels</key><string>Any</string>
+        </dict>
+    </dict>
+    <!-- Media servers at home and Chromecasts are on the Local Area Network. -->
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>Haven connects to your media servers and Chromecasts on your Local Area Network.</string>
+    <key>NSBonjourServices</key>
+    <array>
+        <string>_googlecast._tcp</string>
+    </array>
+    <!-- The player apps Haven can hand a video to. -->
+    <key>LSApplicationQueriesSchemes</key>
+    <array>
+        <string>vlc-x-callback</string>
+        <string>infuse</string>
+        <string>outplayer</string>
+    </array>
+    <key>UIAppFonts</key>
+    <array>
+        <string>Figtree-Regular.ttf</string>
+        <string>Figtree-Medium.ttf</string>
+        <string>Figtree-SemiBold.ttf</string>
+        <string>Figtree-Bold.ttf</string>
+        <string>Figtree-ExtraBold.ttf</string>
+        <string>PixelifySans-Medium.ttf</string>
+        <string>PixelifySans-Bold.ttf</string>
+    </array>
+    <key>ITSAppUsesNonExemptEncryption</key><false/>
+    <key>NSHumanReadableCopyright</key><string>Copyright © 2026 TinusTK. Licensed under the GNU GPL version 3.</string>
+</dict>
+</plist>
