@@ -1,25 +1,18 @@
-name: iPhone (Swift)
+name: iPhone and Apple TV (Swift)
 
-# The Swift iPhone app in iphone/. Runs only when it (or the libmpv
-# script it uses) changes, or by hand; the Rust builds are in build.yml.
+# The Swift apps in iphone/: the iPhone app (the "iphone" job) and the
+# Apple TV app (the "tv" job). Each runs only when its own files change
+# (see the "changes" job); "[ci all]" in a commit message, or Run
+# workflow, runs both. The Rust builds are in build.yml.
 on:
   push:
     branches: [main]
-    paths:
-      - "iphone/**"
-      - "ios/fetch-libmpv.sh"
-      - ".github/workflows/iphone.yml"
   pull_request:
-    paths:
-      - "iphone/**"
-      - "ios/fetch-libmpv.sh"
-      - ".github/workflows/iphone.yml"
   workflow_dispatch:
 
-# A newer push waits for the running one instead of cutting it short.
-concurrency:
-  group: iphone-${{ github.ref }}
-  cancel-in-progress: false
+# Each job has its own concurrency group: a newer push waits for the
+# running build instead of cutting it short, and a push that skips a
+# build doesn't touch it.
 
 env:
   # No TMDB key is built in: everyone adds their own in Settings › Keys.
@@ -29,8 +22,43 @@ env:
   HAVEN_OMDB_API_KEY: ${{ secrets.OMDB_API_KEY }}
 
 jobs:
+  # Which apps this run needs. iPhone: iphone/ except the Apple TV files.
+  # Apple TV: iphone/HavenTV/ and its build script. Both: the project
+  # file, the libmpv script, this file.
+  changes:
+    name: Which apps
+    runs-on: ubuntu-latest
+    outputs:
+      iphone: ${{ steps.pick.outputs.iphone }}
+      tv: ${{ steps.pick.outputs.tv }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github
+      - id: pick
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          files="$(.github/scripts/changes.sh)"
+          shared='^(iphone/project\.yml$|ios/fetch-libmpv\.sh$|\.github/workflows/iphone\.yml$|\.github/scripts/changes\.sh$)'
+          tv='^(iphone/HavenTV/|iphone/scripts/build-tv\.sh$)'
+          if [ "$files" = ALL ] || grep -qE "$shared" <<<"$files"; then
+            iphone=true; apple_tv=true
+          else
+            grep -E '^iphone/' <<<"$files" | grep -qvE "$tv" && iphone=true || iphone=false
+            grep -qE "$tv" <<<"$files" && apple_tv=true || apple_tv=false
+          fi
+          echo "iPhone: $iphone, Apple TV: $apple_tv"
+          echo "iphone=$iphone" >> "$GITHUB_OUTPUT"
+          echo "tv=$apple_tv" >> "$GITHUB_OUTPUT"
+
   iphone:
     name: Build and test (GitHub and App Store builds)
+    needs: changes
+    if: needs.changes.outputs.iphone == 'true'
+    concurrency:
+      group: iphone-${{ github.ref }}
+      cancel-in-progress: false
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -100,3 +128,30 @@ jobs:
           name: haven-swift-ios-store
           path: iphone/build/ipa/*.ipa
           if-no-files-found: error
+
+  # The Apple TV app: the App Store kind only, built for a device without
+  # signing, with the store check. Not uploaded anywhere yet.
+  tv:
+    name: Apple TV (App Store build)
+    needs: changes
+    if: needs.changes.outputs.tv == 'true'
+    concurrency:
+      group: tv-${{ github.ref }}
+      cancel-in-progress: false
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Use the newest Xcode
+        run: |
+          newest="$(ls -d /Applications/Xcode_*.app | grep -v -i beta | sort -V | tail -1)"
+          sudo xcode-select -s "$newest/Contents/Developer"
+          xcodebuild -version
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      # The project also holds the iPhone target, which wants libmpv there.
+      - name: Fetch libmpv for iOS
+        run: ios/fetch-libmpv.sh
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - name: Build (Apple TV, App Store kind)
+        run: iphone/scripts/build-tv.sh device
