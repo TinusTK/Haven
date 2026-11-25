@@ -57,7 +57,9 @@ def main():
         ipa = next((a for a in release["assets"] if a["name"].endswith("-ios-unsigned.ipa")), None)
         if not ipa:
             continue
-        version = release["tag_name"].lstrip("vV")
+        # A later build of the same version is tagged "v0.2.6-build2": it
+        # is still 0.2.6 (the app's own version), as the IPA says.
+        version = release["tag_name"].lstrip("vV").split("-")[0]
         versions.append({
             "version": version,
             "buildVersion": version,
