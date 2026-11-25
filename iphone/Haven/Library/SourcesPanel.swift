@@ -106,8 +106,9 @@ final class SourcesPanel {
             // The server the title was opened from holds it for certain; the
             // others are asked whether they have the same title.
             let own = origin.flatMap { $0.server.id == server.id && !renamed ? $0.item : nil }
-            let offline = library.serverStates[server.id] == .offline
-            if own == nil && (!canMatch || offline) { continue }
+            // Every server is asked, even one marked offline earlier: it may
+            // be back (user: refresh when the sources open).
+            if own == nil && !canMatch { continue }
             asked += 1
             let source = "\(server.name) (\(server.kind.label))"
             let ask = wanted
@@ -135,7 +136,10 @@ final class SourcesPanel {
                     found = .failure(Problem(HTTP.words(error)))
                 }
                 switch found {
-                case .success: loaded(token, source: source, serverItem: nil, .success([]))
+                case .success:
+                    // It answered: online (its shelves come back if it was not).
+                    library.serverAnswered(server.id)
+                    loaded(token, source: source, serverItem: nil, .success([]))
                 case let .failure(problem): loaded(token, source: source, serverItem: nil, .failure(problem))
                 }
             }

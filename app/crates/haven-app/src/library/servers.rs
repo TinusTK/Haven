@@ -22,10 +22,12 @@ const PLEX_WAIT: Duration = Duration::from_secs(5 * 60);
 const PLEX_ASK_EVERY: Duration = Duration::from_secs(2);
 /// How often the servers are asked whether they still answer.
 const CHECK_EVERY: Duration = Duration::from_secs(60);
+/// Server shelves are loaded afresh every this many checks (5 minutes).
+const RELOAD_EVERY_CHECKS: u32 = 5;
 /// A server that takes longer than this to say so counts as offline.
 const CHECK_WAIT: Duration = Duration::from_secs(8);
 const UNKNOWN: i32 = 0;
-const ONLINE: i32 = 1;
+pub(super) const ONLINE: i32 = 1;
 const OFFLINE: i32 = 2;
 
 fn stored(server: &Server) -> StoredServer {
@@ -69,12 +71,24 @@ impl Library {
         });
         ui.on_check_servers({
             let library = self.clone();
-            move || library.check_servers(true)
+            move || {
+                library.check_servers(true);
+                library.reload_server_shelves();
+            }
         });
+        // Every minute a quiet check (a server back online gets its
+        // shelves again); every few minutes the shelves are loaded afresh,
+        // so what was added on a server shows without Check again.
         let library = Rc::downgrade(self);
+        let ticks = std::cell::Cell::new(0u32);
         self.server_timer.start(slint::TimerMode::Repeated, CHECK_EVERY, move || {
             if let Some(library) = library.upgrade() {
-                library.check_servers(false);
+                ticks.set(ticks.get() + 1);
+                if ticks.get() % RELOAD_EVERY_CHECKS == 0 {
+                    library.reload_server_shelves();
+                } else {
+                    library.check_servers(false);
+                }
             }
         });
         self.load_servers();
@@ -104,7 +118,7 @@ impl Library {
 
     /// Notes whether a server answers. One that comes back online gets
     /// its shelves loaded again.
-    fn set_server_state(&self, id: i64, state: i32) {
+    pub(super) fn set_server_state(&self, id: i64, state: i32) {
         let before = self.server_states.borrow_mut().insert(id, state);
         if before == Some(state) {
             return;

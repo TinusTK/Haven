@@ -36,7 +36,12 @@ pub(super) struct Downloads {
     /// Bytes saved so far of each running download (newer than the database).
     live: RefCell<HashMap<i64, (i64, i64)>>,
     rows: Rc<VecModel<DownloadRow>>,
+    /// Each download's kept picture, once read (None: it has none).
+    pictures: RefCell<HashMap<i64, Option<slint::Image>>>,
 }
+
+/// The size a download's picture is kept and shown at (16:9).
+const PICTURE_SIZE: (u32, u32) = (356, 200);
 
 /// Haven's folder for downloads: `Movies/Haven` on a Mac, `Videos\Haven`
 /// on Windows, `~/Videos/Haven` on Linux; on a phone, inside Haven's own
@@ -155,6 +160,51 @@ fn size_words(bytes: i64) -> String {
 }
 
 impl Library {
+    /// Where downloads' pictures are kept: in Haven's data folder (not the
+    /// picture cache, which can be emptied), so they show offline.
+    fn download_pictures(&self) -> PathBuf {
+        let data = self.picture_cache.parent().and_then(Path::parent).unwrap_or(Path::new("."));
+        data.join("download-pictures")
+    }
+
+    /// Fetches a new download's picture (the episode's own, else the
+    /// title's wide one or poster) and keeps it with the download.
+    fn keep_download_picture(&self, id: i64, url: String) {
+        let http = self.http.clone();
+        let file = self.download_pictures().join(format!("{id}.img"));
+        self.tasks.spawn(async move {
+            let Ok(bytes) = haven_core::http::get_bytes(&http, &url, super::IMAGE_BYTES).await else { return };
+            let kept = tokio::task::spawn_blocking(move || {
+                // Kept only once it is known to be a picture.
+                super::read_picture(bytes.clone(), PICTURE_SIZE).ok()?;
+                std::fs::create_dir_all(file.parent()?).ok()?;
+                std::fs::write(&file, bytes).ok()
+            })
+            .await
+            .ok()
+            .flatten();
+            if kept.is_some() {
+                on_ui(move |library| {
+                    library.downloads.pictures.borrow_mut().remove(&id);
+                    library.show_downloads();
+                });
+            }
+        });
+    }
+
+    /// A download's kept picture, read once.
+    fn download_picture(&self, id: i64) -> Option<slint::Image> {
+        if let Some(known) = self.downloads.pictures.borrow().get(&id) {
+            return known.clone();
+        }
+        let image = std::fs::read(self.download_pictures().join(format!("{id}.img")))
+            .ok()
+            .and_then(|bytes| super::read_picture(bytes, PICTURE_SIZE).ok())
+            .map(slint::Image::from_rgba8);
+        self.downloads.pictures.borrow_mut().insert(id, image.clone());
+        image
+    }
+
     fn downloads_folder(&self) -> PathBuf {
         let data = self.picture_cache.parent().and_then(Path::parent).unwrap_or(Path::new("."));
         downloads_root(data)
@@ -249,8 +299,12 @@ impl Library {
         }
         let path = self.downloads_folder().join(relative_path(&d, extension_of(&d.url)));
         d.path = path.display().to_string();
+        let picture = self.listed_picture().or_else(|| request.poster.clone());
         match self.store.add_download(&d) {
-            Ok(_) => {
+            Ok(id) => {
+                if let Some(url) = picture {
+                    self.keep_download_picture(id, url);
+                }
                 if let Some(ui) = self.ui.upgrade() {
                     let place = if cfg!(target_os = "ios") { place_words(&path) } else { d.path.clone() };
                     ui.set_play_note(format!("Downloading to {place}. It is in your Library under Downloads.").into());
@@ -345,6 +399,8 @@ impl Library {
             }
         }
         let _ = self.store.remove_download(id);
+        let _ = std::fs::remove_file(self.download_pictures().join(format!("{id}.img")));
+        self.downloads.pictures.borrow_mut().remove(&id);
         self.show_downloads();
     }
 
@@ -405,6 +461,8 @@ impl Library {
                 done: d.state == "done",
                 running: d.state == "loading",
                 failed: d.state == "failed",
+                image: self.download_picture(d.id).unwrap_or_default(),
+                has_image: self.download_picture(d.id).is_some(),
             });
             last_section = section;
             if !film {

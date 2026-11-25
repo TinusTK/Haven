@@ -329,7 +329,9 @@ final class TitlePage {
     func download(_ row: StreamRow) {
         guard let library, let request = request(row) else { return }
         let video = meta?.videos.first { $0.id == request.videoID && $0.season != nil }
-        playNote = library.downloads.download(request, season: video?.season, episode: video?.episode) { copy in
+        let shown = meta?.videos.first { $0.id == request.videoID }
+        let picture = shown?.thumbnail ?? meta?.background ?? meta?.poster
+        playNote = library.downloads.download(request, season: video?.season, episode: video?.episode, picture: picture) { copy in
             library.play?(copy)
         }
     }

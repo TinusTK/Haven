@@ -74,6 +74,36 @@ struct ReleasesTests {
         #expect(cards[1].picture == "https://p/1.jpg")
     }
 
+    @Test func watchNowListsWhatCameOutUntilWatched() {
+        let day = { (d: Int) in Day(year: 2026, month: 11, day: d) }
+        let episode = { (d: Int, n: String) in Release(day: day(d), time: nil, label: "", video: "v" + n, number: n, name: "Episode " + n) }
+        let show = Releases.Title(kind: "series", id: "show")
+        let movie = Releases.Title(kind: "movie", id: "film")
+        let season = Releases.Title(kind: "series", id: "season")
+        let numbers = (1 ... 10).map { String(format: "S01E%02d", $0) }
+        let releases: [Releases.Title: [Release]] = [
+            show: [episode(2, "S01E01"), episode(12, "S01E02"), episode(19, "S01E03"), episode(26, "S01E04")],
+            movie: [Release(day: day(20), time: nil, label: "", video: "", number: "", name: "")],
+            season: numbers.map { episode(1, $0) },
+        ]
+        let added = [show: day(10), movie: day(1), season: day(20)]
+        // S01E02 of the show and 8 of the season's 10 watched.
+        let watched = { (title: Releases.Title, release: Release) in
+            (title == show && release.number == "S01E02") || (title == season && release.number <= "S01E08")
+        }
+        let out = Releases.outNow(releases, added: added, watched: watched, today: day(26))
+        #expect(out.map(\.title) == [movie, show, season])
+        #expect(out[1].first.number == "S01E03" && out[1].count == 1)
+        #expect(out[2].first.number == "S01E09" && out[2].last.number == "S01E10")
+        // Not started and saved after it came out: not on the row.
+        #expect(Releases.outNow([season: releases[season]!], added: added, watched: { _, _ in false }, today: day(26)).isEmpty)
+        #expect(Releases.outNow(releases, added: added, watched: { _, _ in true }, today: day(26)).isEmpty)
+        let cards = Releases.watchNow(releases, names: [show: "Show", movie: "Film", season: "Season"], pictures: [:],
+                                      added: added, watched: watched, today: day(26))
+        #expect(cards[2].badge == "S01E09–E10" && cards[2].episode == "2 new episodes" && cards[2].when(at: .now) == "Watch now")
+        #expect(Releases.runBadge("S01E09", "S02E01") == "S01E09–S02E01")
+    }
+
     @Test func releaseDayCountsDownByTheHour() {
         let zone = TimeZone(identifier: "Australia/Adelaide")!
         var calendar = Calendar(identifier: .gregorian)

@@ -150,10 +150,12 @@ impl Library {
                 .as_ref()
                 .filter(|(from, _)| from.id == server.id && !renamed)
                 .map(|(_, item)| item.clone());
-            let offline = self.server_states.borrow().get(&server.id) == Some(&2);
-            if own.is_none() && (!can_match || offline) {
+            // Every server is asked, even one marked offline earlier: it
+            // may be back (user: refresh when the sources open).
+            if own.is_none() && !can_match {
                 continue;
             }
+            let server_id = server.id;
             pending += 1;
             let (client, mut wanted) = (self.server_client.clone(), wanted.clone());
             let (addons, lookups) = (self.catalogues.clone(), lookups.clone());
@@ -188,7 +190,11 @@ impl Library {
                 .await
                 .map_err(|err: haven_servers::Error| err.to_string());
                 on_ui(move |library| match found {
-                    Ok(item) => library.streams_loaded(generation, &source, item, Ok(Vec::new())),
+                    Ok(item) => {
+                        // It answered: online (its shelves come back if it was not).
+                        library.set_server_state(server_id, super::servers::ONLINE);
+                        library.streams_loaded(generation, &source, item, Ok(Vec::new()))
+                    }
                     Err(err) => library.streams_loaded(generation, &source, None, Err(err)),
                 });
             });
@@ -506,6 +512,20 @@ impl Library {
     }
 
     /// The season and episode numbers of the episode listed, if it is one.
+    /// The picture of what is listed: the episode's own still, else the
+    /// title's wide picture or poster.
+    pub(super) fn listed_picture(&self) -> Option<String> {
+        let video_id = self.listed.borrow().as_ref()?.video_id.clone();
+        let open = self.open.borrow();
+        let meta = open.as_ref()?.meta.as_ref()?;
+        meta.videos
+            .iter()
+            .find(|video| video.id == video_id)
+            .and_then(|video| video.thumbnail.clone())
+            .or_else(|| meta.background.clone())
+            .or_else(|| meta.poster.clone())
+    }
+
     pub(super) fn listed_numbers(&self) -> (Option<u32>, Option<u32>) {
         let video_id = match self.listed.borrow().as_ref() {
             Some(listed) => listed.video_id.clone(),

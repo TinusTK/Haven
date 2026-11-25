@@ -151,6 +151,14 @@ private struct DownloadItem: View {
 
     var body: some View {
         HStack(spacing: 10) {
+            if let file = row.picture, let picture = UIImage(contentsOfFile: file.path) {
+                Image(uiImage: picture)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .frame(width: 80, height: 45)
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                    .accessibilityHidden(true)
+            }
             VStack(alignment: .leading, spacing: 5) {
                 Text(row.title).font(Palette.font(14, .semibold)).foregroundStyle(Palette.text).lineLimit(1)
                 Text(row.status)

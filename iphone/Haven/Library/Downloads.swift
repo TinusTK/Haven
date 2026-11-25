@@ -1,4 +1,5 @@
 import Foundation
+import UIKit
 import Observation
 
 /// Films and episodes saved to this iPhone, in Files › On My iPhone ›
@@ -76,7 +77,7 @@ final class Downloads {
 
     /// What pressing a row's download button does. Says what happened, in
     /// words for the title page; `play` plays a saved copy.
-    func download(_ request: PlayRequest, season: Int?, episode: Int?, play: (PlayRequest) -> Void) -> String {
+    func download(_ request: PlayRequest, season: Int?, episode: Int?, picture: String? = nil, play: (PlayRequest) -> Void) -> String {
         let existing = all()
         // This one is downloaded already: play the saved copy (or say how far it has come).
         if let saved = existing.first(where: { $0.url == request.address && $0.state != "failed" }) {
@@ -99,7 +100,8 @@ final class Downloads {
         }
         d.path = unusedPath(DownloadRules.fileName(d, extension: DownloadRules.extensionOf(d.url)), taken: existing).path
         do {
-            try store.addDownload(d)
+            let id = try store.addDownload(d)
+            if let address = picture ?? request.poster { keepPicture(id, address) }
         } catch {
             Log.note("could not add a download: \(error.localizedDescription)")
             return "Could not start the download."
@@ -107,6 +109,20 @@ final class Downloads {
         next()
         show()
         return "Downloading to \(DownloadRules.placeWords). It is in your Library under Downloads."
+    }
+
+    /// Fetches a new download's picture and keeps it with the download, so
+    /// Downloads shows it offline too.
+    private func keepPicture(_ id: Int64, _ address: String) {
+        guard let url = URL(string: address), url.scheme == "https" || url.scheme == "http" else { return }
+        Task {
+            guard let (data, _) = try? await URLSession.shared.data(from: url), data.count < 6 * 1024 * 1024,
+                  UIImage(data: data) != nil else { return }
+            let file = DownloadRules.pictureFile(id)
+            try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+            guard (try? data.write(to: file, options: .atomic)) != nil else { return }
+            show()
+        }
     }
 
     /// A file name not used by another download (two sources of one title).
@@ -171,6 +187,7 @@ final class Downloads {
             try? FileManager.default.removeItem(at: DownloadSession.resumeFile(path))
         }
         try? store.removeDownload(id: id)
+        try? FileManager.default.removeItem(at: DownloadRules.pictureFile(id))
         next()
         show()
     }
@@ -212,7 +229,10 @@ final class Downloads {
     /// Fills the Library's list.
     func show() {
         let downloads = all()
-        rows = DownloadRules.rows(downloads, live: live)
+        rows = DownloadRules.rows(downloads, live: live) { id in
+            let file = DownloadRules.pictureFile(id)
+            return FileManager.default.fileExists(atPath: file.path) ? file : nil
+        }
         count = downloads.count
         revision += 1
     }

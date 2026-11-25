@@ -35,6 +35,17 @@ struct TVHomePage: View {
                         model.open(Opening(id: slide.id, kind: slide.kind, title: slide.title))
                     }
                 }
+                if !library.watchNow.isEmpty {
+                    TVRowBlock(title: "Watch now") {
+                        ForEach(library.watchNow) { card in
+                            TVWideCard(title: card.title, line: card.episode, picture: card.picture, badge: card.badge,
+                                       corner: card.when, pause: library.homePause) {
+                                model.open(Opening(id: card.id, kind: card.kind, title: card.title,
+                                                   video: card.video.isEmpty ? nil : card.video))
+                            }
+                        }
+                    }
+                }
                 if !library.upcoming.isEmpty {
                     TVRowBlock(title: "Upcoming") {
                         ForEach(library.upcoming) { card in

@@ -14,6 +14,8 @@ struct DownloadRow: Equatable, Sendable, Identifiable {
     var done: Bool
     var running: Bool
     var failed: Bool
+    /// The episode's picture (a film's backdrop), kept with the download.
+    var picture: URL? = nil
 }
 
 /// Where downloads and videos go, and how they are named and listed. The
@@ -93,7 +95,20 @@ enum DownloadRules {
 
     /// The Downloads list: films, then series, each series under its name
     /// with its episodes in order (the order the database gives).
-    static func rows(_ all: [Download], live: [Int64: (size: Int64, received: Int64)]) -> [DownloadRow] {
+    /// Where downloads' pictures are kept (Haven's own data folder, not
+    /// the Downloads folder people see in Files), one file per download.
+    static var picturesFolder: URL {
+        let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? FileManager.default.temporaryDirectory
+        return support.appendingPathComponent("Haven/download-pictures", isDirectory: true)
+    }
+
+    static func pictureFile(_ id: Int64, in folder: URL = picturesFolder) -> URL {
+        folder.appendingPathComponent("\(id).img")
+    }
+
+    static func rows(_ all: [Download], live: [Int64: (size: Int64, received: Int64)],
+                     picture: (Int64) -> URL? = { _ in nil }) -> [DownloadRow] {
         var rows: [DownloadRow] = []
         var lastSection = ""
         var lastShow = ""
@@ -115,7 +130,7 @@ enum DownloadRules {
                                     group: !film && d.title != lastShow ? d.title : "",
                                     title: film || d.detail.isEmpty ? d.title : d.detail, status: status,
                                     progress: progress, done: d.state == "done", running: d.state == "loading",
-                                    failed: d.state == "failed"))
+                                    failed: d.state == "failed", picture: picture(d.id)))
             lastSection = section
             if !film { lastShow = d.title }
         }

@@ -594,12 +594,22 @@ impl Video {
         unsafe {
             let saved = GlState::save(gl);
             let result = (|| {
-                if self.target.as_ref().is_none_or(|t| (t.width, t.height) != (width, height)) {
+                let made = self.target.as_ref().is_none_or(|t| (t.width, t.height) != (width, height));
+                if made {
                     show(slint::Image::default());
                     if let Some(old) = self.target.take() {
                         old.delete(gl);
                     }
                     self.target = Some(Target::new(gl, width, height)?);
+                }
+                // Only when mpv has a new picture: the window also redraws
+                // for the pages (scrolling under the mini player, hovering),
+                // and drawing the video again each time made it lag.
+                let new_frame = render
+                    .update()
+                    .map_or(true, |flags| flags & libmpv2::render::mpv_render_update::Frame != 0);
+                if !made && !new_frame {
+                    return Ok(());
                 }
                 let target = self.target.as_ref().expect("target was just made");
                 // Not flipped: row 0 of the texture is the top of the picture,

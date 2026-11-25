@@ -135,6 +135,15 @@ impl Player {
                 let ui = player.ui.upgrade();
                 let size = ui.as_ref().map_or((1, 1), |ui| {
                     let size = ui.window().size();
+                    if ui.get_player_mini() {
+                        // The mini player's own size (as MiniPlayer in
+                        // app.slint): drawing the whole window's worth of
+                        // video into a small corner wasted the machine.
+                        let scale = ui.window().scale_factor();
+                        let logical = size.width as f32 / scale;
+                        let width = (logical * 0.3).clamp(240.0, 380.0) * scale;
+                        return (width.round() as u32, (width * 9.0 / 16.0).round() as u32);
+                    }
                     (size.width, size.height)
                 });
                 let mut show = |frame: Image| {

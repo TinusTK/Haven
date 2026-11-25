@@ -114,6 +114,63 @@ pub(super) fn when_label(day: NaiveDate, time: Option<NaiveTime>, now: chrono::N
     }
 }
 
+/// A title on Home's Watch now row: what of it has come out and is
+/// still to watch.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) struct OutNow<'a> {
+    pub title: &'a Title,
+    /// The first release still to watch.
+    pub first: &'a Release,
+    /// The newest one (the same as `first` when there is one).
+    pub last: &'a Release,
+    pub count: usize,
+}
+
+/// Home's Watch now row (user, 2026-11-26): for each Watchlist title,
+/// the films and episodes that came out before `today` and are not
+/// watched yet, either since it went on the Watchlist (`added`) or after
+/// the last one watched (two episodes left of a season show up). One
+/// entry a title; it stays until everything in it is watched. Newest first.
+pub(super) fn out_now<'a>(
+    releases: &'a HashMap<Title, Vec<Release>>,
+    added: &HashMap<Title, NaiveDate>,
+    watched: impl Fn(&Title, &Release) -> bool,
+    today: NaiveDate,
+) -> Vec<OutNow<'a>> {
+    let mut out: Vec<OutNow<'a>> = releases
+        .iter()
+        .filter_map(|(title, list)| {
+            let since = *added.get(title)?;
+            let order = |release: &Release| (release.day, release.time, release.number.clone());
+            // Where you are in it: the last one watched.
+            let reached = list.iter().filter(|release| watched(title, release)).map(order).max();
+            let mut left: Vec<&Release> = list
+                .iter()
+                .filter(|release| {
+                    release.day < today
+                        && !watched(title, release)
+                        && (release.day >= since || reached.as_ref().is_some_and(|reached| order(release) > *reached))
+                })
+                .collect();
+            left.sort_by(|a, b| (a.day, a.time, &a.number).cmp(&(b.day, b.time, &b.number)));
+            Some(OutNow { title, first: left.first()?, last: left.last()?, count: left.len() })
+        })
+        .collect();
+    out.sort_by(|a, b| (b.last.day, b.last.time).cmp(&(a.last.day, a.last.time)).then_with(|| a.title.cmp(b.title)));
+    out
+}
+
+/// "S01E03–E05", or "S01E09–S02E01" across seasons, for a run of episodes.
+pub(super) fn run_badge(first: &str, last: &str) -> String {
+    if first == last || last.is_empty() {
+        first.to_owned()
+    } else if first.len() > 3 && last.len() > 3 && first[..3] == last[..3] {
+        format!("{first}–{}", &last[3..])
+    } else {
+        format!("{first}–{last}")
+    }
+}
+
 /// When something released at `released` (an ISO date, or a moment
 /// with a time zone) comes out in the time zone `zone`. A moment is
 /// moved to that zone, so an evening in America is the next day in
@@ -612,9 +669,56 @@ impl Library {
             })
             .take(12)
             .collect::<Vec<_>>();
+        // Watch now: what has come out since it went on the Watchlist and
+        // is not watched yet.
+        let added: HashMap<Title, NaiveDate> = self
+            .store
+            .watchlist()
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|saved| {
+                let day = Local.timestamp_millis_opt(saved.added_at).single()?.date_naive();
+                Some(((saved.kind, saved.title_id), day))
+            })
+            .collect();
+        let watched: HashMap<&Title, HashSet<String>> =
+            releases.keys().map(|title| (title, self.finished_of(&title.0, &title.1))).collect();
+        let is_watched = |title: &Title, release: &Release| {
+            watched.get(title).is_some_and(|done| {
+                if release.video.is_empty() { !done.is_empty() } else { done.contains(&release.video) }
+            })
+        };
+        let out: Vec<(crate::UpcomingCard, Option<String>)> = out_now(&releases, &added, is_watched, today)
+            .into_iter()
+            .filter_map(|out| {
+                let name = names.get(out.title)?;
+                let card = crate::UpcomingCard {
+                    id: out.title.1.as_str().into(),
+                    kind: out.title.0.as_str().into(),
+                    video: out.first.video.as_str().into(),
+                    title: name.as_str().into(),
+                    episode: if out.count > 1 {
+                        format!("{} new episodes", out.count).into()
+                    } else if !out.first.name.is_empty() {
+                        out.first.name.as_str().into()
+                    } else if out.first.number.is_empty() {
+                        "Film".into()
+                    } else {
+                        out.first.number.as_str().into()
+                    },
+                    badge: run_badge(&out.first.number, &out.last.number).into(),
+                    when: "Watch now".into(),
+                    soon: true,
+                    ..Default::default()
+                };
+                Some((card, pictures.get(out.title).cloned()))
+            })
+            .take(12)
+            .collect();
         drop((releases, pictures));
         *self.calendar.upcoming_when.borrow_mut() = cards.iter().map(|card| card.2).collect();
         self.show_upcoming(cards.into_iter().map(|(card, picture, _)| (card, picture)).collect());
+        self.show_watch_now(out);
         self.start_upcoming_clock();
     }
 
@@ -652,6 +756,61 @@ impl Library {
 mod tests {
     use super::*;
     use chrono::FixedOffset;
+
+    #[test]
+    fn watch_now_lists_what_came_out_since_it_was_saved_until_watched() {
+        let day = |d| NaiveDate::from_ymd_opt(2026, 11, d).unwrap();
+        let episode = |d, n: &str| Release {
+            day: day(d),
+            time: None,
+            label: String::new(),
+            video: format!("v{n}"),
+            number: n.to_owned(),
+            name: format!("Episode {n}"),
+        };
+        let film = |d| Release { day: day(d), time: None, label: String::new(), video: String::new(), number: String::new(), name: String::new() };
+        let show: Title = ("series".into(), "show".into());
+        let old: Title = ("series".into(), "old".into());
+        let movie: Title = ("movie".into(), "film".into());
+        let releases = HashMap::from([
+            (show.clone(), vec![episode(2, "S01E01"), episode(12, "S01E02"), episode(19, "S01E03"), episode(26, "S01E04")]),
+            (old.clone(), vec![episode(1, "S02E01")]),
+            (movie.clone(), vec![film(20)]),
+        ]);
+        // The show saved on the 10th, the old one on the 5th, the film on the 1st.
+        let added = HashMap::from([(show.clone(), day(10)), (old.clone(), day(5)), (movie.clone(), day(1))]);
+        let watched = |title: &Title, release: &Release| title == &show && release.number == "S01E02";
+        let out = out_now(&releases, &added, watched, day(26));
+        // The film (out on the 20th) is newer than the show's S01E03 (the 19th);
+        // S01E01 came before the show was saved, S01E04 is out today (still
+        // on Upcoming), and the old show's episode came before it was saved.
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].title, &movie);
+        assert_eq!((out[1].title, out[1].first.number.as_str(), out[1].count), (&show, "S01E03", 1));
+        // Nothing watched: S01E02 and S01E03 are both still to watch.
+        let out = out_now(&releases, &added, |_, _| false, day(26));
+        let show_out = out.iter().find(|o| o.title == &show).unwrap();
+        assert_eq!((show_out.first.number.as_str(), show_out.last.number.as_str(), show_out.count), ("S01E02", "S01E03", 2));
+        // Saved after a whole season came out, with 8 of 10 watched: the
+        // last two show up.
+        let season: Title = ("series".into(), "season".into());
+        let numbers: Vec<String> = (1..=10).map(|n| format!("S01E{n:02}")).collect();
+        let releases = HashMap::from([(season.clone(), numbers.iter().map(|n| episode(1, n)).collect::<Vec<_>>())]);
+        let added = HashMap::from([(season.clone(), day(20))]);
+        let out = out_now(&releases, &added, |_, release| release.number.as_str() <= "S01E08", day(26));
+        assert_eq!((out[0].first.number.as_str(), out[0].last.number.as_str(), out[0].count), ("S01E09", "S01E10", 2));
+        // Not started and saved afterwards: not on the row.
+        assert!(out_now(&releases, &added, |_, _| false, day(26)).is_empty());
+        let releases = HashMap::from([
+            (show.clone(), vec![episode(2, "S01E01"), episode(12, "S01E02"), episode(19, "S01E03"), episode(26, "S01E04")]),
+        ]);
+        let added = HashMap::from([(show.clone(), day(10))]);
+        // All watched: nothing left on the row.
+        assert!(out_now(&releases, &added, |_, _| true, day(26)).is_empty());
+        assert_eq!(run_badge("S01E02", "S01E05"), "S01E02–E05");
+        assert_eq!(run_badge("S01E09", "S02E01"), "S01E09–S02E01");
+        assert_eq!(run_badge("S01E02", "S01E02"), "S01E02");
+    }
 
     #[test]
     fn release_day_counts_down_by_the_hour() {

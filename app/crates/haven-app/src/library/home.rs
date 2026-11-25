@@ -26,6 +26,8 @@ pub(super) struct HomeTop {
     settled: Cell<usize>,
     slides: Rc<VecModel<HeroSlide>>,
     pub(super) upcoming: Rc<VecModel<UpcomingCard>>,
+    /// Out since it went on the Watchlist and not watched yet.
+    pub(super) watch_now: Rc<VecModel<UpcomingCard>>,
     /// The wide picture of each Watchlist title, once loaded.
     pictures: RefCell<HashMap<(String, String), Image>>,
     /// Pictures asked for already.
@@ -121,6 +123,7 @@ impl Library {
         ui.set_continue_cards(ModelRc::from(self.home_top.continuing.clone()));
         ui.set_hero(ModelRc::from(self.home_top.slides.clone()));
         ui.set_upcoming(ModelRc::from(self.home_top.upcoming.clone()));
+        ui.set_watch_now(ModelRc::from(self.home_top.watch_now.clone()));
     }
 
     /// Asks Continue Watching's titles' details again (Home pulled down).
@@ -247,6 +250,15 @@ impl Library {
     /// Puts the coming episodes and films on Home, with each title's
     /// wide picture (asked for once).
     pub(super) fn show_upcoming(&self, cards: Vec<(UpcomingCard, Option<String>)>) {
+        self.show_cards(&self.home_top.upcoming, cards);
+    }
+
+    /// Puts what has come out and is still to watch on Home's Watch now.
+    pub(super) fn show_watch_now(&self, cards: Vec<(UpcomingCard, Option<String>)>) {
+        self.show_cards(&self.home_top.watch_now, cards);
+    }
+
+    fn show_cards(&self, model: &Rc<VecModel<UpcomingCard>>, cards: Vec<(UpcomingCard, Option<String>)>) {
         let pictures = self.home_top.pictures.borrow();
         let mut wanted = Vec::new();
         let rows: Vec<UpcomingCard> = cards
@@ -265,18 +277,19 @@ impl Library {
             })
             .collect();
         drop(pictures);
-        self.home_top.upcoming.set_vec(rows);
+        model.set_vec(rows);
         for (key, url) in wanted {
             self.fetch_image(url, CARD_SIZE, move |library, pixels| {
                 let image = Image::from_rgba8(pixels);
                 library.home_top.pictures.borrow_mut().insert(key.clone(), image.clone());
-                let cards = &library.home_top.upcoming;
-                for at in 0..cards.row_count() {
-                    if let Some(mut card) = cards.row_data(at) {
-                        if card.kind.as_str() == key.0 && card.id.as_str() == key.1 {
-                            card.image = image.clone();
-                            card.has_image = true;
-                            cards.set_row_data(at, card);
+                for cards in [&library.home_top.upcoming, &library.home_top.watch_now] {
+                    for at in 0..cards.row_count() {
+                        if let Some(mut card) = cards.row_data(at) {
+                            if card.kind.as_str() == key.0 && card.id.as_str() == key.1 {
+                                card.image = image.clone();
+                                card.has_image = true;
+                                cards.set_row_data(at, card);
+                            }
                         }
                     }
                 }

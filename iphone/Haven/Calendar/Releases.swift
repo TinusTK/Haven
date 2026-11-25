@@ -209,10 +209,12 @@ enum Releases {
         /// When it comes out (local).
         var day: Day
         var time: Clock?
+        /// On Watch now: out already, so the pill says "Watch now".
+        var out = false
 
         /// The label at `now`: on the day it counts down by the hour.
         func when(at now: Date, zone: TimeZone = .current) -> String {
-            Releases.whenLabel(day: day, time: time, now: now, zone: zone)
+            out ? "Watch now" : Releases.whenLabel(day: day, time: time, now: now, zone: zone)
         }
     }
 
@@ -237,6 +239,71 @@ enum Releases {
         case 2 ... 6: return "In \(days) days"
         default: return "\(months[day.month - 1].prefix(3)) \(day.day)"
         }
+    }
+
+    /// What of a title has come out and is still to watch (Watch now).
+    struct OutNow: Equatable {
+        var title: Title
+        /// The first release still to watch, the newest, and how many.
+        var first: Release
+        var last: Release
+        var count: Int
+    }
+
+    /// Home's Watch now row (user, 2026-11-26), as the Rust build's
+    /// `out_now`: for each Watchlist title, the films and episodes out
+    /// before `today` and not watched, either since it went on the
+    /// Watchlist (`added`) or after the last one watched (two episodes
+    /// left of a season show up). One a title, until all are watched;
+    /// newest first.
+    static func outNow(_ releases: [Title: [Release]], added: [Title: Day], watched: (Title, Release) -> Bool, today: Day) -> [OutNow] {
+        func before(_ a: Release, _ b: Release) -> Bool {
+            if a.day != b.day { return a.day < b.day }
+            if a.time != b.time {
+                guard let x = a.time else { return true }
+                guard let y = b.time else { return false }
+                return x < y
+            }
+            return a.number < b.number
+        }
+        var out: [OutNow] = releases.compactMap { title, list in
+            guard let since = added[title] else { return nil }
+            let reached = list.filter { watched(title, $0) }.max(by: before)
+            let left = list.filter { release in
+                release.day < today && !watched(title, release)
+                    && (release.day >= since || reached.map { before($0, release) } == true)
+            }.sorted(by: before)
+            guard let first = left.first, let last = left.last else { return nil }
+            return OutNow(title: title, first: first, last: last, count: left.count)
+        }
+        out.sort { a, b in
+            if a.last.day != b.last.day || a.last.time != b.last.time { return before(b.last, a.last) }
+            return a.title.id < b.title.id
+        }
+        return out
+    }
+
+    /// "S01E03–E05", or "S01E09–S02E01" across seasons, for a run of episodes.
+    static func runBadge(_ first: String, _ last: String) -> String {
+        if first == last || last.isEmpty { return first }
+        if first.count > 3, last.count > 3, first.prefix(3) == last.prefix(3) { return "\(first)–\(last.dropFirst(3))" }
+        return "\(first)–\(last)"
+    }
+
+    /// Watch now's cards, at most 12.
+    static func watchNow(_ releases: [Title: [Release]], names: [Title: String], pictures: [Title: String],
+                         added: [Title: Day], watched: (Title, Release) -> Bool, today: Day) -> [Card] {
+        outNow(releases, added: added, watched: watched, today: today).compactMap { out -> Card? in
+            guard let name = names[out.title] else { return nil }
+            let episode = out.count > 1 ? "\(out.count) new episodes"
+                : !out.first.name.isEmpty ? out.first.name
+                : out.first.number.isEmpty ? "Film" : out.first.number
+            return Card(id: out.title.id, kind: out.title.kind, video: out.first.video, title: name, episode: episode,
+                        badge: runBadge(out.first.number, out.last.number), when: "Watch now", soon: true,
+                        picture: pictures[out.title], day: out.last.day, time: out.last.time, out: true)
+        }
+        .prefix(12)
+        .map { $0 }
     }
 
     /// Home's Upcoming row: from today on, one card a show (its next

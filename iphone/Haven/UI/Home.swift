@@ -31,6 +31,28 @@ struct HomePage: View {
                             model.open(Opening(id: slide.id, kind: slide.kind, title: slide.title))
                         }
                     }
+                    if !library.watchNow.isEmpty {
+                        VStack(alignment: .leading, spacing: 12) {
+                            RowHeading(title: "Watch now") { model.openLibrary(2) }
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                LazyHStack(spacing: 16) {
+                                    ForEach(library.watchNow) { card in
+                                        Button {
+                                            model.open(Opening(id: card.id, kind: card.kind, title: card.title,
+                                                               video: card.video.isEmpty ? nil : card.video))
+                                        } label: {
+                                            WideCard(title: card.title, line: card.episode, picture: card.picture, badge: card.badge,
+                                                     width: wide, pause: library.homePause) {
+                                                WhenPill(text: card.when, soon: true)
+                                            }
+                                        }
+                                        .buttonStyle(PressedStyle())
+                                    }
+                                }
+                            }
+                            .scrollClipDisabled()
+                        }
+                    }
                     if !library.upcoming.isEmpty {
                         VStack(alignment: .leading, spacing: 12) {
                             RowHeading(title: "Upcoming") { model.select(.calendar) }

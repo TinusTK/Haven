@@ -1,5 +1,8 @@
 import Foundation
 import Observation
+#if canImport(UIKit)
+import UIKit
+#endif
 
 /// What opening a title needs (from a card, the banner, Upcoming…). The
 /// title's page comes in S12.
@@ -87,6 +90,9 @@ final class Library {
     private(set) var calendarWaiting = 0
     private var calendarPictures: [Releases.Title: String] = [:]
     private(set) var upcoming: [Releases.Card] = []
+    /// Out since it went on the Watchlist (or after the last one watched)
+    /// and not watched yet.
+    private(set) var watchNow: [Releases.Card] = []
 
     /// Opens a title's page.
     var open: (Opening) -> Void = { _ in }
@@ -185,6 +191,7 @@ final class Library {
         marks += 1
         reloadContinue()
         reloadWatchlist()
+        updateWatchNow()
     }
 
     /// Loads what was kept and starts filling Home, in the Rust build's order.
@@ -195,6 +202,7 @@ final class Library {
         reloadContinue()
         reloadWatchlist()
         loadServers()
+        startServerRefresh()
         reloadCatalog()
         explore.rebuild()
         downloads.start()
@@ -238,6 +246,7 @@ final class Library {
     /// Home came into view or left it: its loading goes on or waits.
     func homeShowing(_ showing: Bool) {
         homePause.set(shut: !showing)
+        if showing { updateWatchNow() }
     }
 
     // MARK: Sources
@@ -412,7 +421,46 @@ final class Library {
     /// Asks every server for its libraries; each library then gets two
     /// shelves, the newest titles and the titles by name. The libraries
     /// found last time show at once.
+    /// Keeps the servers' shelves fresh without Check again: loaded afresh
+    /// when Haven comes back to the screen (a minute or more since the
+    /// last time), every few minutes while it is open, and every minute
+    /// while a server is offline (as the desktop's quiet check).
+    private func startServerRefresh() {
+        #if canImport(UIKit)
+        NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, Date().timeIntervalSince(self.lastServerReload) >= 60 else { return }
+                self.reloadServerShelves()
+            }
+        }
+        #endif
+        Task { [weak self] in
+            while true {
+                try? await Task.sleep(for: .seconds(60))
+                guard let self else { return }
+                let offline = self.serverStates.values.contains(.offline)
+                if offline || Date().timeIntervalSince(self.lastServerReload) >= Self.serverReloadEvery {
+                    self.reloadServerShelves()
+                }
+            }
+        }
+    }
+
+    /// A server answered (its title's sources were asked): one marked
+    /// offline is online again and gets its shelves back.
+    func serverAnswered(_ id: Int64) {
+        guard serverStates[id] != .online else { return }
+        let wasOffline = serverStates[id] == .offline
+        serverStates[id] = .online
+        if wasOffline { reloadServerShelves() }
+    }
+
+    /// How often the servers' shelves are loaded afresh while Haven is open.
+    static let serverReloadEvery: TimeInterval = 5 * 60
+    @ObservationIgnored private var lastServerReload = Date.distantPast
+
     func reloadServerShelves() {
+        lastServerReload = Date()
         let list = servers.enabled
         guard !list.isEmpty else {
             serverLibraries = []
@@ -688,6 +736,23 @@ final class Library {
     private func updateUpcoming() {
         let names = Dictionary(watchlist.map { (Releases.Title(kind: $0.kind, id: $0.titleID), $0.title) }, uniquingKeysWith: { a, _ in a })
         upcoming = Releases.upcoming(releases, names: names, pictures: calendarPictures, today: Day.today(zone))
+        updateWatchNow()
+    }
+
+    /// Fills Watch now again (also when Home shows, so what was just
+    /// watched leaves it).
+    func updateWatchNow() {
+        let names = Dictionary(watchlist.map { (Releases.Title(kind: $0.kind, id: $0.titleID), $0.title) }, uniquingKeysWith: { a, _ in a })
+        let added = Dictionary(watchlist.map {
+            (Releases.Title(kind: $0.kind, id: $0.titleID), Day(Date(timeIntervalSince1970: TimeInterval($0.addedAt) / 1000), zone))
+        }, uniquingKeysWith: { a, _ in a })
+        var done: [Releases.Title: Set<String>] = [:]
+        for title in releases.keys { done[title] = finishedOf(kind: title.kind, titleID: title.id) }
+        let cards = Releases.watchNow(releases, names: names, pictures: calendarPictures, added: added, watched: { title, release in
+            guard let seen = done[title] else { return false }
+            return release.video.isEmpty ? !seen.isEmpty : seen.contains(release.video)
+        }, today: Day.today(zone))
+        if cards != watchNow { watchNow = cards }
     }
 
     /// Every release known, by title (for the Calendar page, S16).
