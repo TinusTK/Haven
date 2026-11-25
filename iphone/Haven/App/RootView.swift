@@ -41,11 +41,14 @@ private struct Shell: View {
             VStack(spacing: 0) {
                 ZStack {
                     PageView(model: model)
-                    if let opening = model.opening {
-                        TitlePlaceholder(opening: opening) { model.closeTitle() }
+                    if model.opening != nil {
+                        TitlePageView(model: model, page: model.library.title)
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                if let session = model.airPlay {
+                    AirPlayBar(session: session) { model.stopAirPlay() }
+                }
                 TabBar(page: model.page, detailOpen: model.detailOpen) { model.select($0) }
                     .background(Palette.background.ignoresSafeArea(edges: .bottom))
             }
@@ -57,6 +60,10 @@ private struct Shell: View {
                     .ignoresSafeArea()
                     .onTapGesture { typing.close() }
             }
+            if model.player.open {
+                PlayerView(player: model.player)
+                    .transition(.opacity)
+            }
             if !model.splashGone {
                 LoadingScreen(progress: model.splashProgress)
                     .opacity(model.splashShown ? 1 : 0)
@@ -67,6 +74,7 @@ private struct Shell: View {
             }
         }
         .animation(.easeOut(duration: 0.2), value: model.whatsNewShown)
+        .animation(.easeOut(duration: 0.2), value: model.player.open)
     }
 }
 

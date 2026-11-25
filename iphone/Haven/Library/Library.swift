@@ -88,8 +88,24 @@ final class Library {
     private var calendarPictures: [Releases.Title: String] = [:]
     private(set) var upcoming: [Releases.Card] = []
 
-    /// Opens a title's page (S12 fills this in).
+    /// Opens a title's page.
     var open: (Opening) -> Void = { _ in }
+    /// The open title's page.
+    @ObservationIgnored private(set) var title: TitlePage!
+    /// The Xtream Codes accounts' films and series, fetched once a run.
+    let onDemand: XtreamOnDemand
+    /// Plays a film or episode: Haven's player, AirPlay or another app.
+    var play: ((PlayRequest) -> Void)?
+    /// Leaves the player when the next episode could not start by itself.
+    var dismissPlayer: () -> Void = {}
+    /// Where the last film or episode played from (its source and the
+    /// row's name): the next episode plays from the same place.
+    @ObservationIgnored var lastPlayed: (source: String, name: String)?
+    /// Notes a watched mark or Watchlist change for the linked accounts.
+    var queueSync: (_ what: String, _ kind: String, _ titleID: String, _ videoID: String) -> Void = { _, _, _, _ in }
+    /// Goes up whenever something is marked watched or unwatched: views
+    /// showing ticks read it, so they draw again.
+    private(set) var marks = 0
 
     init(store: Store, keys: Secrets, http: HTTP = .shared, kept: Kept = Cache.kept) {
         self.store = store
@@ -99,7 +115,67 @@ final class Library {
         catalogues = Catalogues(http: http)
         serverClient = ServerClient(device: DeviceID.get(store), http: http)
         builtin = Cinemeta.kept(store)
+        onDemand = XtreamOnDemand(http: http)
         explore = Explore(library: self)
+        title = TitlePage(library: self)
+    }
+
+    // MARK: After playing
+
+    /// The player closed: what was watched is told to the server and the
+    /// linked accounts, and every tick and Continue Watching put right.
+    func playerClosed(_ played: Played?) {
+        if let played {
+            report(played)
+            if played.finished { queueSync("watched", played.kind, played.titleID, played.videoID) }
+        }
+        title.sources.autoplay = nil
+        marked()
+        title.refreshTicks()
+    }
+
+    /// The player wants the next episode: it is opened on the title's page
+    /// and plays from the same place as the last as soon as that answers.
+    /// False if there is no next episode.
+    func playNext(_ played: Played?) -> Bool {
+        if let played {
+            report(played)
+            if played.finished { queueSync("watched", played.kind, played.titleID, played.videoID) }
+        }
+        reloadContinue()
+        guard let next = title.nextVideo, let last = lastPlayed else { return false }
+        if let season = next.season, season != title.season { title.showSeason(season) }
+        title.sources.autoplay = last
+        title.openEpisode(next.id)
+        // Nothing to ask: the list is already showing instead.
+        return title.sources.autoplay != nil || title.sources.stillAsking
+    }
+
+    /// Tells the media server how far its film or episode was watched.
+    func report(_ played: Played) {
+        guard played.duration > 0,
+              let (server, item) = ServerAccounts.serverItem(played.serverItem ?? played.videoID, in: servers.enabled) else { return }
+        let client = serverClient
+        Task {
+            do {
+                try await client.report(server, item: item, position: played.position, duration: played.duration, finished: played.finished)
+            } catch {
+                Log.note("could not tell \(server.name) what was watched: \(HTTP.words(error))")
+            }
+        }
+    }
+
+    /// Notes a Watchlist change for the linked accounts.
+    func trackWatchlist(_ kind: String, _ titleID: String, _ on: Bool) {
+        queueSync(on ? "watchlist_add" : "watchlist_remove", kind, titleID, "")
+    }
+
+    /// Something was marked watched or unwatched: Continue Watching, the
+    /// Watchlist and every tick on screen are put right.
+    func marked() {
+        marks += 1
+        reloadContinue()
+        reloadWatchlist()
     }
 
     /// Loads what was kept and starts filling Home, in the Rust build's order.
@@ -386,7 +462,8 @@ final class Library {
 
     /// A film watched to the end (a series has no single tick).
     func filmWatched(kind: String, id: String) -> Bool {
-        kind == "movie" && !((try? store.finishedVideos(kind: kind, titleID: id)) ?? []).isEmpty
+        _ = marks
+        return kind == "movie" && !((try? store.finishedVideos(kind: kind, titleID: id)) ?? []).isEmpty
     }
 
     // MARK: The banner

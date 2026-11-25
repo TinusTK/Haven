@@ -53,8 +53,12 @@ final class AppModel {
 
     let tracker: Tracker
     let library: Library
+    /// Haven's own player (libmpv).
+    let player: PlayerModel
+    /// A film or episode playing over AirPlay in Apple's player.
+    private(set) var airPlay: AirPlaySession?
     let notes = WhatsNew.builtIn
-    /// The title asked to open (its page comes in S12; until then a stand-in shows).
+    /// The title whose page is open.
     private(set) var opening: Opening?
 
     // The loading screen.
@@ -78,7 +82,18 @@ final class AppModel {
         tracker.openLink = { Browser.open($0) }
         library = Library(store: core.store, keys: core.secrets)
         tracker.watchlistChanged = { [library] in library.reloadWatchlist() }
-        tracker.watchedChanged = { [library] in library.reloadContinue() }
+        // Marks brought in from the accounts.
+        tracker.watchedChanged = { [library] in
+            library.marked()
+            library.title.refreshTicks()
+        }
+        library.queueSync = { [tracker] in tracker.queue($0, kind: $1, titleID: $2, videoID: $3) }
+        player = PlayerModel(store: core.store)
+        player.closed = { [library] in library.playerClosed($0) }
+        player.next = { [library] in library.playNext($0) }
+        library.dismissPlayer = { [player] in player.dismiss() }
+        library.play = { [weak self] in self?.play($0) }
+        library.open = { [weak self] in self?.open($0) }
         whatsNewDue = WhatsNew.due(notes, store: core.store, existing: core.existing)
     }
 
@@ -100,12 +115,76 @@ final class AppModel {
         opening = title
         detailOpen = true
         library.homeShowing(false)
+        library.title.open(title)
     }
 
     func closeTitle() {
+        library.title.close()
         opening = nil
         detailOpen = false
         library.homeShowing(page == .home)
+    }
+
+    // MARK: Playing
+
+    /// Plays a film or episode: in the player app chosen in Settings, over
+    /// AirPlay when an AirPlay device is chosen, else in Haven's player.
+    func play(_ request: PlayRequest) {
+        let page = library.title!
+        page.playNote = ""
+        let other = PlayerRules.OtherPlayer.load(store)
+        if PlayerRules.goesElsewhere(other, address: request.address) {
+            // Another app does not say how far it got: no resuming with it.
+            guard let link = URL(string: PlayerRules.otherPlayerLink(kind: other.kind, address: request.address)) else { return }
+            UIApplication.shared.open(link) { opened in
+                Task { @MainActor in
+                    page.playNote = opened ? "Opened in your player."
+                        : "Could not open your player: install \(PlayerRules.OtherPlayer.names[min(max(other.kind, 1), 3)]), or pick another in Settings."
+                }
+            }
+            return
+        }
+        guard AirPlay.isChosen else { return player.play(request) }
+        Task {
+            if await AirPlay.canSend(request.address) {
+                startAirPlay(request)
+            } else {
+                // The sound still goes to the AirPlay device.
+                page.playNote = AirPlay.cannotSend
+                player.play(request)
+            }
+        }
+    }
+
+    private func startAirPlay(_ request: PlayRequest) {
+        airPlay?.stop()
+        var start: Double?
+        if let saved = try? store.progress(kind: request.kind, titleID: request.titleID, videoID: request.videoID) {
+            start = Resume.from(position: saved.position, duration: saved.duration, finished: saved.finished)
+        }
+        let session = AirPlaySession(.init(address: request.address, title: request.title, detail: request.detail, start: start))
+        let store = store
+        session.progress = { position, duration in
+            PlayerModel.remember(request, position: position, duration: duration, store: store)
+        }
+        session.finished = { [weak self, weak session] in
+            guard let self, let session else { return }
+            let played = PlayerModel.played(request, position: session.position, duration: session.duration, failed: false)
+            library.playerClosed(played)
+            // A failure stays on the bar a moment, so it can be read.
+            let wait: Duration = session.failure == nil ? .zero : .seconds(6)
+            Task {
+                try? await Task.sleep(for: wait)
+                if self.airPlay === session { self.airPlay = nil }
+            }
+        }
+        airPlay = session
+        session.start()
+    }
+
+    /// The AirPlay bar's stop button.
+    func stopAirPlay() {
+        airPlay?.stop()
     }
 
     /// Home came into view or left it.
@@ -117,6 +196,7 @@ final class AppModel {
 
     func select(_ new: Page) {
         if new == .settings && page == .settings && !detailOpen { settingsBackToList += 1 }
+        if opening != nil { library.title.close() }
         opening = nil
         detailOpen = false
         page = new

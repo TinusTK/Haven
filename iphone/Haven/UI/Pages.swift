@@ -69,32 +69,3 @@ private struct SettingsPlaceholder: View {
         }
     }
 }
-
-/// Stands in for a title's page until S12: its name, and the way back.
-struct TitlePlaceholder: View {
-    let opening: Opening
-    let close: () -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Button(action: close) {
-                HStack(spacing: 4) {
-                    HavenIcon(name: "back", size: 18, tint: Palette.text)
-                    Text("Back").font(Palette.font(14, .semibold)).foregroundStyle(Palette.text)
-                }
-                .padding(.horizontal, 12)
-                .frame(height: 36)
-                .background(Capsule().fill(Palette.surface))
-            }
-            .buttonStyle(.plain)
-            PageTitle(text: opening.title)
-            Text("The title's page comes next.")
-                .font(Palette.font(14))
-                .foregroundStyle(Palette.textDim)
-            Spacer()
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(16)
-        .background(Palette.background)
-    }
-}
