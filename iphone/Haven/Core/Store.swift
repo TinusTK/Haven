@@ -175,6 +175,23 @@ final class Store: Sendable {
         }
     }
 
+    /// A saved value's JSON as it is stored (backups carry it as it is).
+    func rawValue(_ key: String) throws -> String? {
+        try read { try String.fetchOne($0, sql: "SELECT value FROM kv WHERE key = ?", arguments: [key]) }
+    }
+
+    /// Saves JSON text as it is.
+    func putRaw(_ key: String, _ json: String) throws {
+        try write {
+            try $0.execute(
+                sql: """
+                INSERT INTO kv (key, value) VALUES (?, ?)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value
+                """,
+                arguments: [key, json])
+        }
+    }
+
     func remove(_ key: String) throws {
         try write { try $0.execute(sql: "DELETE FROM kv WHERE key = ?", arguments: [key]) }
     }

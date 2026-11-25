@@ -57,6 +57,8 @@ final class AppModel {
     let live: LiveTVModel
     /// The Calendar page's month or week and day picked.
     let calendar: CalendarModel
+    /// What Settings shows and does.
+    let settingsPage: SettingsModel
     /// Haven's own player (libmpv).
     let player: PlayerModel
     /// A film or episode playing over AirPlay in Apple's player.
@@ -97,6 +99,7 @@ final class AppModel {
         player = PlayerModel(store: core.store)
         live = LiveTVModel(store: core.store)
         calendar = CalendarModel(library: library)
+        settingsPage = SettingsModel(core: core, library: library, tracker: tracker, live: live, player: player)
         player.closed = { [library] in library.playerClosed($0) }
         player.next = { [library] in library.playNext($0) }
         library.dismissPlayer = { [player] in player.dismiss() }
@@ -117,6 +120,7 @@ final class AppModel {
         }
         tracker.start()
         live.start()
+        settingsPage.startBackups()
         runSplash()
     }
 

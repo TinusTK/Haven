@@ -56,8 +56,47 @@ jobs:
         run: iphone/scripts/build.sh github test
       - name: Tests (App Store build)
         run: iphone/scripts/build.sh store test
-      - name: Device build (GitHub, unsigned)
-        run: iphone/scripts/build.sh github device
+      # The GitHub IPA: add-ons, unsigned (whoever installs it signs it).
+      - name: GitHub IPA (unsigned)
+        run: iphone/scripts/package.sh github
+      - uses: actions/upload-artifact@v4
+        with:
+          name: haven-swift-ios-ipa
+          path: iphone/build/ipa/*.ipa
+          if-no-files-found: error
+      # With an Apple Distribution certificate and an App Store
+      # provisioning profile in the secrets the store IPA is signed for the
+      # App Store; without, it is built unsigned (for testing).
+      - name: Set up signing
+        env:
+          IOS_DIST_CERT_P12_BASE64: ${{ secrets.IOS_DIST_CERT_P12_BASE64 }}
+          IOS_DIST_CERT_PASSWORD: ${{ secrets.IOS_DIST_CERT_PASSWORD }}
+          IOS_PROFILE_BASE64: ${{ secrets.IOS_APPSTORE_PROFILE_BASE64 }}
+        run: |
+          if [ -z "$IOS_DIST_CERT_P12_BASE64" ] || [ -z "$IOS_PROFILE_BASE64" ]; then
+            echo "No App Store certificate or profile in the secrets: the IPA is left unsigned."
+            exit 0
+          fi
+          keychain="$RUNNER_TEMP/haven-ios.keychain-db"
+          lock="$(uuidgen)"
+          security create-keychain -p "$lock" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$lock" "$keychain"
+          echo "$IOS_DIST_CERT_P12_BASE64" | base64 -d > "$RUNNER_TEMP/dist.p12"
+          security import "$RUNNER_TEMP/dist.p12" -P "$IOS_DIST_CERT_PASSWORD" -A -t cert -f pkcs12 -k "$keychain"
+          rm -f "$RUNNER_TEMP/dist.p12"
+          security set-key-partition-list -S apple-tool:,apple: -k "$lock" "$keychain" > /dev/null
+          security list-keychain -d user -s "$keychain" login.keychain-db
+          identity="$(security find-identity -v -p codesigning "$keychain" | grep -E "Apple Distribution|iPhone Distribution" | head -1 | sed -E 's/.*"(.*)"/\1/')"
+          [ -n "$identity" ] || { echo "The certificate in the secrets is not an Apple Distribution one."; exit 1; }
+          echo "$IOS_PROFILE_BASE64" | base64 -d > "$RUNNER_TEMP/appstore.mobileprovision"
+          echo "HAVEN_IOS_SIGN_IDENTITY=$identity" >> "$GITHUB_ENV"
+          echo "HAVEN_IOS_PROFILE=$RUNNER_TEMP/appstore.mobileprovision" >> "$GITHUB_ENV"
       # Includes the store check: no add-on code or wording.
-      - name: Device build (App Store, unsigned)
-        run: iphone/scripts/build.sh store device
+      - name: App Store IPA
+        run: iphone/scripts/package.sh store
+      - uses: actions/upload-artifact@v4
+        with:
+          name: haven-swift-ios-store
+          path: iphone/build/ipa/*.ipa
+          if-no-files-found: error

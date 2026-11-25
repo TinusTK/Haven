@@ -1,8 +1,6 @@
 import SwiftUI
 
-/// The page showing. Each page is filled in by its own section (Home S10,
-/// Explore S11, Library S14, Live TV S15, Calendar S16, Settings S17);
-/// until then it shows its title and what it will hold.
+/// The page showing.
 struct PageView: View {
     let model: AppModel
 
@@ -13,59 +11,7 @@ struct PageView: View {
         case .library: LibraryPage(model: model)
         case .liveTV: LiveTVPage(model: model, live: model.live)
         case .calendar: CalendarPage(model: model, calendar: model.calendar)
-        case .settings: SettingsPlaceholder(model: model)
-        }
-    }
-}
-
-private struct Placeholder: View {
-    let title: String
-    let note: String
-
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 10) {
-                PageTitle(text: title)
-                Text(note)
-                    .font(Palette.font(14))
-                    .foregroundStyle(Palette.textDim)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 16)
-            .padding(.top, 12)
-        }
-        .scrollDismissesKeyboard(.immediately)
-    }
-}
-
-private struct SettingsPlaceholder: View {
-    let model: AppModel
-
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
-                PageTitle(text: "Settings")
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("APPEARANCE")
-                        .font(Palette.font(12, .bold))
-                        .foregroundStyle(Palette.textDim)
-                    Toggle(isOn: Binding(get: { model.dark }, set: { model.setDark($0) })) {
-                        Text("Dark theme")
-                            .font(Palette.font(15, .semibold))
-                            .foregroundStyle(Palette.text)
-                    }
-                    .tint(Palette.accent)
-                }
-                .padding(14)
-                .background(RoundedRectangle(cornerRadius: 14).fill(Palette.surface))
-                .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Palette.border, lineWidth: 1))
-                Text("The other settings come here.")
-                    .font(Palette.font(14))
-                    .foregroundStyle(Palette.textDim)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 16)
-            .padding(.top, 12)
+        case .settings: SettingsPage(model: model, settings: model.settingsPage)
         }
     }
 }

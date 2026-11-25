@@ -66,6 +66,11 @@ final class Tracker {
         self.keys = keys
     }
 
+    /// Reads the sign-ins again (a restored backup brought one).
+    func reloadAccounts() {
+        accounts = TrackedAccount.load(store)
+    }
+
     func account(_ service: TrackingService) -> TrackedAccount? {
         accounts.first { $0.service == service }
     }
