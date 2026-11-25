@@ -372,7 +372,8 @@ struct TMDB: Sendable {
         return list((answer["season/\(season)"] as? [String: Any])?["episodes"]).compactMap { item in
             guard let episode = whole((item as? [String: Any])?["episode_number"]) else { return nil }
             return Video(id: "\(stem):\(season):\(episode)", title: text(item, "name"), season: season,
-                         episode: Int(episode), released: text(item, "air_date"))
+                         episode: Int(episode), released: text(item, "air_date"),
+                         thumbnail: text(item, "still_path").map { "\(images)/w300\($0)" })
         }
     }
 }

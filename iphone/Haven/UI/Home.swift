@@ -43,7 +43,10 @@ struct HomePage: View {
                                         } label: {
                                             WideCard(title: card.title, line: card.episode, picture: card.picture, badge: card.badge,
                                                      width: wide, pause: library.homePause) {
-                                                WhenPill(text: card.when, soon: card.soon)
+                                                // Counts down by the hour on the day.
+                                                TimelineView(.periodic(from: .now, by: 30)) { context in
+                                                    WhenPill(text: card.when(at: context.date), soon: card.soon)
+                                                }
                                             }
                                         }
                                         .buttonStyle(PressedStyle())

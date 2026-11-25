@@ -18,6 +18,7 @@ mod cast;
 mod downloads;
 mod explore;
 mod kept;
+mod links;
 mod local;
 mod marks;
 mod home;
@@ -51,6 +52,8 @@ const IMAGE_BYTES: usize = 6 * 1024 * 1024;
 /// Posters are kept at twice the card size, for sharp 2x screens.
 const POSTER_SIZE: (u32, u32) = (300, 450);
 const BACKGROUND_SIZE: (u32, u32) = (1600, 900);
+/// An episode's still beside its name (twice the size it shows at).
+const EPISODE_SIZE: (u32, u32) = (360, 202);
 const IMAGES_AT_ONCE: usize = 6;
 /// Shelves asked of media servers at the same time. A server that
 /// gathers add-on catalogues passes every ask on to the add-on, and an
@@ -301,6 +304,9 @@ pub struct Library {
     detail_generation: Cell<u64>,
     seasons: Rc<VecModel<i32>>,
     episodes: Rc<VecModel<EpisodeRow>>,
+    /// Episode stills of the open title, by episode id, once fetched
+    /// (`None` while asked for).
+    episode_pictures: RefCell<std::collections::HashMap<String, Option<Image>>>,
     streams: Rc<VecModel<StreamRow>>,
     /// Goes up whenever streams are asked for again.
     stream_generation: Epoch,
@@ -418,6 +424,7 @@ impl Library {
             detail_generation: Cell::new(0),
             seasons: Rc::default(),
             episodes: Rc::default(),
+            episode_pictures: RefCell::default(),
             streams: Rc::default(),
             stream_generation: Epoch::default(),
             stream_limits: RefCell::default(),
@@ -1395,14 +1402,15 @@ impl Library {
 
     /// A film watched to the end (a series has no single tick).
     pub(super) fn film_watched(&self, kind: &str, id: &str) -> bool {
-        kind == "movie" && self.store.finished_videos(kind, id).is_ok_and(|done| !done.is_empty())
+        kind == "movie" && !self.finished_of(kind, id).is_empty()
     }
 
     /// The episodes of the open title watched to the end.
     fn finished_here(&self) -> std::collections::HashSet<String> {
-        let open = self.open.borrow();
-        let Some(open) = open.as_ref() else { return Default::default() };
-        self.store.finished_videos(&open.kind, &open.id).unwrap_or_default().into_iter().collect()
+        let Some((kind, id)) = self.open.borrow().as_ref().map(|open| (open.kind.clone(), open.id.clone())) else {
+            return Default::default();
+        };
+        self.finished_of(&kind, &id)
     }
 
     fn update_detail(&self, change: impl FnOnce(&mut Detail)) {
@@ -1434,6 +1442,7 @@ impl Library {
         let (kind, id) = (poster.kind.to_string(), poster.id.to_string());
         self.seasons.set_vec(Vec::new());
         self.episodes.set_vec(Vec::new());
+        self.episode_pictures.borrow_mut().clear();
         self.clear_streams();
         self.clear_offers("");
         self.set_streams_state(Some(sources::HEADING), false, "");
@@ -1631,7 +1640,10 @@ impl Library {
                     self.show_season(season as i32);
                 }
                 // Videos with no seasons (a channel's uploads): list them all.
-                None => self.episodes.set_vec(all),
+                None => {
+                    self.episodes.set_vec(all);
+                    self.fill_episode_pictures();
+                }
             }
             if let Some(video) = wanted {
                 self.open_episode(&video.id);
@@ -1653,6 +1665,55 @@ impl Library {
                 detail.has_background = true;
             }
         });
+    }
+
+    /// Puts the episodes' stills on the rows listed: kept ones at once, the
+    /// rest fetched (each once per opening of the title).
+    fn fill_episode_pictures(&self) {
+        let generation = self.detail_generation.get();
+        let addresses: std::collections::HashMap<String, String> = match self.open.borrow().as_ref().and_then(|o| o.meta.as_ref()) {
+            Some(meta) => meta
+                .videos
+                .iter()
+                .filter_map(|video| Some((video.id.clone(), video.thumbnail.clone()?)))
+                .collect(),
+            None => return,
+        };
+        for at in 0..self.episodes.row_count() {
+            let Some(mut row) = self.episodes.row_data(at) else { continue };
+            if row.has_image {
+                continue;
+            }
+            let id = row.id.to_string();
+            let known = self.episode_pictures.borrow().get(&id).cloned();
+            match known {
+                Some(Some(image)) => {
+                    row.image = image;
+                    row.has_image = true;
+                    self.episodes.set_row_data(at, row);
+                }
+                Some(None) => {}
+                None => {
+                    let Some(address) = addresses.get(&id).cloned() else { continue };
+                    self.episode_pictures.borrow_mut().insert(id.clone(), None);
+                    self.fetch_image(address, EPISODE_SIZE, move |library, pixels| {
+                        if generation != library.detail_generation.get() {
+                            return;
+                        }
+                        let image = Image::from_rgba8(pixels);
+                        library.episode_pictures.borrow_mut().insert(id.clone(), Some(image.clone()));
+                        let rows = &library.episodes;
+                        if let Some(at) = rows.iter().position(|row| row.id.as_str() == id) {
+                            if let Some(mut row) = rows.row_data(at) {
+                                row.image = image;
+                                row.has_image = true;
+                                rows.set_row_data(at, row);
+                            }
+                        }
+                    });
+                }
+            }
+        }
     }
 
     fn show_season(&self, season: i32) {
@@ -1680,6 +1741,7 @@ impl Library {
             None => return,
         };
         self.episodes.set_vec(rows);
+        self.fill_episode_pictures();
         if let Some(ui) = self.ui.upgrade() {
             ui.set_season(season);
         }
@@ -1781,6 +1843,8 @@ fn episode_row(video: &Video) -> EpisodeRow {
         date: video.released.as_deref().and_then(|date| date.get(..10)).unwrap_or_default().into(),
         selected: false,
         watched: false,
+        has_picture: video.thumbnail.is_some(),
+        ..Default::default()
     }
 }
 

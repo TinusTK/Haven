@@ -131,13 +131,20 @@ struct StoreTests {
         #expect(try store.continueWatching(limit: 10).map(\.videoID) == ["a:1:2"])
     }
 
-    @Test func watchedElsewhereNeverReplacesWhatHavenHas() throws {
+    @Test func watchedElsewhereFinishesOnlyAnOlderPartialRecord() throws {
         let store = try Store.inMemory()
+        // Started here at 5, finished on the service at 9.
         try store.saveProgress(watched("a", "a:1:1", 100, false, 5))
-        #expect(try store.addWatchedElsewhere(watched("a", "a:1:1", 0, true, 9)) == false)
+        #expect(try store.addWatchedElsewhere(watched("a", "a:1:1", 0, true, 9)) == true)
+        #expect(try store.progress(kind: "series", titleID: "a", videoID: "a:1:1")?.finished == true)
+        // Played again here at 50 (a rewatch): an older watch leaves it be.
+        try store.saveProgress(watched("a", "a:1:3", 100, false, 50))
+        #expect(try store.addWatchedElsewhere(watched("a", "a:1:3", 0, true, 9)) == false)
+        #expect(try store.progress(kind: "series", titleID: "a", videoID: "a:1:3")?.finished == false)
         #expect(try store.addWatchedElsewhere(watched("a", "a:1:2", 0, false, 9)) == true)
-        #expect(try store.progress(kind: "series", titleID: "a", videoID: "a:1:1")?.finished == false)
         #expect(try store.progress(kind: "series", titleID: "a", videoID: "a:1:2")?.finished == true)
+        // Already finished: nothing changes.
+        #expect(try store.addWatchedElsewhere(watched("a", "a:1:2", 0, true, 99)) == false)
     }
 
     @Test func serversGetNumbersAndSigningInAgainKeepsTheNumber() throws {

@@ -352,15 +352,20 @@ final class Store: Sendable {
     }
 
     /// Records something watched elsewhere (brought in from a tracking
-    /// service) unless Haven already has a record of it. True if added.
+    /// service). A record Haven already has stays, unless it is partly
+    /// watched and was last played before the service's watch: then it
+    /// becomes finished. True if added or finished.
     @discardableResult
     func addWatchedElsewhere(_ p: WatchProgress) throws -> Bool {
         try write { d in
             try d.execute(
                 sql: """
-                INSERT OR IGNORE INTO progress (kind, title_id, video_id, title, detail, poster,
-                                                position, duration, finished, updated_at)
+                INSERT INTO progress (kind, title_id, video_id, title, detail, poster,
+                                      position, duration, finished, updated_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+                ON CONFLICT (kind, title_id, video_id) DO UPDATE SET
+                    finished = 1, position = 0, updated_at = excluded.updated_at
+                WHERE progress.finished = 0 AND excluded.updated_at > progress.updated_at
                 """,
                 arguments: [p.kind, p.titleID, p.videoID, p.title, p.detail, p.poster,
                             p.position, p.duration, p.updatedAt])

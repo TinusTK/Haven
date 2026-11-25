@@ -107,9 +107,44 @@ pub fn changes<'a>(have: &[String], wanted: &'a [Listed]) -> (Vec<&'a Listed>, V
     (add, remove)
 }
 
+/// On a computer, where people install add-ons of their own too: what to
+/// add and remove so the add-ons that came from the account (`followed`)
+/// match its list, leaving the rest alone. Also the new `followed`: what
+/// the account brought in (one already installed by hand is not taken).
+pub fn followed_changes<'a>(
+    have: &[String],
+    followed: &[String],
+    wanted: &'a [Listed],
+) -> (Vec<&'a Listed>, Vec<String>, Vec<String>) {
+    let add: Vec<&Listed> = wanted.iter().filter(|w| !have.contains(&w.url)).collect();
+    let listed = |url: &String| wanted.iter().any(|w| &w.url == url);
+    let remove = followed.iter().filter(|url| !listed(url) && have.contains(url)).cloned().collect();
+    let mut kept: Vec<String> = followed.iter().filter(|url| listed(url)).cloned().collect();
+    kept.extend(add.iter().map(|w| w.url.clone()));
+    (add, remove, kept)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn on_a_computer_only_the_accounts_own_add_ons_follow_it() {
+        let listed = |url: &str| Listed { url: url.into(), manifest: "{}".into() };
+        let have = vec!["mine".to_owned(), "both".to_owned(), "old".to_owned()];
+        let followed = vec!["old".to_owned()];
+        let wanted = vec![listed("both"), listed("new")];
+        let (add, remove, kept) = followed_changes(&have, &followed, &wanted);
+        assert_eq!(add.iter().map(|w| w.url.as_str()).collect::<Vec<_>>(), ["new"]);
+        // "old" came from the account and left it; "mine" was added by hand.
+        assert_eq!(remove, ["old"]);
+        // "both" was installed by hand first: signing out leaves it.
+        assert_eq!(kept, ["new"]);
+        // Signed out: only what the account brought in goes.
+        let (add, remove, kept) = followed_changes(&["mine".into(), "new".into()], &kept, &[]);
+        assert!(add.is_empty() && kept.is_empty());
+        assert_eq!(remove, ["new"]);
+    }
 
     #[test]
     fn a_sign_in_gives_the_key_and_email() {

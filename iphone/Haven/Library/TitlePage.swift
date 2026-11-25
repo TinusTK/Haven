@@ -382,7 +382,7 @@ final class TitlePage {
 
     /// The episodes of the open title watched to the end.
     private func finishedHere() -> Set<String> {
-        Set((try? library?.store.finishedVideos(kind: kind, titleID: id)) ?? [])
+        library?.finishedOf(kind: kind, titleID: id) ?? []
     }
 
     /// Marks one film or episode, here and (by sync) on the accounts.
@@ -395,6 +395,8 @@ final class TitlePage {
                                                              detail: detail, poster: poster, position: 0, duration: 0,
                                                              finished: true, updatedAt: nowMillis()))
             } else {
+                // A tick that came from a service under the IMDb id goes too.
+                library.forgetLinked(kind: kind, titleID: id, videoID: videoID)
                 try library.store.removeVideoProgress(kind: kind, titleID: id, videoID: videoID)
             }
             library.queueSync(on ? "watched" : "unwatched", kind, id, videoID)
@@ -428,7 +430,7 @@ final class TitlePage {
             markOne(videoID: id, detail: "", poster: meta?.poster ?? poster, on: true)
         } else {
             // Whatever was recorded for the film (its id may differ).
-            for video in (try? library.store.finishedVideos(kind: kind, titleID: id)) ?? [] {
+            for video in library.finishedOf(kind: kind, titleID: id) {
                 markOne(videoID: video, detail: "", poster: nil, on: false)
             }
             try? library.store.removeVideoProgress(kind: kind, titleID: id, videoID: id)

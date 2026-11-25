@@ -4,6 +4,11 @@
 pub const KEEP_AFTER: f64 = 30.0;
 /// From this share of the running time on, the title counts as watched.
 pub const WATCHED_FROM: f64 = 0.95;
+/// It also counts as watched with this little left (credits skipped,
+/// user 2026-11-25): at most 10 minutes, and at most a tenth of the
+/// running time, so a short episode is not marked halfway through.
+pub const WATCHED_LEFT: f64 = 600.0;
+pub const WATCHED_LEFT_SHARE: f64 = 0.10;
 /// Resuming starts this many seconds earlier, to pick the thread back up.
 pub const REWIND: f64 = 3.0;
 
@@ -24,7 +29,8 @@ pub fn judge(position: f64, duration: f64) -> Option<Watched> {
     if !position.is_finite() || !duration.is_finite() || duration <= 0.0 {
         return None;
     }
-    Some(if position >= duration * WATCHED_FROM {
+    let left = duration - position;
+    Some(if position >= duration * WATCHED_FROM || left <= WATCHED_LEFT.min(duration * WATCHED_LEFT_SHARE) {
         Watched::Finished
     } else if position >= KEEP_AFTER {
         Watched::Partway
@@ -61,6 +67,18 @@ mod tests {
         assert_eq!(judge(1800.0, 3600.0), Some(Watched::Partway));
         assert_eq!(judge(3420.0, 3600.0), Some(Watched::Finished));
         assert_eq!(judge(3600.0, 3600.0), Some(Watched::Finished));
+    }
+
+    #[test]
+    fn skipping_the_credits_still_counts_as_watched() {
+        // A 2 h film stopped 9 min before the end (credits): watched.
+        assert_eq!(judge(7200.0 - 540.0, 7200.0), Some(Watched::Finished));
+        assert_eq!(judge(7200.0 - 660.0, 7200.0), Some(Watched::Partway));
+        // A 45 min episode: the last 4.5 min (a tenth).
+        assert_eq!(judge(2700.0 - 260.0, 2700.0), Some(Watched::Finished));
+        assert_eq!(judge(2700.0 - 300.0, 2700.0), Some(Watched::Partway));
+        // A 22 min episode is not marked halfway through.
+        assert_eq!(judge(1320.0 - 600.0, 1320.0), Some(Watched::Partway));
     }
 
     #[test]

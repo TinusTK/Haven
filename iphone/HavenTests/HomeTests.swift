@@ -73,6 +73,24 @@ struct ReleasesTests {
         #expect(cards[2].episode == "Film" && !cards[2].soon)
         #expect(cards[1].picture == "https://p/1.jpg")
     }
+
+    @Test func releaseDayCountsDownByTheHour() {
+        let zone = TimeZone(identifier: "Australia/Adelaide")!
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = zone
+        func at(_ day: Int, _ hour: Int, _ minute: Int) -> Date {
+            calendar.date(from: DateComponents(year: 2026, month: 11, day: day, hour: hour, minute: minute))!
+        }
+        let day = Day(year: 2026, month: 11, day: 25)
+        let nine = Clock(hour: 21, minute: 0)
+        #expect(Releases.whenLabel(day: day, time: nine, now: at(25, 16, 10), zone: zone) == "In 4 h")
+        #expect(Releases.whenLabel(day: day, time: nine, now: at(25, 20, 15), zone: zone) == "In 45 min")
+        #expect(Releases.whenLabel(day: day, time: nine, now: at(25, 21, 0), zone: zone) == "Out now")
+        #expect(Releases.whenLabel(day: day, time: nil, now: at(25, 9, 0), zone: zone) == "Today")
+        #expect(Releases.whenLabel(day: day, time: nine, now: at(24, 23, 0), zone: zone) == "Tomorrow")
+        #expect(Releases.whenLabel(day: day, time: nil, now: at(19, 9, 0), zone: zone) == "In 6 days")
+        #expect(Releases.whenLabel(day: day, time: nil, now: at(18, 9, 0), zone: zone) == "Nov 25")
+    }
 }
 
 /// The Rust build's Home tests (home.rs), ported, and Home's model.

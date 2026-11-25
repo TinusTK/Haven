@@ -102,6 +102,17 @@ final class SettingsModel {
         changed()
     }
 
+    /// Apple's player instead of Haven's, for picture in picture.
+    var applePlayer: Bool {
+        _ = revision
+        return ApplePlayerSetting.isOn(store)
+    }
+
+    func setApplePlayer(_ on: Bool) {
+        do { try ApplePlayerSetting.set(on, store: store) } catch { Log.note("could not save that: \(error.localizedDescription)") }
+        changed()
+    }
+
     var passthrough: Bool { player.preferences.passthrough }
 
     func setPassthrough(_ on: Bool) { player.setPassthrough(on) }

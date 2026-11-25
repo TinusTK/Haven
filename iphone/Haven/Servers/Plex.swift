@@ -235,7 +235,8 @@ enum Plex {
             guard let episodeID = J.text(episode, "ratingKey") else { return nil }
             return Video(id: Servers.titleID(server: server.id, item: episodeID), title: J.text(episode, "title"),
                          season: J.number(episode, "parentIndex").map(J.whole), episode: J.number(episode, "index").map(J.whole),
-                         released: J.text(episode, "originallyAvailableAt"))
+                         released: J.text(episode, "originallyAvailableAt"),
+                         thumbnail: J.text(episode, "thumb").map { image(server, path: $0) })
         }
         meta.poster = J.text(item, "thumb").map { image(server, path: $0) }
         meta.background = J.text(item, "art").map { image(server, path: $0) }

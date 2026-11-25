@@ -223,6 +223,12 @@ enum Servers {
         return !parts.id.hasPrefix("tt")
     }
 
+    /// The IMDb id a gathered title's id spells, if it goes by one.
+    static func imdbIn(_ item: String) -> String? {
+        guard let parts = gatheredParts(item), parts.id.hasPrefix("tt") else { return nil }
+        return parts.id
+    }
+
     /// The same gathered title named by its IMDb id; nil if `item` is not a
     /// gathered title's id or already goes by one.
     static func byIMDb(_ item: String, imdb: String) -> String? {

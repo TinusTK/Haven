@@ -25,7 +25,7 @@ pub(super) struct HomeTop {
     /// Banner titles whose details have answered (or failed).
     settled: Cell<usize>,
     slides: Rc<VecModel<HeroSlide>>,
-    upcoming: Rc<VecModel<UpcomingCard>>,
+    pub(super) upcoming: Rc<VecModel<UpcomingCard>>,
     /// The wide picture of each Watchlist title, once loaded.
     pictures: RefCell<HashMap<(String, String), Image>>,
     /// Pictures asked for already.
@@ -351,12 +351,7 @@ impl Library {
             };
             let left = match known.get(&key) {
                 Some(Some((_, videos))) if progress.kind == "series" => {
-                    let finished: std::collections::HashSet<String> = self
-                        .store
-                        .finished_videos(&progress.kind, &progress.title_id)
-                        .unwrap_or_default()
-                        .into_iter()
-                        .collect();
+                    let finished = self.finished_of(&progress.kind, &progress.title_id);
                     episodes_left(videos, &progress.video_id, &finished, &today)
                 }
                 _ => 0,
@@ -451,6 +446,7 @@ mod tests {
             season: Some(s),
             episode: Some(e),
             released: Some(day.to_owned()),
+            thumbnail: None,
         };
         let videos = vec![
             video(0, 1, "2020-01-01"),

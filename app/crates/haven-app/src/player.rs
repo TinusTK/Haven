@@ -176,6 +176,8 @@ impl Player {
         connect!(on_player_choose_audio, |id| |p: &Rc<Self>| p.choose_audio(id));
         connect!(on_player_choose_subtitle, |id| |p: &Rc<Self>| p.choose_subtitle(id));
         connect!(on_player_toggle_fullscreen, | | |p: &Rc<Self>| p.toggle_fullscreen());
+        connect!(on_player_shrink, | | |p: &Rc<Self>| p.set_mini(true));
+        connect!(on_player_expand, | | |p: &Rc<Self>| p.set_mini(false));
         connect!(on_player_set_volume, |volume| |p: &Rc<Self>| p.set_volume(volume as f64));
         connect!(on_player_toggle_mute, | | |p: &Rc<Self>| p.toggle_mute());
         connect!(on_player_set_speed, |speed| |p: &Rc<Self>| p.set_speed(speed as f64));
@@ -349,6 +351,7 @@ impl Player {
         self.tracks_shown.borrow_mut().clear();
         self.seek_held.set(None);
         ui.set_player_open(true);
+        ui.set_player_mini(false);
         phone_bars(&ui, false);
 
         let address = request.address.clone();
@@ -668,6 +671,7 @@ impl Player {
             }
             ui.set_player_fullscreen(false);
             ui.set_player_open(false);
+            ui.set_player_mini(false);
             phone_bars(&ui, true);
             ui.set_player_frame(Image::default());
         }
@@ -688,6 +692,7 @@ impl Player {
             }
             ui.set_player_fullscreen(false);
             ui.set_player_open(false);
+            ui.set_player_mini(false);
             phone_bars(&ui, true);
             ui.set_player_frame(Image::default());
         }
@@ -741,6 +746,18 @@ impl Player {
     /// 0 turns subtitles off.
     fn choose_subtitle(&self, id: i32) {
         self.video.borrow().select_subtitle((id > 0).then_some(id as i64));
+    }
+
+    /// Picture in picture: shrinks the player to a corner of Haven (out
+    /// of full screen first) so the pages can be used, or puts it back.
+    fn set_mini(&self, mini: bool) {
+        let Some(ui) = self.ui.upgrade() else { return };
+        if mini && ui.window().is_fullscreen() {
+            ui.window().set_fullscreen(false);
+            ui.set_player_fullscreen(false);
+        }
+        ui.set_player_menu(0);
+        ui.set_player_mini(mini);
     }
 
     fn toggle_fullscreen(&self) {

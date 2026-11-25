@@ -302,51 +302,90 @@ private struct EpisodeList: View {
     }
 }
 
-/// One episode: its number, name and date, and the round mark at the end.
+/// One episode: its number, name and date, and the round mark. With a
+/// still (as Stremio shows it) the picture comes first, the mark on its
+/// corner; without one the mark sits at the end.
 private struct EpisodeItem: View {
     let episode: EpisodeRow
     let open: () -> Void
     let toggle: () -> Void
 
-    var body: some View {
-        HStack(spacing: 12) {
-            Button(action: open) {
-                HStack(spacing: 12) {
-                    Text(episode.number)
-                        .font(Palette.font(14, .semibold))
-                        .foregroundStyle(Palette.accent)
-                        .frame(width: 44, alignment: .leading)
-                    Text(episode.title)
-                        .font(Palette.font(14))
-                        .foregroundStyle(Palette.text)
-                        .lineLimit(1)
-                    Spacer(minLength: 0)
-                    Text(episode.date)
-                        .font(Palette.font(12))
-                        .foregroundStyle(Palette.textDim)
+    private var mark: some View {
+        Button(action: toggle) {
+            Group {
+                if episode.watched {
+                    WatchedTick(size: 24)
+                } else {
+                    Circle().strokeBorder(episode.picture == nil ? Palette.textDim.opacity(0.5) : Color.white.opacity(0.7),
+                                          lineWidth: 1.5)
+                        .background(Circle().fill(episode.picture == nil ? Color.clear : Color.black.opacity(0.35)))
+                        .frame(width: 24, height: 24)
                 }
-                .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("\(episode.number) \(episode.title)")
-            Button(action: toggle) {
-                Group {
-                    if episode.watched {
-                        WatchedTick(size: 24)
-                    } else {
-                        Circle().strokeBorder(Palette.textDim.opacity(0.5), lineWidth: 1.5).frame(width: 24, height: 24)
-                    }
-                }
-                .frame(width: 30, height: 44)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel(episode.watched ? "Watched. Mark unwatched" : "Mark watched")
+            .frame(width: 30, height: episode.picture == nil ? 44 : 30)
+            .contentShape(Rectangle())
         }
-        .padding(.horizontal, 14)
-        .frame(height: 44)
-        .background(RoundedRectangle(cornerRadius: 8).fill(episode.selected ? Palette.selected : Palette.surface))
-        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Palette.border, lineWidth: 1))
+        .buttonStyle(.plain)
+        .accessibilityLabel(episode.watched ? "Watched. Mark unwatched" : "Mark watched")
+    }
+
+    var body: some View {
+        if let picture = episode.picture {
+            HStack(spacing: 12) {
+                Button(action: open) {
+                    HStack(spacing: 12) {
+                        RemotePicture(url: picture, size: .wide) { Palette.background }
+                            .frame(width: 114, height: 64)
+                            .clipShape(RoundedRectangle(cornerRadius: 6))
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(episode.number.isEmpty ? episode.title : "\(episode.number) · \(episode.title)")
+                                .font(Palette.font(14, .semibold))
+                                .foregroundStyle(Palette.text)
+                                .lineLimit(2)
+                            Text(episode.date)
+                                .font(Palette.font(12))
+                                .foregroundStyle(Palette.textDim)
+                        }
+                        Spacer(minLength: 0)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("\(episode.number) \(episode.title)")
+            }
+            .overlay(alignment: .topLeading) { mark.offset(x: 114 - 30 + 2, y: 0) }
+            .padding(7)
+            .frame(height: 78)
+            .background(RoundedRectangle(cornerRadius: 8).fill(episode.selected ? Palette.selected : Palette.surface))
+            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Palette.border, lineWidth: 1))
+        } else {
+            HStack(spacing: 12) {
+                Button(action: open) {
+                    HStack(spacing: 12) {
+                        Text(episode.number)
+                            .font(Palette.font(14, .semibold))
+                            .foregroundStyle(Palette.accent)
+                            .frame(width: 44, alignment: .leading)
+                        Text(episode.title)
+                            .font(Palette.font(14))
+                            .foregroundStyle(Palette.text)
+                            .lineLimit(1)
+                        Spacer(minLength: 0)
+                        Text(episode.date)
+                            .font(Palette.font(12))
+                            .foregroundStyle(Palette.textDim)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("\(episode.number) \(episode.title)")
+                mark
+            }
+            .padding(.horizontal, 14)
+            .frame(height: 44)
+            .background(RoundedRectangle(cornerRadius: 8).fill(episode.selected ? Palette.selected : Palette.surface))
+            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Palette.border, lineWidth: 1))
+        }
     }
 }
 

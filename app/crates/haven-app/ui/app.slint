@@ -80,6 +80,11 @@ export struct EpisodeRow {
     selected: bool,
     // Watched to the end.
     watched: bool,
+    // The source has a still of the episode (the row is laid out for it),
+    // and the still itself once it has come.
+    has-picture: bool,
+    image: image,
+    has-image: bool,
 }
 
 export struct StreamRow {
@@ -1208,10 +1213,12 @@ component Chip inherits Rectangle {
 component EpisodeItem inherits Rectangle {
     in property <EpisodeRow> episode;
     callback clicked();
-    // The round mark at the end: watched or not.
+    // The round mark: watched or not.
     callback toggle-watched();
 
-    height: 44px;
+    // With a still (as Stremio shows it): the picture on the left with the
+    // mark on its corner, the name and date beside it.
+    height: episode.has-picture ? 78px : 44px;
     border-radius: 8px;
     background: episode.selected ? Theme.selected : touch.has-hover ? Theme.hover : Theme.surface;
     border-width: 1px;
@@ -1224,7 +1231,62 @@ component EpisodeItem inherits Rectangle {
         mouse-cursor: pointer;
         clicked => { root.clicked(); }
     }
-    HorizontalLayout {
+    if root.episode.has-picture: HorizontalLayout {
+        padding: 7px;
+        padding-right: 14px;
+        spacing: 12px;
+        Rectangle {
+            width: 114px;
+            border-radius: 6px;
+            clip: true;
+            background: Theme.background;
+            if root.episode.has-image: Image {
+                width: parent.width;
+                height: parent.height;
+                source: root.episode.image;
+                image-fit: cover;
+            }
+            // Tap to mark watched (gold tick) or unwatched (empty ring).
+            Rectangle {
+                x: parent.width - self.width - 4px;
+                y: 4px;
+                width: 26px;
+                height: 26px;
+                thumb-mark := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { root.toggle-watched(); }
+                }
+                if root.episode.watched: WatchedTick { size: 24px; }
+                if !root.episode.watched: Rectangle {
+                    width: 24px;
+                    height: 24px;
+                    border-radius: 12px;
+                    background: #11131a80;
+                    border-width: 1.5px;
+                    border-color: thumb-mark.has-hover ? Theme.accent : #ffffffb0;
+                    accessible-role: button;
+                    accessible-label: "Mark watched";
+                    accessible-action-default => { root.toggle-watched(); }
+                }
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            spacing: 4px;
+            Text {
+                text: (root.episode.number != "" ? root.episode.number + " · " : "") + root.episode.title;
+                color: Theme.text;
+                font-weight: 600;
+                overflow: elide;
+            }
+            Text {
+                text: root.episode.date;
+                color: Theme.text-dim;
+                font-size: 12px;
+            }
+        }
+    }
+    if !root.episode.has-picture: HorizontalLayout {
         padding-left: 14px;
         padding-right: 14px;
         spacing: 12px;
@@ -1754,6 +1816,111 @@ component StepRow inherits Rectangle {
     }
 }
 
+// The player shrunk to a small window over Haven's pages (picture in
+// picture). Drag it anywhere in the window; it stays inside. The big
+// button puts it back to fill the window.
+component MiniPlayer inherits Rectangle {
+    in property <image> frame;
+    in property <string> title;
+    in property <string> subtitle;
+    in property <bool> paused;
+    in property <bool> busy;
+    in property <float> position;
+    in property <float> duration;
+    callback expand();
+    callback toggle-pause();
+    callback close();
+
+    private property <length> margin: 20px;
+    // Where it sits, from the bottom-right corner (it starts there).
+    in-out property <length> from-right: 20px;
+    in-out property <length> from-bottom: 20px;
+
+    width: min(380px, max(240px, root.parent-width * 0.3));
+    height: self.width * 9 / 16;
+    x: max(0px, root.parent-width - self.width - self.from-right);
+    y: max(0px, root.parent-height - self.height - self.from-bottom);
+    border-radius: 12px;
+    clip: true;
+    background: black;
+    drop-shadow-blur: 24px;
+    drop-shadow-color: #00000099;
+
+    Image {
+        width: parent.width;
+        height: parent.height;
+        source: root.frame;
+        image-fit: contain;
+    }
+    // Dragging moves it; a double click puts it back full size.
+    drag := TouchArea {
+        mouse-cursor: self.pressed ? grabbing : grab;
+        private property <length> start-right;
+        private property <length> start-bottom;
+        pointer-event(event) => {
+            if (event.kind == PointerEventKind.down) {
+                self.start-right = root.from-right;
+                self.start-bottom = root.from-bottom;
+            }
+        }
+        moved => {
+            root.from-right = clamp(self.start-right - (self.mouse-x - self.pressed-x), 0px, root.parent-width - root.width);
+            root.from-bottom = clamp(self.start-bottom - (self.mouse-y - self.pressed-y), 0px, root.parent-height - root.height);
+        }
+        double-clicked => { root.expand(); }
+    }
+    in property <length> parent-width;
+    in property <length> parent-height;
+
+    private property <bool> shown: drag.has-hover || pause.hovered || grow.hovered || stop.hovered || root.paused || root.busy;
+    // The bar and buttons, over the picture while the pointer is on it.
+    Rectangle {
+        opacity: root.shown ? 1 : 0;
+        animate opacity { duration: 150ms; }
+        background: @linear-gradient(180deg, #000000a0 0%, #00000000 40%, #00000000 60%, #000000a0 100%);
+        Text {
+            x: 12px;
+            y: 10px;
+            width: parent.width - 60px;
+            text: root.subtitle != "" ? root.title + " · " + root.subtitle : root.title;
+            color: white;
+            font-size: 13px;
+            font-weight: 600;
+            overflow: elide;
+        }
+        HorizontalLayout {
+            y: parent.height - self.height - 10px;
+            height: 36px;
+            padding-left: 8px;
+            padding-right: 8px;
+            spacing: 4px;
+            pause := PlayerButton {
+                label: root.busy ? "…" : root.paused ? "Play" : "Pause";
+                clicked => { root.toggle-pause(); }
+            }
+            Rectangle { horizontal-stretch: 1; }
+            grow := PlayerButton {
+                label: "Full size";
+                name: "Back to full size";
+                clicked => { root.expand(); }
+            }
+            stop := PlayerButton {
+                label: "✕";
+                name: "Stop playing";
+                clicked => { root.close(); }
+            }
+        }
+        // How far it has played.
+        Rectangle {
+            y: parent.height - 3px;
+            height: 3px;
+            width: root.duration > 0 ? parent.width * clamp(root.position / root.duration, 0, 1) : 0px;
+            x: 0px;
+            background: #f2c66d;
+        }
+    }
+}
+
 component PlayerView inherits Rectangle {
     in property <image> frame;
     in property <string> title;
@@ -1815,12 +1982,15 @@ component PlayerView inherits Rectangle {
     callback cancel-next();
     // The bars came up or went away (subtitles move out of their way).
     callback controls-shown(bool);
+    // Picture in picture: the player shrinks to a corner of Haven.
+    in property <bool> can-shrink;
+    callback shrink();
 
     // Which list is open: 0 none, 1 audio, 2 subtitles, 3 speed,
     // 4 picture, 5 info.
     in-out property <int> menu: 0;
     private property <bool> controls: true;
-    private property <bool> on-controls: top-touch.has-hover || bottom-touch.has-hover || back.hovered || bar.hovered || mute.hovered || level.hovered || audio.hovered || subs.hovered || pace.hovered || shape.hovered || about.hovered || following.hovered || full.hovered || rewind.hovered || play.hovered || forward.hovered;
+    private property <bool> on-controls: top-touch.has-hover || bottom-touch.has-hover || back.hovered || bar.hovered || mute.hovered || level.hovered || audio.hovered || subs.hovered || pace.hovered || shape.hovered || about.hovered || following.hovered || mini.hovered || full.hovered || rewind.hovered || play.hovered || forward.hovered;
     private property <bool> pinned: root.paused || root.busy || root.menu != 0 || root.error != "" || root.on-controls || root.next-countdown >= 0;
     // Set by the app: a subtitle track is showing.
     in property <bool> any-subtitle;
@@ -2161,6 +2331,11 @@ component PlayerView inherits Rectangle {
                     label: "Next ›";
                     name: "Next episode: " + root.next-title;
                     clicked => { root.next(); }
+                }
+                mini := PlayerButton {
+                    visible: root.can-shrink;
+                    label: "Picture in picture";
+                    clicked => { root.shrink(); }
                 }
                 full := PlayerButton {
                     label: root.fullscreen ? "Exit full screen" : "Full screen";
@@ -2908,6 +3083,13 @@ export component AppWindow inherits Window {
     in property <bool> can-play-channels;
 
     in property <bool> player-open;
+    // The player shrunk to a small window in a corner while Haven is used
+    // (computers only): the pages show, the video keeps playing.
+    in property <bool> player-mini;
+    // The player filling the window.
+    private property <bool> player-full: root.player-open && !root.player-mini;
+    callback player-shrink();
+    callback player-expand();
     in property <image> player-frame;
     in property <string> player-title;
     in property <string> player-subtitle;
@@ -3036,7 +3218,7 @@ export component AppWindow inherits Window {
     // On a phone: Explore shows its list of sources, not the titles.
     in-out property <bool> explore-picking;
     // The navigation bar along the bottom.
-    private property <length> nav-height: root.player-open ? 0px : (root.compact ? 78px : 92px) + root.safe-area-insets.bottom;
+    private property <length> nav-height: root.player-full ? 0px : (root.compact ? 78px : 92px) + root.safe-area-insets.bottom;
     // Something fills Home: the built-in catalogue's shelves (and any
     // add-on's), a media server or the TMDB catalogue.
     private property <bool> home-has-sources: root.shelves.length > 0 || root.servers.length > 0 || root.catalog-shelves.length > 0;
@@ -3182,7 +3364,7 @@ export component AppWindow inherits Window {
     // Pulled down: load Home afresh.
     callback home-refresh();
     in property <bool> home-refreshing;
-    out property <bool> home-showing: !root.detail-open && !root.player-open && root.page == root.home-page;
+    out property <bool> home-showing: !root.detail-open && !root.player-full && root.page == root.home-page;
     changed home-showing => { root.home-showing-changed(root.home-showing); }
     callback show-more-streams(string);
     callback player-close();
@@ -3258,11 +3440,11 @@ export component AppWindow inherits Window {
         }
     VerticalLayout {
         // Clear of the phone's status bar (nothing on a computer).
-        padding-top: root.player-open ? 0px : root.safe-area-insets.top;
+        padding-top: root.player-full ? 0px : root.safe-area-insets.top;
     HorizontalLayout {
         vertical-stretch: 1;
         Rectangle {
-            visible: !root.player-open;
+            visible: !root.player-full;
             horizontal-stretch: 1;
 
             if root.detail-open: detail-view := Rectangle {
@@ -6737,7 +6919,7 @@ export component AppWindow inherits Window {
     }
         // Along the bottom: Haven's pages as icon buttons on a floating
         // bar, and Settings as a round button beside it.
-        if !root.player-open: nav-strip := Rectangle {
+        if !root.player-full: nav-strip := Rectangle {
             height: root.nav-height;
             background: Theme.background;
             if !root.compact && self.width > 1080px: HorizontalLayout {
@@ -6879,7 +7061,7 @@ export component AppWindow inherits Window {
     }
 
     // Choosing the Favourites groups of one channel, over the page.
-    if root.fav-open && !root.player-open: Rectangle {
+    if root.fav-open && !root.player-full: Rectangle {
         background: #000000a0;
         TouchArea {
             clicked => { root.fav-close(); }
@@ -6946,7 +7128,7 @@ export component AppWindow inherits Window {
     }
 
     // What is playing on a Chromecast, along the bottom of every page.
-    if root.casting && !root.player-open: Rectangle {
+    if root.casting && !root.player-full: Rectangle {
         x: 0;
         y: parent.height - self.height - root.nav-height;
         width: parent.width;
@@ -7007,8 +7189,25 @@ export component AppWindow inherits Window {
     }
     }
 
-    if root.player-open: PlayerView {
+    if root.player-open && root.player-mini: MiniPlayer {
+        parent-width: root.width;
+        parent-height: root.height - root.nav-height;
         frame: root.player-frame;
+        title: root.player-title;
+        subtitle: root.player-subtitle;
+        paused: root.player-paused;
+        busy: root.player-busy;
+        position: root.player-position;
+        duration: root.player-duration;
+        expand => { root.player-expand(); }
+        toggle-pause => { root.player-toggle-pause(); }
+        close => { root.player-close(); }
+    }
+
+    if root.player-full: PlayerView {
+        frame: root.player-frame;
+        can-shrink: !Device.touch;
+        shrink => { root.player-shrink(); }
         title: root.player-title;
         subtitle: root.player-subtitle;
         paused: root.player-paused;

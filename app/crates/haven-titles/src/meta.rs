@@ -78,6 +78,9 @@ pub struct Video {
     /// When it first aired, as an ISO date.
     #[serde(default, deserialize_with = "lenient::text_or_number")]
     pub released: Option<String>,
+    /// A still from the episode (a web address), if the source has one.
+    #[serde(default, deserialize_with = "lenient::text_or_number", skip_serializing_if = "Option::is_none")]
+    pub thumbnail: Option<String>,
 }
 
 impl MetaDetail {

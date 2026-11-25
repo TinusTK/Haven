@@ -199,12 +199,44 @@ enum Releases {
         var episode: String
         /// "S03E05", or "S03E07–E08" when more come the same day.
         var badge: String
-        /// "Today", "Tomorrow", "In 4 days", "Nov 5".
+        /// "Today", "Tomorrow", "In 4 days", "Nov 5" (as built; on show,
+        /// `when(at:)` keeps it up to date).
         var when: String
         /// Less than a week away: the pill is gold.
         var soon: Bool
         /// The title's wide picture (else its poster).
         var picture: String?
+        /// When it comes out (local).
+        var day: Day
+        var time: Clock?
+
+        /// The label at `now`: on the day it counts down by the hour.
+        func when(at now: Date, zone: TimeZone = .current) -> String {
+            Releases.whenLabel(day: day, time: time, now: now, zone: zone)
+        }
+    }
+
+    /// How soon something out on `day` (at `time`, when known) comes out,
+    /// seen at `now`: "Nov 5", "In 6 days", "Tomorrow", and on the day
+    /// "In 5 h", "In 40 min", "Out now" (or "Today" with no time).
+    static func whenLabel(day: Day, time: Clock?, now: Date, zone: TimeZone = .current) -> String {
+        let days = Day(now, zone).days(to: day)
+        switch days {
+        case ...0:
+            guard let time else { return "Today" }
+            var calendar = Calendar(identifier: .gregorian)
+            calendar.timeZone = zone
+            guard let out = calendar.date(from: DateComponents(year: day.year, month: day.month, day: day.day,
+                                                               hour: time.hour, minute: time.minute)) else { return "Today" }
+            let minutes = Int(out.timeIntervalSince(now) / 60)
+            if minutes <= 0 { return "Out now" }
+            if minutes < 60 { return "In \(minutes) min" }
+            // Whole hours left: 4 h 50 min reads "In 4 h".
+            return "In \(minutes / 60) h"
+        case 1: return "Tomorrow"
+        case 2 ... 6: return "In \(days) days"
+        default: return "\(months[day.month - 1].prefix(3)) \(day.day)"
+        }
     }
 
     /// Home's Upcoming row: from today on, one card a show (its next
@@ -238,7 +270,7 @@ enum Releases {
             let days = today.days(to: release.day)
             let when: String
             switch days {
-            case 0: when = "Today"
+            case 0: when = release.time == nil ? "Today" : whenLabel(day: release.day, time: release.time, now: Date())
             case 1: when = "Tomorrow"
             case 2 ... 6: when = "In \(days) days"
             default: when = "\(months[release.day.month - 1].prefix(3)) \(release.day.day)"
@@ -253,7 +285,8 @@ enum Releases {
                 badge = release.number
             }
             return Card(id: title.id, kind: title.kind, video: release.video, title: name, episode: episode,
-                        badge: badge, when: when, soon: days < 7, picture: pictures[title])
+                        badge: badge, when: when, soon: days < 7, picture: pictures[title],
+                        day: release.day, time: release.time)
         }
         .prefix(12)
         .map { $0 }

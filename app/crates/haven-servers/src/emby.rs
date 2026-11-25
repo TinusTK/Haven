@@ -384,6 +384,11 @@ pub(crate) fn read_detail(server: &Server, detail: &Value, episodes: &Value) -> 
                 season: number(episode, "ParentIndexNumber").map(|n| n as u32),
                 episode: number(episode, "IndexNumber").map(|n| n as u32),
                 released: text(episode, "PremiereDate"),
+                // The episode's own still, if the server has one.
+                thumbnail: remote_image(episode, "Primary").or_else(|| {
+                    let tag = poster_tag(episode)?;
+                    Some(image(server, &text(episode, "Id")?, "Primary", 360, Some(&tag)))
+                }),
             })
         })
         .collect();

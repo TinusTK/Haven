@@ -142,13 +142,17 @@ struct Video: Equatable, Sendable, Codable {
     var episode: Int?
     /// When it first aired, as an ISO date.
     var released: String?
+    /// A still from the episode (a web address), if the source has one.
+    var thumbnail: String?
 
-    init(id: String, title: String? = nil, season: Int? = nil, episode: Int? = nil, released: String? = nil) {
+    init(id: String, title: String? = nil, season: Int? = nil, episode: Int? = nil, released: String? = nil,
+         thumbnail: String? = nil) {
         self.id = id
         self.title = title
         self.season = season
         self.episode = episode
         self.released = released
+        self.thumbnail = thumbnail
     }
 
     init(json o: JSONObject) throws {
@@ -158,6 +162,7 @@ struct Video: Equatable, Sendable, Codable {
         season = o.number("season")
         episode = o.raw["episode"] != nil ? o.number("episode") : o.number("number")
         released = o.textOrNumber("released")
+        thumbnail = o.textOrNumber("thumbnail")
     }
 }
 

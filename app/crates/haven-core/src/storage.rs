@@ -570,12 +570,17 @@ impl Store {
     }
 
     /// Records something watched elsewhere (brought in from a tracking
-    /// service) unless Haven already has a record of it.
+    /// service). A record Haven already has stays, unless it is partly
+    /// watched and was last played before the service's watch: then it
+    /// becomes finished (started here, finished somewhere else).
     pub fn add_watched_elsewhere(&self, progress: &Progress) -> Result<bool> {
         let added = self.conn.execute(
-            "INSERT OR IGNORE INTO progress (kind, title_id, video_id, title, detail, poster,
+            "INSERT INTO progress (kind, title_id, video_id, title, detail, poster,
                                    position, duration, finished, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 1, ?9)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 1, ?9)
+             ON CONFLICT (kind, title_id, video_id) DO UPDATE SET
+                 finished = 1, position = 0, updated_at = excluded.updated_at
+             WHERE progress.finished = 0 AND excluded.updated_at > progress.updated_at",
             rusqlite::params![
                 progress.kind, progress.title_id, progress.video_id, progress.title, progress.detail,
                 progress.poster, progress.position, progress.duration, progress.updated_at,
@@ -789,6 +794,21 @@ mod tests {
             finished,
             updated_at: at,
         }
+    }
+
+    #[test]
+    fn watched_elsewhere_finishes_an_older_partial_record_only() {
+        let store = Store::in_memory().unwrap();
+        // Started here at 100, finished on the service at 200.
+        store.save_progress(&watched("tt1", "tt1:1:1", 900.0, false, 100)).unwrap();
+        assert!(store.add_watched_elsewhere(&watched("tt1", "tt1:1:1", 0.0, true, 200)).unwrap());
+        assert!(store.progress("series", "tt1", "tt1:1:1").unwrap().unwrap().finished);
+        // Played again here at 500 (a rewatch): an older watch leaves it be.
+        store.save_progress(&watched("tt1", "tt1:1:2", 900.0, false, 500)).unwrap();
+        assert!(!store.add_watched_elsewhere(&watched("tt1", "tt1:1:2", 0.0, true, 200)).unwrap());
+        assert!(!store.progress("series", "tt1", "tt1:1:2").unwrap().unwrap().finished);
+        // Already finished: nothing changes.
+        assert!(!store.add_watched_elsewhere(&watched("tt1", "tt1:1:1", 0.0, true, 900)).unwrap());
     }
 
     #[test]

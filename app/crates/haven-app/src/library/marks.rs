@@ -68,6 +68,8 @@ impl Library {
                 updated_at: now_ms(),
             })
         } else {
+            // A tick that came from a service under the IMDb id goes too.
+            self.forget_linked(kind, title_id, video_id);
             self.store.remove_video_progress(kind, title_id, video_id)
         };
         match done {
@@ -131,7 +133,7 @@ impl Library {
             self.mark_one(&kind, &title_id, &title_id, &name, "", poster, true);
         } else {
             // Whatever was recorded for the film (its id may differ).
-            for video in self.store.finished_videos(&kind, &title_id).unwrap_or_default() {
+            for video in self.finished_of(&kind, &title_id) {
                 self.mark_one(&kind, &title_id, &video, &name, "", None, false);
             }
             let _ = self.store.remove_video_progress(&kind, &title_id, &title_id);
@@ -159,6 +161,7 @@ mod tests {
             season: Some(season),
             episode: Some(episode),
             released: released.map(str::to_owned),
+            thumbnail: None,
         }
     }
 

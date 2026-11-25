@@ -226,7 +226,10 @@ enum Emby {
             return Video(id: Servers.titleID(server: server.id, item: episodeID), title: J.text(episode, "Name"),
                          season: J.number(episode, "ParentIndexNumber").map(J.whole),
                          episode: J.number(episode, "IndexNumber").map(J.whole),
-                         released: J.text(episode, "PremiereDate"))
+                         released: J.text(episode, "PremiereDate"),
+                         // The episode's own still, if the server has one.
+                         thumbnail: remoteImage(episode, kind: "Primary")
+                             ?? posterTag(episode).map { image(server, item: episodeID, which: "Primary", height: 360, tag: $0) })
         }
         meta.poster = remoteImage(detail, kind: "Primary")
             ?? image(server, item: id, which: "Primary", height: 450, tag: posterTag(detail))

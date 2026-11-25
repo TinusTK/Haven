@@ -63,6 +63,10 @@ final class AppModel {
     let player: PlayerModel
     /// A film or episode playing over AirPlay in Apple's player.
     private(set) var airPlay: AirPlaySession?
+    #if os(iOS)
+    /// Apple's player, when chosen in Settings (for picture in picture).
+    @ObservationIgnored private let applePlayer = ApplePlayer()
+    #endif
     let notes = WhatsNew.builtIn
     /// The Library's part showing: 0 Local, 1 Downloads, 2 Watchlist, 3 History.
     var libraryTab = 0
@@ -95,7 +99,13 @@ final class AppModel {
             library.marked()
             library.title.refreshTicks()
         }
-        library.queueSync = { [tracker] in tracker.queue($0, kind: $1, titleID: $2, videoID: $3) }
+        // The services go by IMDb id: a title known by a media server's id
+        // is sent under its IMDb id (one with none is not sent).
+        library.queueSync = { [tracker, weak library] what, kind, titleID, videoID in
+            guard let ids = library?.serviceIDs(kind: kind, titleID: titleID, videoID: videoID) else { return }
+            tracker.queue(what, kind: kind, titleID: ids.titleID, videoID: ids.videoID)
+        }
+        tracker.pulledAll = { [weak library] in library?.sendMissingLinked() }
         player = PlayerModel(store: core.store)
         live = LiveTVModel(store: core.store)
         calendar = CalendarModel(library: library)
@@ -160,6 +170,19 @@ final class AppModel {
             }
             return
         }
+        #if os(iOS)
+        if !AirPlay.isChosen && ApplePlayerSetting.isOn(store) {
+            Task {
+                if await AirPlay.canSend(request.address) {
+                    startApplePlayer(request)
+                } else {
+                    if fromTitle { page.playNote = ApplePlayerSetting.cannotPlay }
+                    player.play(request)
+                }
+            }
+            return
+        }
+        #endif
         guard AirPlay.isChosen else { return player.play(request) }
         Task {
             if await AirPlay.canSend(request.address) {
@@ -172,8 +195,9 @@ final class AppModel {
         }
     }
 
-    private func startAirPlay(_ request: PlayRequest) {
-        airPlay?.stop()
+    /// A session of Apple's player for `request`, from its resume point,
+    /// keeping the place as Haven's player does.
+    private func appleSession(_ request: PlayRequest) -> AirPlaySession {
         var start: Double?
         if let saved = try? store.progress(kind: request.kind, titleID: request.titleID, videoID: request.videoID) {
             start = Resume.from(position: saved.position, duration: saved.duration, finished: saved.finished)
@@ -183,6 +207,29 @@ final class AppModel {
         session.progress = { position, duration in
             PlayerModel.remember(request, position: position, duration: duration, store: store)
         }
+        return session
+    }
+
+    #if os(iOS)
+    /// Plays in Apple's player full screen, with picture in picture.
+    private func startApplePlayer(_ request: PlayRequest) {
+        if player.open { player.close() }
+        let session = appleSession(request)
+        session.finished = { [weak self, weak session] in
+            guard let self, let session else { return }
+            library.playerClosed(PlayerModel.played(request, position: session.position, duration: session.duration, failed: false))
+            if let why = session.failure, !request.titleID.isEmpty {
+                library.title?.playNote = "Apple's player stopped: \(why)."
+            }
+            applePlayer.stop()
+        }
+        applePlayer.play(session)
+    }
+    #endif
+
+    private func startAirPlay(_ request: PlayRequest) {
+        airPlay?.stop()
+        let session = appleSession(request)
         session.finished = { [weak self, weak session] in
             guard let self, let session else { return }
             let played = PlayerModel.played(request, position: session.position, duration: session.duration, failed: false)

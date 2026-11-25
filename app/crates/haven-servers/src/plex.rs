@@ -330,6 +330,7 @@ pub(crate) fn read_detail(server: &Server, detail: &Value, episodes: &Value) -> 
                 season: number(episode, "parentIndex").map(|n| n as u32),
                 episode: number(episode, "index").map(|n| n as u32),
                 released: text(episode, "originallyAvailableAt"),
+                thumbnail: text(episode, "thumb").map(|thumb| image(server, &thumb)),
             })
         })
         .collect();

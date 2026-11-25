@@ -212,6 +212,11 @@ private struct GeneralSettings: View {
             .pickerStyle(.menu)
             .tint(Palette.accent)
             Note(text: "Another player app (VLC, Infuse or Outplayer) must be installed. Downloads and the videos in Haven › Videos always play in Haven's own player, and resuming, Continue Watching and the next episode only work there.")
+            SettingsRow(label: "Use Apple's player",
+                        detail: "For picture in picture: the video keeps playing in a small window while you use Haven or other apps.") {
+                HavenToggle(label: "Use Apple's player", on: settings.applePlayer) { settings.setApplePlayer($0) }
+            }
+            Note(text: "Haven's own player is used when this is off. Apple's player plays MP4, MOV and HLS streams but not MKV and some others; those still play in Haven's player. It keeps your place and Continue Watching, but has no Haven subtitle settings and does not start the next episode by itself.")
             SettingsRow(label: "Send surround sound to a receiver untouched",
                         detail: "For an AV receiver or soundbar: needed for Dolby Atmos and DTS:X.") {
                 HavenToggle(label: "Send surround sound to a receiver untouched", on: settings.passthrough) { settings.setPassthrough($0) }

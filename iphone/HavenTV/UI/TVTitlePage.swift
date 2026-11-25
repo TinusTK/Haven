@@ -168,14 +168,30 @@ private struct TVEpisodes: View {
                         TVRow(selected: episode.selected) {
                             page.openEpisode(episode.id)
                         } content: {
-                            Text(episode.number)
-                                .font(Palette.font(24, .semibold))
-                                .foregroundStyle(Palette.accent)
-                                .frame(width: 90, alignment: .leading)
-                            Text(episode.title).font(Palette.font(26)).foregroundStyle(Palette.text).lineLimit(1)
-                            Spacer(minLength: 0)
-                            Text(episode.date).font(Palette.font(22)).foregroundStyle(Palette.textDim)
-                            if episode.watched { WatchedTick(size: 34) }
+                            if let picture = episode.picture {
+                                // The episode's still, the tick on its corner (as Stremio shows it).
+                                RemotePicture(url: picture, size: .wide) { Palette.background }
+                                    .frame(width: 192, height: 108)
+                                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                                    .overlay(alignment: .topTrailing) {
+                                        if episode.watched { WatchedTick(size: 34).padding(6) }
+                                    }
+                                VStack(alignment: .leading, spacing: 6) {
+                                    Text(episode.number.isEmpty ? episode.title : "\(episode.number) · \(episode.title)")
+                                        .font(Palette.font(26, .semibold)).foregroundStyle(Palette.text).lineLimit(2)
+                                    Text(episode.date).font(Palette.font(22)).foregroundStyle(Palette.textDim)
+                                }
+                                Spacer(minLength: 0)
+                            } else {
+                                Text(episode.number)
+                                    .font(Palette.font(24, .semibold))
+                                    .foregroundStyle(Palette.accent)
+                                    .frame(width: 90, alignment: .leading)
+                                Text(episode.title).font(Palette.font(26)).foregroundStyle(Palette.text).lineLimit(1)
+                                Spacer(minLength: 0)
+                                Text(episode.date).font(Palette.font(22)).foregroundStyle(Palette.textDim)
+                                if episode.watched { WatchedTick(size: 34) }
+                            }
                         }
                         .contextMenu {
                             Button(episode.watched ? "Mark unwatched" : "Mark watched") {

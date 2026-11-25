@@ -148,9 +148,8 @@ final class CalendarModel {
         let names = Dictionary(library.watchlist.map { (Releases.Title(kind: $0.kind, id: $0.titleID), $0.title) },
                                uniquingKeysWith: { first, _ in first })
         _ = library.marks
-        let store = library.store
         return CalendarRules.page(releases: library.allReleases, names: names,
-                                  watched: { Set((try? store.finishedVideos(kind: $0.kind, titleID: $0.id)) ?? []) },
+                                  watched: { [library] in library.finishedOf(kind: $0.kind, titleID: $0.id) },
                                   anchor: anchor, week: week, today: today, waiting: library.calendarWaiting > 0)
     }
 

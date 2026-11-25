@@ -160,17 +160,21 @@ impl Library {
     pub(super) fn queue_sync(&self, what: &str, kind: &str, title_id: &str, video_id: &str) {
         let options = self.sync_options();
         let wanted = if what == "watched" || what == "unwatched" { options.watched } else { options.watchlist };
-        // Nothing linked, switched off, or a title the services cannot
-        // know (they go by IMDb id): nothing to send.
-        if !wanted || self.syncing_accounts().is_empty() || subject(kind, title_id, None).is_none() {
+        if !wanted || self.syncing_accounts().is_empty() {
+            return;
+        }
+        // The services go by IMDb id: a title known by another (a media
+        // server's) is sent under its IMDb id; one with none is not sent.
+        let Some((title_id, video_id)) = self.service_ids(kind, title_id, video_id) else { return };
+        if subject(kind, &title_id, None).is_none() {
             return;
         }
         let change = Change {
             id: 0,
             what: what.to_owned(),
             kind: kind.to_owned(),
-            title_id: title_id.to_owned(),
-            video_id: video_id.to_owned(),
+            title_id,
+            video_id,
             created_at: now(),
         };
         if let Err(err) = self.store.queue_change(&change) {
@@ -233,6 +237,9 @@ impl Library {
             }
             if outcome.problems.is_empty() {
                 options.last_pull = now();
+                if options.watched {
+                    self.send_missing_linked();
+                }
             }
         }
         self.save_sync_options(&options);
@@ -244,6 +251,39 @@ impl Library {
         self.show_sync();
         if let Some(pull) = self.sync.again.take() {
             self.run_sync(pull);
+        }
+    }
+
+    /// Queues what was watched on titles known by a media server's id
+    /// that the accounts do not have yet (after a full pull, everything
+    /// they have is kept under the IMDb id). Catches up ticks made
+    /// before such titles were sent, and ones made with no details kept.
+    fn send_missing_linked(&self) {
+        let rows = self.store.all_progress().unwrap_or_default();
+        let queued = self.store.queued_changes().unwrap_or_default();
+        let mut links = std::collections::HashMap::new();
+        let mut missing = Vec::new();
+        for row in rows.iter().filter(|row| row.finished && !haven_metadata::is_imdb_id(&row.title_id)) {
+            let link = links
+                .entry((row.kind.clone(), row.title_id.clone()))
+                .or_insert_with(|| self.imdb_link(&row.kind, &row.title_id));
+            let Some(link) = link else { continue };
+            let video = if row.kind == "series" {
+                match link.episodes.get(&row.video_id) {
+                    Some(numbers) => super::links::imdb_episode(&link.imdb, *numbers),
+                    None => continue,
+                }
+            } else {
+                link.imdb.clone()
+            };
+            let known = self.store.progress(&row.kind, &link.imdb, &video).ok().flatten().is_some_and(|known| known.finished);
+            let waiting = queued.iter().any(|change| change.title_id == link.imdb && change.video_id == video);
+            if !known && !waiting {
+                missing.push(row);
+            }
+        }
+        for row in missing {
+            self.queue_sync("watched", &row.kind, &row.title_id, &row.video_id);
         }
     }
 

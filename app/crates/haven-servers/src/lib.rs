@@ -218,6 +218,11 @@ pub fn by_imdb(item: &str, imdb: &str) -> Option<String> {
     Some(format!("{kind}|{imdb}|{form}").bytes().map(|byte| format!("{byte:02x}")).collect())
 }
 
+/// The IMDb id a gathered title's id spells, if it goes by one.
+pub fn imdb_in(item: &str) -> Option<String> {
+    gathered_parts(item).map(|(_, id, _)| id).filter(|id| id.starts_with("tt"))
+}
+
 /// The id Haven uses for an item on a server.
 pub fn title_id(server: i64, item: &str) -> String {
     format!("srv:{server}:{item}")

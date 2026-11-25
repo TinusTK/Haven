@@ -502,7 +502,7 @@ final class Library {
     /// A film watched to the end (a series has no single tick).
     func filmWatched(kind: String, id: String) -> Bool {
         _ = marks
-        return kind == "movie" && !((try? store.finishedVideos(kind: kind, titleID: id)) ?? []).isEmpty
+        return kind == "movie" && !finishedOf(kind: kind, titleID: id).isEmpty
     }
 
     // MARK: The banner
@@ -587,7 +587,7 @@ final class Library {
     }
 
     private func finished(_ progress: WatchProgress) -> Set<String> {
-        Set((try? store.finishedVideos(kind: progress.kind, titleID: progress.titleID)) ?? [])
+        finishedOf(kind: progress.kind, titleID: progress.titleID)
     }
 
     /// Takes a title off Continue Watching: forgets how far it (and, for a

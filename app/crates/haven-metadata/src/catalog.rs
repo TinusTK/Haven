@@ -344,6 +344,7 @@ pub(crate) fn read_season(answer: &Value, meta: &MetaDetail, number: u64, season
                 season: Some(season),
                 episode: Some(episode_number),
                 released: text(episode, "air_date"),
+                thumbnail: text(episode, "still_path").map(|still| format!("{IMAGES}/w300{still}")),
             })
         })
         .collect()

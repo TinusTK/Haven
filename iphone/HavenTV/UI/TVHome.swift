@@ -38,10 +38,13 @@ struct TVHomePage: View {
                 if !library.upcoming.isEmpty {
                     TVRowBlock(title: "Upcoming") {
                         ForEach(library.upcoming) { card in
-                            TVWideCard(title: card.title, line: card.episode, picture: card.picture, badge: card.badge,
-                                       corner: card.when, pause: library.homePause) {
-                                model.open(Opening(id: card.id, kind: card.kind, title: card.title,
-                                                   video: card.video.isEmpty ? nil : card.video))
+                            // Counts down by the hour on the day.
+                            TimelineView(.periodic(from: .now, by: 30)) { context in
+                                TVWideCard(title: card.title, line: card.episode, picture: card.picture, badge: card.badge,
+                                           corner: card.when(at: context.date), pause: library.homePause) {
+                                    model.open(Opening(id: card.id, kind: card.kind, title: card.title,
+                                                       video: card.video.isEmpty ? nil : card.video))
+                                }
                             }
                         }
                     }

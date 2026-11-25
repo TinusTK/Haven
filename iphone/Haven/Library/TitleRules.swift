@@ -31,6 +31,8 @@ struct EpisodeRow: Equatable, Sendable {
     var selected = false
     /// Watched to the end.
     var watched = false
+    /// A still from the episode, if the source has one.
+    var picture: String? = nil
 }
 
 /// One place to watch in the title page's list.
@@ -106,7 +108,7 @@ enum TitleRules {
     static func episodeRow(_ video: Video) -> EpisodeRow {
         let title = video.title ?? video.episode.map { "Episode \($0)" } ?? "Untitled"
         return EpisodeRow(id: video.id, number: video.episode.map { "E\($0)" } ?? "", title: title,
-                          date: video.released.map { String($0.prefix(10)) } ?? "")
+                          date: video.released.map { String($0.prefix(10)) } ?? "", picture: video.thumbnail)
     }
 
     /// "S1 E2 · Its name", as playing an episode records it.

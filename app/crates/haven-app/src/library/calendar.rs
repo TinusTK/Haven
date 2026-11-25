@@ -11,7 +11,7 @@ use std::{
 
 use chrono::{DateTime, Datelike, Days, Local, Months, NaiveDate, NaiveTime, TimeZone};
 use haven_titles::MetaDetail;
-use slint::{ModelRc, VecModel};
+use slint::{Model, ModelRc, VecModel};
 use tokio::sync::Semaphore;
 
 use super::{Library, on_ui};
@@ -65,6 +65,10 @@ pub(super) struct Calendar {
     gate: Arc<Semaphore>,
     /// The days on the page now, so a phone keeps the day picked.
     shown: RefCell<Vec<NaiveDate>>,
+    /// When each of Home's Upcoming cards comes out, in their order.
+    upcoming_when: RefCell<Vec<(NaiveDate, Option<NaiveTime>)>>,
+    /// Keeps the cards' "In 5 h" up to date.
+    clock: slint::Timer,
 }
 
 impl Default for Calendar {
@@ -80,7 +84,33 @@ impl Default for Calendar {
             opened: Cell::new(false),
             gate: Arc::new(Semaphore::new(TITLES_AT_ONCE)),
             shown: RefCell::default(),
+            upcoming_when: RefCell::default(),
+            clock: slint::Timer::default(),
         }
+    }
+}
+
+/// How soon something out on `day` (at `time`, when known) comes out,
+/// seen at `now` (all local): "Dec 25", "In 6 days", "Tomorrow", and on
+/// the day "In 5 h", "In 40 min", "Out now" (or "Today" with no time).
+pub(super) fn when_label(day: NaiveDate, time: Option<NaiveTime>, now: chrono::NaiveDateTime) -> String {
+    let days = (day - now.date()).num_days();
+    match days {
+        ..=0 => match time {
+            None => "Today".to_owned(),
+            Some(time) => {
+                let minutes = (day.and_time(time) - now).num_minutes();
+                match minutes {
+                    ..=0 => "Out now".to_owned(),
+                    1..=59 => format!("In {minutes} min"),
+                    // Whole hours left: 4 h 50 min reads "In 4 h".
+                    _ => format!("In {} h", minutes / 60),
+                }
+            }
+        },
+        1 => "Tomorrow".to_owned(),
+        2..=6 => format!("In {days} days"),
+        _ => format!("{} {}", &MONTHS[day.month0() as usize][..3], day.day()),
     }
 }
 
@@ -400,8 +430,7 @@ impl Library {
         let mut watched: HashMap<&Title, HashSet<String>> = HashMap::new();
         let releases_now = self.calendar.releases.borrow();
         for title in releases_now.keys() {
-            let finished = self.store.finished_videos(&title.0, &title.1).unwrap_or_default();
-            watched.insert(title, finished.into_iter().collect());
+            watched.insert(title, self.finished_of(&title.0, &title.1));
         }
         let is_watched = |title: &Title, release: &Release| {
             watched.get(title).is_some_and(|done| {
@@ -555,12 +584,7 @@ impl Library {
                 let last = last_same_day.get(title).copied().filter(|last| last.number != release.number);
                 let name = names.get(title)?;
                 let days = (release.day - today).num_days();
-                let when = match days {
-                    0 => "Today".to_owned(),
-                    1 => "Tomorrow".to_owned(),
-                    2..=6 => format!("In {days} days"),
-                    _ => format!("{} {}", &MONTHS[release.day.month0() as usize][..3], release.day.day()),
-                };
+                let when = when_label(release.day, release.time, Local::now().naive_local());
                 let card = crate::UpcomingCard {
                     id: title.1.as_str().into(),
                     kind: title.0.as_str().into(),
@@ -584,12 +608,43 @@ impl Library {
                     soon: days < 7,
                     ..Default::default()
                 };
-                Some((card, pictures.get(title).cloned()))
+                Some((card, pictures.get(title).cloned(), (release.day, release.time)))
             })
             .take(12)
-            .collect();
+            .collect::<Vec<_>>();
         drop((releases, pictures));
-        self.show_upcoming(cards);
+        *self.calendar.upcoming_when.borrow_mut() = cards.iter().map(|card| card.2).collect();
+        self.show_upcoming(cards.into_iter().map(|(card, picture, _)| (card, picture)).collect());
+        self.start_upcoming_clock();
+    }
+
+    /// Every 30 s: puts the cards' labels right ("In 5 h" → "In 4 h" →
+    /// "Out now"), and after midnight fills the row again.
+    fn start_upcoming_clock(&self) {
+        if self.calendar.clock.running() {
+            return;
+        }
+        self.calendar.clock.start(slint::TimerMode::Repeated, std::time::Duration::from_secs(30), || {
+            on_ui(|library| library.tick_upcoming());
+        });
+    }
+
+    fn tick_upcoming(&self) {
+        let now = Local::now().naive_local();
+        let when = self.calendar.upcoming_when.borrow().clone();
+        if when.iter().any(|(day, _)| *day < now.date()) {
+            // A new day: what has come out leaves the row.
+            return self.show_calendar();
+        }
+        let cards = &self.home_top.upcoming;
+        for (at, (day, time)) in when.into_iter().enumerate() {
+            let Some(mut card) = cards.row_data(at) else { break };
+            let label = when_label(day, time, now);
+            if card.when.as_str() != label {
+                card.when = label.into();
+                cards.set_row_data(at, card);
+            }
+        }
     }
 }
 
@@ -597,6 +652,22 @@ impl Library {
 mod tests {
     use super::*;
     use chrono::FixedOffset;
+
+    #[test]
+    fn release_day_counts_down_by_the_hour() {
+        let day = NaiveDate::from_ymd_opt(2026, 11, 25).unwrap();
+        let at = |h, m| day.and_hms_opt(h, m, 0).unwrap();
+        let nine_pm = NaiveTime::from_hms_opt(21, 0, 0);
+        assert_eq!(when_label(day, nine_pm, at(16, 10)), "In 4 h");
+        assert_eq!(when_label(day, nine_pm, at(20, 15)), "In 45 min");
+        assert_eq!(when_label(day, nine_pm, at(21, 0)), "Out now");
+        assert_eq!(when_label(day, None, at(9, 0)), "Today");
+        let yesterday = day.pred_opt().unwrap().and_hms_opt(23, 0, 0).unwrap();
+        assert_eq!(when_label(day, nine_pm, yesterday), "Tomorrow");
+        let week_before = day - Days::new(6);
+        assert_eq!(when_label(day, nine_pm, week_before.and_hms_opt(9, 0, 0).unwrap()), "In 6 days");
+        assert_eq!(when_label(day, None, (day - Days::new(7)).and_hms_opt(9, 0, 0).unwrap()), "Nov 25");
+    }
 
     #[test]
     fn a_moment_moves_to_the_local_day_and_a_bare_date_stays() {

@@ -45,6 +45,8 @@ final class Tracker {
     /// Told when a sync brought in Watchlist titles or watched marks.
     var watchlistChanged: () -> Void = {}
     var watchedChanged: () -> Void = {}
+    /// After a full pull: catch up what the accounts lack.
+    var pulledAll: () -> Void = {}
     /// Opens a web page (the service's code page).
     var openLink: (String) -> Void = { _ in }
 
@@ -170,6 +172,7 @@ final class Tracker {
         lastProblem = outcome.problems.first ?? ""
         for problem in outcome.problems { Log.note("sync: \(problem)") }
         running = false
+        if outcome.pulled && outcome.problems.isEmpty { pulledAll() }
     }
 
     /// Switches one account's sync on or off; on, it syncs at once.

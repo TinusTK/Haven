@@ -240,3 +240,26 @@ struct TrackerTests {
         #expect(bare.rowText(.simkl) == "Not available in this copy of Haven yet (no Simkl app key).")
     }
 }
+
+/// Media-server titles linked to their IMDb id for Trakt and Simkl.
+struct IMDbLinkTests {
+    /// `srv:1:<hex of s|tt7631058|series>`, as a gathering server names it.
+    let gathered = "srv:1:" + "s|tt7631058|series".utf8.map { String(format: "%02x", $0) }.joined()
+
+    @Test func aGatheredIdSpellsItsIMDbId() {
+        #expect(IMDbLink.of(titleID: gathered, detail: nil)?.imdb == "tt7631058")
+        #expect(IMDbLink.of(titleID: "tt7631058", detail: nil) == nil)
+        #expect(IMDbLink.of(titleID: "srv:1:abcdef12", detail: nil) == nil)
+    }
+
+    @Test func episodesAreSentAndShownUnderTheirNumbers() {
+        let link = IMDbLink(imdb: "tt1", episodes: ["e1": (1, 1), "e2": (1, 2)])
+        #expect(link.serviceIDs(kind: "series", videoID: "e2")! == ("tt1", "tt1:1:2"))
+        #expect(link.serviceIDs(kind: "series", videoID: "unknown") == nil)
+        #expect(link.serviceIDs(kind: "series", videoID: "")! == ("tt1", ""))
+        #expect(link.serviceIDs(kind: "movie", videoID: "srv:1:x")! == ("tt1", "tt1"))
+        let done = link.merged(kind: "series", titleID: "s", own: ["e1"], elsewhere: ["tt1:1:2", "tt1:5:5"])
+        #expect(done == ["e1", "e2"])
+        #expect(link.merged(kind: "movie", titleID: "m", own: [], elsewhere: ["tt1"]) == ["m"])
+    }
+}

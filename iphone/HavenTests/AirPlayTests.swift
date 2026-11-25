@@ -12,6 +12,14 @@ struct ResumeTests {
         #expect(Resume.judge(position: 3600, duration: 3600) == .finished)
     }
 
+    @Test func skippingTheCreditsStillCountsAsWatched() {
+        #expect(Resume.judge(position: 7200 - 540, duration: 7200) == .finished)
+        #expect(Resume.judge(position: 7200 - 660, duration: 7200) == .partway)
+        #expect(Resume.judge(position: 2700 - 260, duration: 2700) == .finished)
+        #expect(Resume.judge(position: 2700 - 300, duration: 2700) == .partway)
+        #expect(Resume.judge(position: 1320 - 600, duration: 1320) == .partway)
+    }
+
     @Test func aLiveStreamHasNoPlaceToRemember() {
         #expect(Resume.judge(position: 500, duration: 0) == nil)
         #expect(Resume.judge(position: 500, duration: .nan) == nil)

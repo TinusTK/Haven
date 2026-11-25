@@ -7,6 +7,10 @@ enum Resume {
     static let keepAfter = 30.0
     /// From this share of the running time on, the title counts as watched.
     static let watchedFrom = 0.95
+    /// It also counts as watched with this little left (credits skipped):
+    /// at most 10 minutes, and at most a tenth of the running time.
+    static let watchedLeft = 600.0
+    static let watchedLeftShare = 0.10
     /// Resuming starts this many seconds earlier, to pick the thread back up.
     static let rewind = 3.0
 
@@ -24,7 +28,9 @@ enum Resume {
     /// stream), where there is no place to remember.
     static func judge(position: Double, duration: Double) -> Watched? {
         guard position.isFinite, duration.isFinite, duration > 0 else { return nil }
-        if position >= duration * watchedFrom { return .finished }
+        if position >= duration * watchedFrom || duration - position <= min(watchedLeft, duration * watchedLeftShare) {
+            return .finished
+        }
         if position >= keepAfter { return .partway }
         return .started
     }

@@ -1,10 +1,11 @@
-//! The Stremio account (Settings › Accounts, Android only): a person signs
+//! The Stremio account (Settings › Accounts): a person signs
 //! in with their own Stremio account and Haven uses what that account
 //! uses, asking those services itself as Stremio does. Haven follows the
 //! account: each time it starts it reads the account's list again, so what
 //! is installed always matches it (new ones in, removed ones out). On
 //! Android nothing else installs anything, so the whole installed list is
-//! the account's.
+//! the account's. On a computer people install add-ons by hand too: there
+//! only those the account brought in (kv `stremio_followed`) follow it.
 //!
 //! The account (email and Stremio's key, never the password) is kept in
 //! the store under `stremio_account`; it is not part of backups.
@@ -17,10 +18,15 @@ use super::{Library, on_ui};
 use crate::AppWindow;
 
 const KEY: &str = "stremio_account";
+/// On a computer: the add-on addresses the account brought in.
+const FOLLOWED: &str = "stremio_followed";
 
-/// Whether this build offers the Stremio sign-in: Android (phones, tablets,
-/// Android TV), where the add-on screens are hidden.
-pub(crate) const SHOWN: bool = cfg!(target_os = "android");
+/// Whether this build offers the Stremio sign-in: every build with add-ons
+/// (Android, where the add-on screens are hidden, and computers; user
+/// 2026-11-25).
+pub(crate) const SHOWN: bool = true;
+/// Android: the whole installed list is the account's.
+const WHOLE_LIST: bool = cfg!(target_os = "android");
 
 impl Library {
     pub(super) fn start_stremio(self: &Rc<Self>, ui: &AppWindow) {
@@ -93,7 +99,7 @@ impl Library {
     fn stremio_sign_out(&self) {
         let Some(account) = self.stremio_account() else { return self.show_stremio("") };
         let _ = self.store.remove(KEY);
-        // Everything installed came from the account: it all goes.
+        // What came from the account goes (on Android, everything).
         self.follow_stremio(&[]);
         self.show_stremio("Signed out of Stremio.");
         let http = self.http.clone();
@@ -117,7 +123,14 @@ impl Library {
     /// Makes what is installed match the account's list.
     fn follow_stremio(&self, listed: &[Listed]) {
         let have: Vec<String> = self.store.addons().unwrap_or_default().into_iter().map(|a| a.url).collect();
-        let (add, remove) = stremio::changes(&have, listed);
+        let (add, remove) = if WHOLE_LIST {
+            stremio::changes(&have, listed)
+        } else {
+            let followed: Vec<String> = self.store.get(FOLLOWED).ok().flatten().unwrap_or_default();
+            let (add, remove, kept) = stremio::followed_changes(&have, &followed, listed);
+            let _ = if kept.is_empty() { self.store.remove(FOLLOWED) } else { self.store.put(FOLLOWED, &kept) };
+            (add, remove)
+        };
         if add.is_empty() && remove.is_empty() {
             return;
         }
