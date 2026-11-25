@@ -320,6 +320,20 @@ final class TitlePage {
         }
     }
 
+    /// Whether a row's stream was downloaded: 0 no, 1 on its way, 2 saved.
+    func savedState(_ row: StreamRow) -> Int {
+        row.address.map { library?.downloads.savedState($0) ?? 0 } ?? 0
+    }
+
+    /// A row's download button: saves it to this iPhone, or plays the saved copy.
+    func download(_ row: StreamRow) {
+        guard let library, let request = request(row) else { return }
+        let video = meta?.videos.first { $0.id == request.videoID && $0.season != nil }
+        playNote = library.downloads.download(request, season: video?.season, episode: video?.episode) { copy in
+            library.play?(copy)
+        }
+    }
+
     /// The episode after the one listed.
     var nextVideo: Video? {
         guard let meta, let listed = sources.listed else { return nil }

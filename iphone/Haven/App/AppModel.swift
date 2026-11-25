@@ -53,11 +53,17 @@ final class AppModel {
 
     let tracker: Tracker
     let library: Library
+    /// Live TV and radio.
+    let live: LiveTVModel
+    /// The Calendar page's month or week and day picked.
+    let calendar: CalendarModel
     /// Haven's own player (libmpv).
     let player: PlayerModel
     /// A film or episode playing over AirPlay in Apple's player.
     private(set) var airPlay: AirPlaySession?
     let notes = WhatsNew.builtIn
+    /// The Library's part showing: 0 Local, 1 Downloads, 2 Watchlist, 3 History.
+    var libraryTab = 0
     /// The title whose page is open.
     private(set) var opening: Opening?
 
@@ -89,10 +95,13 @@ final class AppModel {
         }
         library.queueSync = { [tracker] in tracker.queue($0, kind: $1, titleID: $2, videoID: $3) }
         player = PlayerModel(store: core.store)
+        live = LiveTVModel(store: core.store)
+        calendar = CalendarModel(library: library)
         player.closed = { [library] in library.playerClosed($0) }
         player.next = { [library] in library.playNext($0) }
         library.dismissPlayer = { [player] in player.dismiss() }
         library.play = { [weak self] in self?.play($0) }
+        live.play = { [weak self] in self?.play($0) }
         library.open = { [weak self] in self?.open($0) }
         whatsNewDue = WhatsNew.due(notes, store: core.store, existing: core.existing)
     }
@@ -107,6 +116,7 @@ final class AppModel {
             return library.startupProgress(homeShowing: page == .home && !detailOpen)
         }
         tracker.start()
+        live.start()
         runSplash()
     }
 
@@ -132,12 +142,14 @@ final class AppModel {
     func play(_ request: PlayRequest) {
         let page = library.title!
         page.playNote = ""
+        let fromTitle = !request.titleID.isEmpty
         let other = PlayerRules.OtherPlayer.load(store)
         if PlayerRules.goesElsewhere(other, address: request.address) {
             // Another app does not say how far it got: no resuming with it.
             guard let link = URL(string: PlayerRules.otherPlayerLink(kind: other.kind, address: request.address)) else { return }
             UIApplication.shared.open(link) { opened in
                 Task { @MainActor in
+                    guard fromTitle else { return }
                     page.playNote = opened ? "Opened in your player."
                         : "Could not open your player: install \(PlayerRules.OtherPlayer.names[min(max(other.kind, 1), 3)]), or pick another in Settings."
                 }
@@ -150,7 +162,7 @@ final class AppModel {
                 startAirPlay(request)
             } else {
                 // The sound still goes to the AirPlay device.
-                page.playNote = AirPlay.cannotSend
+                if fromTitle { page.playNote = AirPlay.cannotSend }
                 player.play(request)
             }
         }
@@ -185,6 +197,12 @@ final class AppModel {
     /// The AirPlay bar's stop button.
     func stopAirPlay() {
         airPlay?.stop()
+    }
+
+    /// Opens the Library on one of its parts (Home's row arrows).
+    func openLibrary(_ tab: Int) {
+        libraryTab = tab
+        select(.library)
     }
 
     /// Home came into view or left it.

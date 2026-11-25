@@ -103,6 +103,14 @@ final class Library {
     @ObservationIgnored var lastPlayed: (source: String, name: String)?
     /// Notes a watched mark or Watchlist change for the linked accounts.
     var queueSync: (_ what: String, _ kind: String, _ titleID: String, _ videoID: String) -> Void = { _, _, _, _ in }
+    /// Films and episodes saved to this iPhone.
+    let downloads: Downloads
+    /// Every title watched, the latest film or episode of each, newest first.
+    private(set) var history: [WatchProgress] = []
+    /// Videos in Files › On My iPhone › Haven › Videos.
+    private(set) var localVideos: [DownloadRules.Found] = []
+    private(set) var localStatus = ""
+    private(set) var localBusy = false
     /// Goes up whenever something is marked watched or unwatched: views
     /// showing ticks read it, so they draw again.
     private(set) var marks = 0
@@ -116,6 +124,7 @@ final class Library {
         serverClient = ServerClient(device: DeviceID.get(store), http: http)
         builtin = Cinemeta.kept(store)
         onDemand = XtreamOnDemand(http: http)
+        downloads = Downloads(store: store)
         explore = Explore(library: self)
         title = TitlePage(library: self)
     }
@@ -188,6 +197,36 @@ final class Library {
         loadServers()
         reloadCatalog()
         explore.rebuild()
+        downloads.start()
+        // The Videos folder shows in the Files app only once it exists.
+        try? FileManager.default.createDirectory(at: DownloadRules.videosFolder, withIntermediateDirectories: true)
+    }
+
+    // MARK: Library › Local and History
+
+    /// Looks for the videos in Haven › Videos (the Local tab opened, or Look again).
+    func lookForVideos(in folder: URL = DownloadRules.videosFolder) {
+        guard !localBusy else { return }
+        localBusy = true
+        localStatus = "Looking for videos…"
+        Task {
+            let found = await Task.detached { DownloadRules.findVideos(in: folder) }.value
+            localVideos = found
+            localBusy = false
+            localStatus = DownloadRules.localStatus(found.count)
+        }
+    }
+
+    /// Plays a video from Haven › Videos (always in Haven's own player:
+    /// other apps cannot open files kept inside Haven).
+    func playLocal(_ found: DownloadRules.Found) {
+        let id = "local:\(found.path)"
+        play?(PlayRequest(address: found.path, title: found.name, detail: "", kind: "movie", titleID: id, videoID: id,
+                          poster: nil, source: "On this device"))
+    }
+
+    func reloadHistory() {
+        history = (try? store.history(limit: 300)) ?? []
     }
 
     func setKeys(_ keys: Secrets) {
@@ -522,6 +561,7 @@ final class Library {
 
     /// Rebuilds Continue Watching from what was watched.
     func reloadContinue() {
+        reloadHistory()
         let watched = (try? store.continueWatching(limit: HomeTop.continueLength)) ?? []
         // Details kept from last time, until the fresh ones come.
         for progress in watched {

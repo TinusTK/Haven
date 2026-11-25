@@ -55,7 +55,7 @@ struct HomePage: View {
                     }
                     if !library.continueCards.isEmpty {
                         VStack(alignment: .leading, spacing: 12) {
-                            RowHeading(title: "Continue Watching") { model.select(.library) }
+                            RowHeading(title: "Continue Watching") { model.openLibrary(3) }
                             ScrollView(.horizontal, showsIndicators: false) {
                                 LazyHStack(spacing: 16) {
                                     ForEach(library.continueCards) { card in
@@ -81,7 +81,7 @@ struct HomePage: View {
                     }
                     if !library.watchlist.isEmpty {
                         VStack(alignment: .leading, spacing: 12) {
-                            RowHeading(title: "Watchlist") { model.select(.library) }
+                            RowHeading(title: "Watchlist") { model.openLibrary(2) }
                             PosterRow(items: library.watchlist.map {
                                 MetaPreview(id: $0.titleID, kind: $0.kind, name: $0.title, poster: $0.poster, releaseInfo: $0.year)
                             }, width: width - 32, model: model, pause: library.homePause)

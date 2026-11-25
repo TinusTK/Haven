@@ -1,4 +1,5 @@
 import Foundation
+import MediaPlayer
 import Observation
 import UIKit
 
@@ -87,10 +88,48 @@ final class PlayerModel {
         self.mpv = mpv
         preferences = ((try? store.get(PlayerRules.Preferences.key, as: PlayerRules.Preferences.self)) ?? nil) ?? .init()
         let center = NotificationCenter.default
-        // Leaving Haven: the place is kept, and the film waits.
+        // Leaving Haven: the place is kept, and the film waits (radio goes on).
         observers.append(center.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.leaving() }
         })
+        // A radio station playing in the background answers the lock
+        // screen's and headphones' play and pause.
+        let commands = MPRemoteCommandCenter.shared()
+        commands.togglePlayPauseCommand.addTarget { [weak self] _ in
+            MainActor.assumeIsolated { self?.remote(nil) ?? .commandFailed }
+        }
+        commands.playCommand.addTarget { [weak self] _ in
+            MainActor.assumeIsolated { self?.remote(true) ?? .commandFailed }
+        }
+        commands.pauseCommand.addTarget { [weak self] _ in
+            MainActor.assumeIsolated { self?.remote(false) ?? .commandFailed }
+        }
+    }
+
+    /// A radio station is playing: it goes on in the background (user,
+    /// 2026-11-25); films and TV channels wait.
+    var isRadio: Bool { playing?.request.kind == "radio" }
+
+    /// The lock screen's play/pause (nil: toggle).
+    private func remote(_ play: Bool?) -> MPRemoteCommandHandlerStatus {
+        guard isRadio, mpv.status != nil else { return .noActionableNowPlayingItem }
+        let now = !(play ?? paused)
+        mpv.setPaused(now)
+        paused = now
+        showNowPlaying()
+        return .success
+    }
+
+    /// What the lock screen and Control Center show for a radio station.
+    private func showNowPlaying() {
+        guard let request = playing?.request, isRadio else {
+            MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+            return
+        }
+        var info: [String: Any] = [MPMediaItemPropertyTitle: request.title, MPNowPlayingInfoPropertyIsLiveStream: true,
+                                   MPNowPlayingInfoPropertyPlaybackRate: paused ? 0.0 : 1.0]
+        if !request.detail.isEmpty { info[MPMediaItemPropertyArtist] = request.detail }
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = info
     }
 
     // MARK: Opening and closing
@@ -130,6 +169,7 @@ final class PlayerModel {
         open = true
         playing = Playing(request: request, position: at ?? 0)
         AirPlay.preparePlayback()
+        showNowPlaying()
         startTicking()
         if let broken = mpv.broken {
             fail("Haven's player cannot start on this iPhone. (\(broken))")
@@ -170,6 +210,7 @@ final class PlayerModel {
         mpv.stop()
         open = false
         stopTicking()
+        showNowPlaying()
         closed(played)
     }
 
@@ -185,7 +226,7 @@ final class PlayerModel {
 
     /// Haven went to the background: the place is kept and the film waits.
     func leaving() {
-        guard playing != nil else { return }
+        guard playing != nil, !isRadio else { return }
         save()
         mpv.setPaused(true)
         paused = true
@@ -354,6 +395,7 @@ final class PlayerModel {
         guard let status = mpv.status else { return }
         mpv.setPaused(!status.paused)
         paused = !status.paused
+        showNowPlaying()
         // Pausing is a good moment to remember the place.
         if !status.paused { save() }
     }

@@ -10,9 +10,9 @@ struct PageView: View {
         switch model.page {
         case .home: HomePage(model: model)
         case .explore: ExplorePage(model: model)
-        case .library: Placeholder(title: "Library", note: "Local, Downloads, Watchlist and History come here.")
-        case .liveTV: Placeholder(title: "Live TV", note: "Your channels and radio stations come here.")
-        case .calendar: Placeholder(title: "Calendar", note: "What comes out from your Watchlist comes here.")
+        case .library: LibraryPage(model: model)
+        case .liveTV: LiveTVPage(model: model, live: model.live)
+        case .calendar: CalendarPage(model: model, calendar: model.calendar)
         case .settings: SettingsPlaceholder(model: model)
         }
     }

@@ -401,7 +401,8 @@ private struct SourcesList: View {
                                 .padding(.top, 6)
                                 .accessibilityAddTraits(.isHeader)
                         }
-                        SourceCard(row: row) { page.play(row) }
+                        SourceCard(row: row, saved: row.kind == "Direct" && row.playable ? page.savedState(row) : nil,
+                                   download: { page.download(row) }) { page.play(row) }
                         if row.more > 0 {
                             Chip(label: "Show more from \(row.group)  (\(row.more) left)") { sources.showMore(row.group) }
                         }
@@ -429,11 +430,15 @@ private struct SourcesList: View {
 /// cannot play it).
 private struct SourceCard: View {
     let row: StreamRow
+    /// Downloaded from this row: 0 no, 1 on its way, 2 saved; nil when it cannot be.
+    let saved: Int?
+    let download: () -> Void
     let play: () -> Void
 
     var body: some View {
-        Button(action: play) {
-            HStack(spacing: 12) {
+        HStack(spacing: 12) {
+            // The card plays; the download button beside Play is its own.
+            Button(action: play) {
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(alignment: .top, spacing: 8) {
                         Text(row.name)
@@ -473,26 +478,44 @@ private struct SourceCard: View {
                         .foregroundStyle(Palette.textDim)
                         .lineLimit(1)
                 }
-                if row.playable {
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(!row.playable)
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("\(row.playable ? "Play " : "")\(row.name), \(row.kind), from \(row.source)")
+            if let saved {
+                // Filled once it is downloaded (or on its way): pressing it
+                // again plays the saved copy.
+                Button(action: download) {
+                    HavenIcon(name: "download", size: 18, tint: saved > 0 ? Palette.onAccent : Palette.accent)
+                        .frame(width: 38, height: 38)
+                        .background(Circle().fill(saved > 0 ? Palette.accent : Palette.selected))
+                }
+                .buttonStyle(PressedStyle())
+                .accessibilityLabel(saved == 2 ? "Play the downloaded copy of \(row.name)"
+                                    : saved == 1 ? "Downloading \(row.name)" : "Download \(row.name)")
+            }
+            if row.playable {
+                Button(action: play) {
                     Text("▶\u{FE0E}")
                         .font(Palette.font(14))
                         .foregroundStyle(Palette.accent)
                         .frame(width: 38, height: 38)
                         .background(Circle().fill(Palette.selected))
-                } else {
-                    Text(row.kind).font(Palette.font(12)).foregroundStyle(Palette.textDim)
                 }
+                .buttonStyle(PressedStyle())
+                .accessibilityHidden(true)
+            } else {
+                Text(row.kind).font(Palette.font(12)).foregroundStyle(Palette.textDim)
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 11)
-            .frame(minHeight: 88)
-            .background(RoundedRectangle(cornerRadius: 12).fill(Palette.background.opacity(0.55)))
-            .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Palette.border, lineWidth: 1))
         }
-        .buttonStyle(PressedStyle())
-        .disabled(!row.playable)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(row.playable ? "Play " : "")\(row.name), \(row.kind), from \(row.source)")
+        .padding(.horizontal, 14)
+        .padding(.vertical, 11)
+        .frame(minHeight: 88)
+        .background(RoundedRectangle(cornerRadius: 12).fill(Palette.background.opacity(0.55)))
+        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Palette.border, lineWidth: 1))
     }
 }
 
