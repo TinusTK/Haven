@@ -12,6 +12,7 @@ options:
   bundleIdPrefix: net.haven
   deploymentTarget:
     iOS: "17.0"
+    tvOS: "17.0"
   createIntermediateGroups: true
   generateEmptyDirectories: true
 
@@ -26,6 +27,11 @@ packages:
   GRDB:
     url: https://github.com/groue/GRDB.swift
     exactVersion: 7.12.0
+  # libmpv with FFmpeg for Apple TV (LGPL build, product MPVKit). The
+  # iPhone app keeps the media-kit copy from ../ios/fetch-libmpv.sh.
+  MPVKit:
+    url: https://github.com/mpvkit/MPVKit
+    exactVersion: 1.0.0
 
 settings:
   base:
@@ -86,6 +92,56 @@ targets:
         script: '"$SRCROOT/scripts/embed-libmpv.sh"'
         basedOnDependencyAnalysis: false
 
+  # Haven for Apple TV: the iPhone app's models and services, its own
+  # remote-driven screens in HavenTV/. App Store build only (HavenStore
+  # configs); same bundle ID as the iPhone app (one App Store record).
+  HavenTV:
+    type: application
+    platform: tvOS
+    sources:
+      - path: Haven
+        excludes:
+          - "Support/*.entitlements"
+          - "Support/Info.plist"
+          - "App/HavenApp.swift"
+          - "App/RootView.swift"
+          - "UI/AirPlayBar.swift"
+          - "UI/CalendarPage.swift"
+          - "UI/ExplorePage.swift"
+          - "UI/Field.swift"
+          - "UI/Home.swift"
+          - "UI/LibraryPage.swift"
+          - "UI/LiveTVPage.swift"
+          - "UI/Pages.swift"
+          - "UI/PlayerView.swift"
+          - "UI/SettingsPage.swift"
+          - "UI/TabBar.swift"
+          - "UI/TitlePageView.swift"
+          - "AirPlay/AirPlayButton.swift"
+          - "Generated/BuildKeys.swift"
+      - path: HavenTV
+        excludes:
+          - "Support/Info.plist"
+          - "scripts/**"
+    dependencies:
+      - package: GRDB
+      - package: MPVKit
+        product: MPVKit
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: net.haven.app
+        PRODUCT_NAME: Haven
+        EXECUTABLE_NAME: Haven
+        TARGETED_DEVICE_FAMILY: "3"
+        INFOPLIST_FILE: HavenTV/Support/Info.plist
+        ASSETCATALOG_COMPILER_APPICON_NAME: "App Icon & Top Shelf Image"
+        CODE_SIGN_STYLE: Automatic
+        LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/Frameworks"
+    preBuildScripts:
+      - name: Build keys
+        script: '"$SRCROOT/scripts/build-keys.sh" "$SRCROOT/HavenTV/Generated/BuildKeys.swift"'
+        basedOnDependencyAnalysis: false
+
   HavenTests:
     type: bundle.unit-test
     platform: iOS
@@ -123,5 +179,13 @@ schemes:
     test:
       config: StoreDebug
       targets: [HavenTests]
+    archive:
+      config: Store
+  HavenTV:
+    build:
+      targets:
+        HavenTV: all
+    run:
+      config: StoreDebug
     archive:
       config: Store

@@ -60,13 +60,25 @@ enum AirPlay {
 
     /// Whether an AirPlay device is chosen (in the AirPlay button or in
     /// Control Center): a title then goes there.
-    static var isChosen: Bool { device != nil }
+    /// Never on Apple TV: it is the screen, and its sound may go to AirPlay
+    /// speakers (a HomePod) without the film leaving Haven's player.
+    static var isChosen: Bool {
+        #if os(tvOS)
+        false
+        #else
+        device != nil
+        #endif
+    }
 
     /// Sets the phone up to play films: Haven's sound goes on with the
     /// screen locked and can go to AirPlay.
     static func preparePlayback() {
         do {
+            #if os(tvOS)
+            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
+            #else
             try AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback, policy: .longFormVideo)
+            #endif
             try AVAudioSession.sharedInstance().setActive(true)
         } catch {
             Log.note("could not set up playback sound: \(error.localizedDescription)")

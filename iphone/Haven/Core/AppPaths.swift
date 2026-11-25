@@ -10,7 +10,14 @@ struct AppPaths: Sendable {
 
     /// The usual place, created if missing.
     static func discover() throws -> AppPaths {
-        guard let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
+        #if os(tvOS)
+        // Apple TV lets apps keep files only in Caches (tvOS may empty it
+        // when the box runs short of space).
+        let place = FileManager.SearchPathDirectory.cachesDirectory
+        #else
+        let place = FileManager.SearchPathDirectory.applicationSupportDirectory
+        #endif
+        guard let support = FileManager.default.urls(for: place, in: .userDomainMask).first else {
             throw HavenError.noHomeFolder
         }
         return try at(support.appendingPathComponent("Haven", isDirectory: true))

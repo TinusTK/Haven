@@ -1,5 +1,10 @@
 import Foundation
+// The iPhone's libmpv (media-kit) is the Mpv module; Apple TV's (MPVKit) is Libmpv.
+#if os(tvOS)
+import Libmpv
+#else
 import Mpv
+#endif
 import OpenGLES
 import QuartzCore
 import UIKit

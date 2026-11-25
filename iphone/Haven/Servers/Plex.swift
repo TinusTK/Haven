@@ -34,9 +34,17 @@ enum Plex {
 
     /// Starts signing in: gives a code and the page to enter it on.
     static func pin(_ client: ServerClient) async throws -> Pin {
+        #if os(tvOS)
+        // Apple TV has no browser: a short code to type in at plex.tv/link
+        // on a phone or computer.
+        let answer = try await client.call("\(plexTV)/pins", headers: headers(device: client.device, token: nil), body: [:])
+        guard let id = J.text(answer, "id"), let code = J.text(answer, "code") else { throw ServerError.badAnswer }
+        let link = "https://plex.tv/link"
+        #else
         let answer = try await client.call("\(plexTV)/pins?strong=true", headers: headers(device: client.device, token: nil), body: [:])
         guard let id = J.text(answer, "id"), let code = J.text(answer, "code") else { throw ServerError.badAnswer }
         let link = "https://app.plex.tv/auth#?clientID=\(q(client.device))&code=\(q(code))&context%5Bdevice%5D%5Bproduct%5D=Haven"
+        #endif
         return Pin(id: id, code: code, link: link)
     }
 

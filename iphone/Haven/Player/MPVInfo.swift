@@ -1,4 +1,8 @@
+#if os(tvOS)
+import Libmpv
+#else
 import Mpv
+#endif
 
 /// What Haven knows about the libmpv it was built with. The player itself
 /// comes in section S13; this proves libmpv links and loads.
