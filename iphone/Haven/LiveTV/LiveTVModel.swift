@@ -44,6 +44,11 @@ final class LiveTVModel {
     }
 
     /// Shows the stored sources' channels, then fetches each source again.
+    /// Reads the Favourites again (brought in from another device).
+    func reloadFavourites() {
+        favourites = LiveTV.favourites(store)
+    }
+
     func start() {
         rebuild()
         let off = (try? SwitchedOff.load(store).tvSources) ?? []

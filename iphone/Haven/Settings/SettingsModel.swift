@@ -75,6 +75,9 @@ final class SettingsModel {
 
     private func changed() { revision += 1 }
 
+    /// Shows what changed underneath (brought in from another device).
+    func refresh() { changed() }
+
     // MARK: General
 
     var countries: [String] { WhereToWatch.settingsList() }

@@ -11,6 +11,11 @@
     <array>
         <string>CloudDocuments</string>
     </array>
+    <!-- Media servers, Live TV and accounts shared with the person's other
+         devices (iPhone, iPad, Apple TV: the same app id) through iCloud's
+         key-value storage. -->
+    <key>com.apple.developer.ubiquity-kvstore-identifier</key>
+    <string>$(TeamIdentifierPrefix)net.haven.app</string>
     <key>com.apple.developer.ubiquity-container-identifiers</key>
     <array>
         <string>iCloud.net.haven.app</string>

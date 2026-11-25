@@ -63,6 +63,9 @@ final class AppModel {
     let player: PlayerModel
     /// A film or episode playing over AirPlay in Apple's player.
     private(set) var airPlay: AirPlaySession?
+    /// Media servers, Live TV and accounts shared with this person's other
+    /// devices (iPhone, iPad, Apple TV) through iCloud.
+    @ObservationIgnored private var icloud: ICloudSync!
     #if os(iOS)
     /// Apple's player, when chosen in Settings (for picture in picture).
     @ObservationIgnored private let applePlayer = ApplePlayer()
@@ -116,6 +119,14 @@ final class AppModel {
         library.play = { [weak self] in self?.play($0) }
         live.play = { [weak self] in self?.play($0) }
         library.open = { [weak self] in self?.open($0) }
+        icloud = ICloudSync(store: core.store)
+        icloud.brought = { [library, tracker, live, settingsPage] applied in
+            if applied.accounts { tracker.reloadAccounts() }
+            if applied.servers { library.loadServers() }
+            if applied.favourites { live.reloadFavourites() }
+            if applied.tv { live.start() } else if applied.favourites { live.rebuild() }
+            settingsPage.refresh()
+        }
         whatsNewDue = WhatsNew.due(notes, store: core.store, existing: core.existing)
     }
 
@@ -131,6 +142,7 @@ final class AppModel {
         tracker.start()
         live.start()
         settingsPage.startBackups()
+        icloud.start()
         runSplash()
     }
 
