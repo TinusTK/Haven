@@ -1,10 +1,20 @@
 {
-  "version": "0.2.5",
+  "version": "0.2.6",
   "sections": [
     {
-      "title": "iPhone and iPad",
+      "title": "New",
       "lines": [
-        "The iPhone and iPad app is now written in Swift."
+        "Picture in picture: turn on Use Apple's player in Settings › General.",
+        "Media servers, Live TV and accounts are shared through iCloud between your iPhone, iPad and Apple TV.",
+        "Episodes show a picture on the title page.",
+        "Coming soon counts down by the hour on release day."
+      ]
+    },
+    {
+      "title": "Trakt and Simkl",
+      "lines": [
+        "Titles from your media servers now sync watched marks both ways.",
+        "Skipping the end credits still marks a film or episode as watched."
       ]
     },
     {
