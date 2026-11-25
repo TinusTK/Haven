@@ -54,32 +54,7 @@ if [ "$kind" = store ]; then
   scripts/store-check.sh "$app"
   ipa="$out/Haven-$version-ios-store.ipa"
   if [ -n "${HAVEN_IOS_SIGN_IDENTITY:-}" ] && [ -n "${HAVEN_IOS_PROFILE:-}" ]; then
-    cp "$HAVEN_IOS_PROFILE" "$app/embedded.mobileprovision"
-    # The entitlements the profile grants, as the signature must carry them.
-    security cms -D -i "$HAVEN_IOS_PROFILE" > "$out/profile.plist"
-    /usr/libexec/PlistBuddy -x -c 'Print :Entitlements' "$out/profile.plist" > "$out/entitlements.plist"
-    # A profile lists iCloud's services as "*"; the signature names the one
-    # Haven uses (iCloud Drive, for the backup).
-    if /usr/libexec/PlistBuddy -c 'Print :com.apple.developer.icloud-services' "$out/entitlements.plist" >/dev/null 2>&1; then
-      /usr/libexec/PlistBuddy -c 'Delete :com.apple.developer.icloud-services' "$out/entitlements.plist"
-      /usr/libexec/PlistBuddy -c 'Add :com.apple.developer.icloud-services array' \
-        -c 'Add :com.apple.developer.icloud-services:0 string CloudDocuments' "$out/entitlements.plist"
-    fi
-    # What the App Store refuses in a signature: no development containers,
-    # no wildcards, and the production iCloud.
-    for key in com.apple.developer.icloud-container-development-container-identifiers \
-      com.apple.developer.ubiquity-kvstore-identifier keychain-access-groups \
-      com.apple.developer.icloud-container-environment; do
-      /usr/libexec/PlistBuddy -c "Delete :$key" "$out/entitlements.plist" 2>/dev/null || true
-    done
-    if /usr/libexec/PlistBuddy -c 'Print :com.apple.developer.icloud-container-identifiers' "$out/entitlements.plist" >/dev/null 2>&1; then
-      /usr/libexec/PlistBuddy -c 'Add :com.apple.developer.icloud-container-environment string Production' "$out/entitlements.plist"
-    fi
-    for framework in "$app"/Frameworks/*.framework; do
-      codesign --force --sign "$HAVEN_IOS_SIGN_IDENTITY" --timestamp "$framework"
-    done
-    codesign --force --sign "$HAVEN_IOS_SIGN_IDENTITY" --entitlements "$out/entitlements.plist" --timestamp "$app"
-    rm -f "$out/profile.plist" "$out/entitlements.plist"
+    scripts/sign-store.sh "$app" "$HAVEN_IOS_SIGN_IDENTITY" "$HAVEN_IOS_PROFILE"
     signed="signed for the App Store"
   else
     signed="NOT signed: set HAVEN_IOS_SIGN_IDENTITY and HAVEN_IOS_PROFILE to sign it"
