@@ -15,8 +15,19 @@ import urllib.request
 REPO = "TinusTK/Haven"
 SITE = "https://tinustk.github.io/Haven"
 BUNDLE_ID = "net.haven.app"
-# The lowest iOS the IPA runs on (IPHONEOS_DEPLOYMENT_TARGET in ios/bundle.sh).
+# The lowest iOS the IPA runs on: 15 for the Rust app (ios/bundle.sh),
+# 17 for the Swift app (iphone/project.yml), which ships from 0.2.5 on.
 MIN_IOS = "15.0"
+MIN_IOS_SWIFT = "17.0"
+SWIFT_FROM = (0, 2, 5)
+
+
+def min_ios(version):
+    try:
+        parts = tuple(int(p) for p in version.split(".")[:3])
+    except ValueError:
+        return MIN_IOS
+    return MIN_IOS_SWIFT if parts >= SWIFT_FROM else MIN_IOS
 ICON = "app/assets/icon/haven-tile.png"
 
 HEADERS = {"Accept": "application/vnd.github+json", "User-Agent": "haven-source"}
@@ -54,7 +65,7 @@ def main():
             "localizedDescription": release["body"] or release["name"] or release["tag_name"],
             "downloadURL": ipa["browser_download_url"],
             "size": ipa["size"],
-            "minOSVersion": MIN_IOS,
+            "minOSVersion": min_ios(version),
         })
     versions.sort(key=lambda v: v["date"], reverse=True)
 

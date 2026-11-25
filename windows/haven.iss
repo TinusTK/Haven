@@ -4,7 +4,7 @@
 ; libmpv-2.dll (an LGPL build) in windows\libmpv.
 
 #ifndef AppVersion
-  #define AppVersion "0.2.4"
+  #define AppVersion "0.2.5"
 #endif
 
 [Setup]

@@ -1,10 +1,10 @@
 {
-  "version": "0.2.4",
+  "version": "0.2.5",
   "sections": [
     {
-      "title": "Android TV",
+      "title": "iPhone and iPad",
       "lines": [
-        "Haven now runs on Android TV."
+        "The iPhone and iPad app is now written in Swift."
       ]
     },
     {
