@@ -50,12 +50,13 @@
             <key>NSUbiquitousContainerSupportedFolderLevels</key><string>Any</string>
         </dict>
     </dict>
-    <!-- Media servers at home and Chromecasts are on the Local Area Network. -->
+    <!-- Media servers at home are on the Local Area Network. -->
     <key>NSLocalNetworkUsageDescription</key>
-    <string>Haven connects to your media servers and Chromecasts on your Local Area Network.</string>
-    <key>NSBonjourServices</key>
+    <string>Haven connects to your media servers on your Local Area Network.</string>
+    <!-- Films keep playing over AirPlay, and sound with the screen locked. -->
+    <key>UIBackgroundModes</key>
     <array>
-        <string>_googlecast._tcp</string>
+        <string>audio</string>
     </array>
     <!-- The player apps Haven can hand a video to. -->
     <key>LSApplicationQueriesSchemes</key>

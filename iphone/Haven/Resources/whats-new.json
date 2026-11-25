@@ -1,0 +1,17 @@
+{
+  "version": "0.2.4",
+  "sections": [
+    {
+      "title": "Android TV",
+      "lines": [
+        "Haven now runs on Android TV."
+      ]
+    },
+    {
+      "title": "Bug fixes",
+      "lines": [
+        "Bug fixes."
+      ]
+    }
+  ]
+}
