@@ -1,6 +1,8 @@
 package net.haven.app.core
 
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
 import okhttp3.Call
 import okhttp3.Callback
 import okhttp3.HttpUrl
@@ -133,6 +135,32 @@ class Http(base: OkHttpClient = OkHttpClient()) {
                     )
                 }
             })
+        }
+    }
+
+    /** Opens a request whose answer is read as it arrives (a long list of
+     *  stream sources). The caller reads the body and closes the response.
+     *  `readTimeoutSeconds` is the longest wait between two parts. */
+    suspend fun open(
+        address: String,
+        method: String = "GET",
+        headers: List<Pair<String, String>> = emptyList(),
+        body: ByteArray? = null,
+        contentType: String = "application/json",
+        readTimeoutSeconds: Long = DEFAULT_TIMEOUT_SECONDS,
+    ): Response {
+        val url = webUrl(address)
+        val request = Request.Builder().url(url).apply {
+            headers.forEach { (name, value) -> header(name, value) }
+            method(method, body?.toRequestBody(contentType.toMediaType()))
+        }.build()
+        val call = client.newBuilder().readTimeout(readTimeoutSeconds, TimeUnit.SECONDS).build().newCall(request)
+        return withContext(Dispatchers.IO) {
+            try {
+                call.execute()
+            } catch (e: IOException) {
+                throw if (e is HttpError) e else HttpError.Request(words(e))
+            }
         }
     }
 
