@@ -75,12 +75,6 @@ fn main() {
         }
     }
 
-    // iPhone and iPad: libmpv and FFmpeg are frameworks in Haven.app's
-    // Frameworks folder (ios/bundle.sh puts them there).
-    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("ios") {
-        println!("cargo:rustc-link-arg=-Wl,-rpath,@executable_path/Frameworks");
-    }
-
     // Android: Haven's library laid out for 16 KB memory pages, which
     // Google Play requires of apps for Android 15 and newer (it runs on
     // 4 KB phones too). Set here because cargo-apk overrides RUSTFLAGS.

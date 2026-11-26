@@ -464,14 +464,6 @@ pub fn open_in_browser(link: &str) {
     if cfg!(debug_assertions) && std::env::var_os("HAVEN_NO_BROWSER").is_some() {
         return eprintln!("haven: would open {link}");
     }
-    // A phone has no programs to start: the system opens the address.
-    #[cfg(target_os = "ios")]
-    {
-        if let Err(err) = webbrowser::open(link) {
-            eprintln!("haven: could not open the web browser: {err}");
-        }
-        return;
-    }
     #[cfg(target_os = "android")]
     {
         if let Err(why) = crate::external::view(link, None) {

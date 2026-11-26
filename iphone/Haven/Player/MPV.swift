@@ -15,7 +15,7 @@ import UIKit
 /// ES context of its own and draws each frame into a layer made for it
 /// (`MPVView`); SwiftUI's controls sit on top. mpv is created off the main
 /// thread and lives until the app ends; each film replaces the last.
-/// The Rust build's `haven-player/src/video.rs` (and `video_ios.rs`).
+/// Like the desktop build's `haven-player/src/video.rs`.
 @MainActor
 final class MPV {
     /// What mpv reported since the last `poll`.

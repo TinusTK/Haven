@@ -26,7 +26,7 @@ env:
   HAVEN_OMDB_API_KEY: ${{ secrets.OMDB_API_KEY }}
 
 # The iPhone and iPad app is the Swift one in iphone/, built by
-# iphone.yml. The Rust iOS code is no longer built.
+# iphone.yml. The old Rust iOS code was removed (0.2.6 build 3).
 jobs:
   # Which builds this run needs. The shared Rust code (app/) or this file
   # runs all five; a platform's own folder runs only that platform.

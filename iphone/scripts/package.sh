@@ -1,5 +1,5 @@
 #!/bin/bash
-# Makes an IPA of the Swift iPhone app, as the Rust build's ios/bundle.sh
+# Makes an IPA of the Swift iPhone app, as the old Rust build's ios/bundle.sh
 # did for the old one:
 #
 #   iphone/scripts/package.sh github   iphone/build/ipa/Haven-<v>-ios-unsigned.ipa

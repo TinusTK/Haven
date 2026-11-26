@@ -31,28 +31,7 @@ pub fn desktop_paths() -> Result<AppPaths, Box<dyn Error>> {
     if let Some(folder) = std::env::var_os("HAVEN_DATA_DIR") {
         return Ok(AppPaths::at(folder)?);
     }
-    // iOS: inside the app's own container, which the system names HOME.
-    #[cfg(target_os = "ios")]
-    if let Some(home) = std::env::var_os("HOME") {
-        let folder = std::path::Path::new(&home).join("Library/Application Support/Haven");
-        return Ok(AppPaths::at(folder)?);
-    }
     Ok(AppPaths::discover()?)
-}
-
-/// True on an iPhone (or iPod touch): its pages are laid out for a
-/// narrow screen. An iPad gets the layout a computer gets.
-#[cfg(target_os = "ios")]
-pub fn is_phone() -> bool {
-    // The simulator says which device it plays through this variable;
-    // a real device through the machine name ("iPhone16,1", "iPad14,3").
-    let model = std::env::var("SIMULATOR_MODEL_IDENTIFIER").ok().or_else(|| {
-        let mut name: libc::utsname = unsafe { std::mem::zeroed() };
-        (unsafe { libc::uname(&mut name) } == 0).then(|| {
-            unsafe { std::ffi::CStr::from_ptr(name.machine.as_ptr()) }.to_string_lossy().into_owned()
-        })
-    });
-    !model.is_some_and(|model| model.starts_with("iPad"))
 }
 
 /// Opens Haven's window and runs until it is closed. `phone` lays the
@@ -67,18 +46,9 @@ pub fn run(paths: AppPaths, phone: bool) -> Result<(), Box<dyn Error>> {
     // Must run before the first window exists: the player draws video with
     // OpenGL, so the window has to be drawn with OpenGL too.
     // If that cannot be had, carry on: Haven then runs without the player.
-    #[cfg(all(feature = "player", not(target_os = "ios")))]
+    #[cfg(feature = "player")]
     if let Err(err) = slint::BackendSelector::new().require_opengl().select() {
         eprintln!("haven: OpenGL is not available: {err}");
-    }
-    // iPhone and iPad: Slint draws with wgpu on Metal, and mpv's pictures
-    // are handed to it as wgpu textures (haven-player's video_ios.rs).
-    #[cfg(all(feature = "player", target_os = "ios"))]
-    if let Err(err) = slint::BackendSelector::new()
-        .require_wgpu_30(slint::wgpu_30::WGPUConfiguration::default())
-        .select()
-    {
-        eprintln!("haven: Metal is not available: {err}");
     }
 
     let ui = AppWindow::new()?;
@@ -86,7 +56,7 @@ pub fn run(paths: AppPaths, phone: bool) -> Result<(), Box<dyn Error>> {
     // An Android TV (or, for checks on a computer, HAVEN_TV in a debug build).
     let tv = TV.load(std::sync::atomic::Ordering::Relaxed)
         || (cfg!(debug_assertions) && std::env::var_os("HAVEN_TV").is_some());
-    ui.set_mobile(cfg!(any(target_os = "android", target_os = "ios")));
+    ui.set_mobile(cfg!(target_os = "android"));
     ui.set_tv(tv);
     remote::connect(&ui);
     // A store build (App Store, Google Play): no add-ons.
@@ -96,12 +66,11 @@ pub fn run(paths: AppPaths, phone: bool) -> Result<(), Box<dyn Error>> {
     ui.set_own_network_only(haven_servers::ONLY_OWN_NETWORK);
     ui.set_compact(phone);
     ui.global::<Theme>().set_phone(phone);
-    ui.global::<Theme>().set_touch(cfg!(any(target_os = "android", target_os = "ios")) && !tv);
+    ui.global::<Theme>().set_touch(cfg!(target_os = "android") && !tv);
     ui.global::<Remote>().set_on(tv);
     if tv {
         ui.invoke_remote_start();
     }
-    ui.set_ios(cfg!(target_os = "ios"));
     ui.set_version(env!("CARGO_PKG_VERSION").into());
     ui.set_data_path(paths.data_dir().display().to_string().into());
     ui.set_log_path(paths.data_dir().join("haven.log").display().to_string().into());
@@ -227,7 +196,7 @@ pub fn run(paths: AppPaths, phone: bool) -> Result<(), Box<dyn Error>> {
             // those always play in Haven's own player.
             Some(own)
                 if !external.wanted()
-                    || (cfg!(any(target_os = "ios", target_os = "android")) && !request.address.contains("://")) =>
+                    || (cfg!(target_os = "android") && !request.address.contains("://")) =>
             {
                 external.clear();
                 own(request)

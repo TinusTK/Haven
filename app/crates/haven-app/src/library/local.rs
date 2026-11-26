@@ -89,21 +89,9 @@ fn scan(root: &std::path::Path, place: &str, found: &mut Vec<Found>, depth: u32)
     }
 }
 
-/// iPhone and iPad: Files › On My iPhone › Haven › Videos, the folder
-/// Library › Local lists. Made at start so it shows in the Files app.
-#[cfg(target_os = "ios")]
-pub(crate) fn videos_folder() -> PathBuf {
-    std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default().join("Documents").join("Videos")
-}
-
 /// The folders looked in, with how to name them.
 #[cfg(not(target_os = "android"))]
 fn folders() -> Vec<(PathBuf, String)> {
-    #[cfg(target_os = "ios")]
-    {
-        vec![(videos_folder(), "Haven › Videos".to_owned())]
-    }
-    #[cfg(not(target_os = "ios"))]
     {
         let mut list = Vec::new();
         if let Some(dirs) = directories::UserDirs::new() {
@@ -237,9 +225,6 @@ mod android {
 
 impl Library {
     pub(super) fn start_local(self: &Rc<Self>, ui: &AppWindow) {
-        // The Videos folder shows in the Files app only once it exists.
-        #[cfg(target_os = "ios")]
-        let _ = std::fs::create_dir_all(videos_folder());
         ui.on_local_open({
             let library = self.clone();
             move || library.open_local()
@@ -251,8 +236,6 @@ impl Library {
         ui.set_local_place(
             if cfg!(target_os = "android") {
                 "Videos on this phone"
-            } else if cfg!(target_os = "ios") {
-                "Videos in Files › On My iPhone › Haven › Videos"
             } else {
                 "Videos in your Movies and Downloads folders"
             }
@@ -325,9 +308,6 @@ impl Library {
             })
             .collect();
         let status = match rows.len() {
-            0 if cfg!(target_os = "ios") => {
-                "No videos here yet. Move videos into Files › On My iPhone › Haven › Videos and they show up here.".to_owned()
-            }
             0 => "No videos found.".to_owned(),
             1 => "1 video.".to_owned(),
             n => format!("{n} videos."),
@@ -353,11 +333,6 @@ impl Library {
             source: "On this device".into(),
             next: None,
         };
-        // An iPhone's player apps cannot open files kept inside Haven:
-        // these play once Haven has its own player there.
-        if cfg!(target_os = "ios") && !cfg!(feature = "player") {
-            return self.local_status("Videos on this iPhone play in Haven's own player, which is on its way.");
-        }
         if let Some(play) = self.player.borrow().as_ref() {
             *self.playing_item.borrow_mut() = None;
             play(request);

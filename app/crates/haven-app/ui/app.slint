@@ -3363,7 +3363,6 @@ export component AppWindow inherits Window {
         remote-keys.focus();
     }
     // An iPhone or iPad.
-    in property <bool> ios;
     in property <bool> compact;
     // On a phone: Explore shows its list of sources, not the titles.
     in-out property <bool> explore-picking;
@@ -5995,32 +5994,11 @@ export component AppWindow inherits Window {
                         accessible-label: "The program to play videos with";
                         edited(text) => { root.set-player-program(text); }
                     }
-                    if root.mobile && !root.ios: Text {
+                    if root.mobile: Text {
                         width: SettingsText.card;
                         text: "Videos open in a player app on this device, such as VLC or mpv. Android asks which one the first time.";
                         color: Theme.text-dim;
                         wrap: word-wrap;
-                    }
-                    // With Haven's own player the list starts with it, so
-                    // the row's place in the list is the choice itself.
-                    if root.ios: SettingsRow {
-                        label: "Play videos with";
-                        detail: !root.player-own-works
-                            ? "Videos open in this app, which has to be installed."
-                            : root.player-choice == 0
-                            ? "Haven's own player keeps your place and plays the next episode."
-                            : "Streams open in this app, which has to be installed. Videos kept on this device play in Haven's own player.";
-                        ComboBox {
-                            width: root.player-own-works ? 190px : 150px;
-                            model: root.player-own-works
-                                ? ["Haven's own player", "VLC", "Infuse", "Outplayer"]
-                                : ["VLC", "Infuse", "Outplayer"];
-                            current-index: root.player-own-works ? root.player-choice : max(0, root.player-choice - 1);
-                            selected => {
-                                root.player-choice = root.player-own-works ? self.current-index : self.current-index + 1;
-                                root.set-player-choice(root.player-choice);
-                            }
-                        }
                     }
                     SettingsRow {
                         label: "Send surround sound to a receiver untouched";

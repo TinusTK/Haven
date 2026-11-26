@@ -17,46 +17,28 @@
 //!    down with its OpenGL context current) and then call [`Video::finish`].
 //!
 //! Proven by `examples/mpv_spike.rs`, which this was lifted from.
-//!
-//! On an iPhone or iPad the window is drawn with wgpu on Metal instead
-//! (`require_wgpu_30` in step 1), and mpv draws with an OpenGL ES context
-//! of its own into a picture shared with Metal: see `video_ios.rs`.
 
-#[cfg(not(target_os = "ios"))]
 use std::ffi::{CStr, CString, c_void};
-#[cfg(not(target_os = "ios"))]
 use std::num::NonZeroU32;
 use std::sync::{Arc, mpsc};
 
-#[cfg(not(target_os = "ios"))]
 use glow::HasContext;
 use libmpv2::Mpv;
 use libmpv2::render::RenderContext;
-#[cfg(not(target_os = "ios"))]
 use libmpv2::render::{OpenGLInitParams, RenderParam, RenderParamApiType};
-#[cfg(not(target_os = "ios"))]
 use slint::BorrowedOpenGLTextureBuilder;
 use slint::{GraphicsAPI, RenderingState};
 
 use crate::tracks::{Track, parse_tracks};
 
-#[cfg(target_os = "ios")]
-#[path = "video_ios.rs"]
-mod ios;
-#[cfg(target_os = "ios")]
-use ios::Target;
-
-#[cfg(not(target_os = "ios"))]
 type ProcAddressFn<'a> = dyn Fn(&CStr) -> *const c_void + 'a;
 
 /// Slint's OpenGL symbol lookup, lent to mpv while it creates its render
 /// context. mpv resolves every GL function during that call and libmpv2
 /// frees these parameters right after it, so the pointer never outlives the
 /// rendering callback it came from.
-#[cfg(not(target_os = "ios"))]
 struct ProcLoader(*const ProcAddressFn<'static>);
 
-#[cfg(not(target_os = "ios"))]
 fn mpv_gl_lookup(loader: &ProcLoader, name: &str) -> *mut c_void {
     let Ok(name) = CString::new(name) else {
         return std::ptr::null_mut();
@@ -66,7 +48,6 @@ fn mpv_gl_lookup(loader: &ProcLoader, name: &str) -> *mut c_void {
 }
 
 /// The framebuffer mpv draws into, and its colour texture that Slint shows.
-#[cfg(not(target_os = "ios"))]
 struct Target {
     fbo: glow::NativeFramebuffer,
     texture: glow::NativeTexture,
@@ -74,7 +55,6 @@ struct Target {
     height: u32,
 }
 
-#[cfg(not(target_os = "ios"))]
 impl Target {
     /// `width` and `height` are physical pixels.
     unsafe fn new(gl: &glow::Context, width: u32, height: u32) -> Result<Self, String> {
@@ -140,19 +120,16 @@ impl Target {
     }
 }
 
-#[cfg(not(target_os = "ios"))]
 /// Texture slots saved and put back around mpv's drawing. mpv uses more
 /// than the first few (its dither and lookup textures), and a renderer
 /// that remembers which texture sits in each slot (Skia) would otherwise
 /// draw the wrong picture.
 const TEXTURE_UNITS: u32 = 32;
-#[cfg(not(target_os = "ios"))]
 const CAPS: [u32; 5] =
     [glow::BLEND, glow::SCISSOR_TEST, glow::DEPTH_TEST, glow::STENCIL_TEST, glow::CULL_FACE];
 
 /// The OpenGL state that our framebuffer work and mpv's renderer change.
 /// Slint's renderer shares this context and expects to find it untouched.
-#[cfg(not(target_os = "ios"))]
 struct GlState {
     draw_fbo: i32,
     read_fbo: i32,
@@ -171,12 +148,10 @@ struct GlState {
     caps: [bool; CAPS.len()],
 }
 
-#[cfg(not(target_os = "ios"))]
 fn name(id: i32) -> Option<NonZeroU32> {
     NonZeroU32::new(id as u32)
 }
 
-#[cfg(not(target_os = "ios"))]
 impl GlState {
     unsafe fn save(gl: &glow::Context) -> Self {
         unsafe {
@@ -344,11 +319,7 @@ pub struct Video {
     incoming: Option<mpsc::Receiver<Result<Mpv, String>>>,
     /// Leaked so the render context can borrow it; freed in `teardown`.
     mpv: Option<&'static Mpv>,
-    #[cfg(not(target_os = "ios"))]
     gl: Option<glow::Context>,
-    /// mpv's own OpenGL ES context (iPhone and iPad).
-    #[cfg(target_os = "ios")]
-    gles: Option<ios::Gles>,
     render: Option<RenderContext<'static>>,
     target: Option<Target>,
     /// What to load as soon as mpv can draw.
@@ -369,10 +340,7 @@ impl Video {
             wake: Arc::new(wake),
             incoming: None,
             mpv: None,
-            #[cfg(not(target_os = "ios"))]
             gl: None,
-            #[cfg(target_os = "ios")]
-            gles: None,
             render: None,
             target: None,
             waiting: None,
@@ -404,7 +372,7 @@ impl Video {
                 init.set_property("vo", "libmpv")?;
                 // Decode on the GPU where possible, copy frames back to
                 // memory: no GL interop needed, so it works everywhere.
-                #[cfg(not(any(target_os = "ios", target_os = "android")))]
+                #[cfg(not(target_os = "android"))]
                 init.set_property("hwdec", "auto-copy")?;
                 // Android: the phone's own decoders (MediaCodec), copied
                 // back to memory like the line above. The emulator's
@@ -427,17 +395,6 @@ impl Video {
                     // half-float framebuffer came out black (seen on the
                     // emulator); 8 bits per colour draws it everywhere.
                     let _ = init.set_property("fbo-format", "rgba8");
-                }
-                // iPhone and iPad: Apple's own decoder (VideoToolbox),
-                // straight into OpenGL ES where the libmpv can (devices),
-                // else copied back (the simulator).
-                #[cfg(target_os = "ios")]
-                {
-                    init.set_property("hwdec", "videotoolbox,videotoolbox-copy")?;
-                    // Apple's sound decoders first where they cover the
-                    // format (Dolby Digital and Digital Plus, AAC, MP3);
-                    // FFmpeg's own for the rest.
-                    let _ = init.set_property("ad", "ac3_at,eac3_at,aac_at,mp3_at");
                 }
                 // Don't let mpv's renderer sleep on the UI thread.
                 init.set_property("video-timing-offset", "0")?;
@@ -505,7 +462,6 @@ impl Video {
         step
     }
 
-    #[cfg(not(target_os = "ios"))]
     fn setup(&mut self, api: &GraphicsAPI) -> Result<(), String> {
         let GraphicsAPI::NativeOpenGL { get_proc_address } = api else {
             return Err(format!("the window is not drawn with OpenGL ({api:?})"));
@@ -518,7 +474,6 @@ impl Video {
 
     /// Creates mpv's render context once both mpv and the GL context
     /// exist, then loads whatever was waiting for it.
-    #[cfg(not(target_os = "ios"))]
     fn connect(&mut self, api: &GraphicsAPI) -> Result<(), String> {
         if self.render.is_none() && self.gl.is_some() {
             if self.mpv.is_none() {
@@ -579,7 +534,6 @@ impl Video {
     }
 
     /// Lets mpv draw the current frame into the framebuffer.
-    #[cfg(not(target_os = "ios"))]
     fn draw(&mut self, size: (u32, u32), show: &mut dyn FnMut(slint::Image)) -> Result<(), String> {
         if !self.showing {
             return Ok(());
@@ -635,7 +589,6 @@ impl Video {
     ///
     /// `gl_current` is true inside RenderingTeardown. Without a current GL
     /// context the GL objects are left to die with the context instead.
-    #[cfg(not(target_os = "ios"))]
     fn teardown(&mut self, gl_current: bool) {
         self.showing = false;
         self.waiting = None;

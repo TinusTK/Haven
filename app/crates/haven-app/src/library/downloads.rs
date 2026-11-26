@@ -57,9 +57,6 @@ pub(super) fn downloads_root(data_dir: &Path) -> PathBuf {
     match home {
         Some(home) if cfg!(target_os = "macos") => home.join("Movies").join("Haven"),
         Some(home) if cfg!(any(windows, target_os = "linux")) => home.join("Videos").join("Haven"),
-        // iPhone and iPad: Haven's own folder in the Files app
-        // (On My iPhone › Haven › Downloads).
-        Some(home) if cfg!(target_os = "ios") => home.join("Documents").join("Downloads"),
         _ if cfg!(target_os = "android") => {
             // The phone's Movies folder, where other apps see them too;
             // Haven's own folder if Android does not allow it.
@@ -93,10 +90,9 @@ pub(super) fn extension_of(address: &str) -> &'static str {
 }
 
 /// Where a download is saved, relative to the downloads folder: in
-/// `Movies/` and `Series/<show>/Season <n>/` on a computer, straight in the
-/// folder on an iPhone or iPad.
+/// `Movies/` and `Series/<show>/Season <n>/`.
 pub(super) fn relative_path(d: &Download, extension: &str) -> PathBuf {
-    if cfg!(target_os = "ios") { PathBuf::from(file_name(d, extension)) } else { sorted_path(d, extension) }
+    sorted_path(d, extension)
 }
 
 /// `Movies/<film>.mkv` or `Series/<show>/Season <n>/<episode>.mkv`.
@@ -125,27 +121,9 @@ fn file_name(d: &Download, extension: &str) -> String {
     }
 }
 
-/// A saved path under `root`. An iPhone app's folder moves with every
-/// update (its path holds a new number), so a path saved by an older
-/// version is looked for again under today's downloads folder.
-pub(super) fn current_path(saved: &str, root: &Path) -> PathBuf {
-    let path = PathBuf::from(saved);
-    if !cfg!(target_os = "ios") || path.starts_with(root) {
-        return path;
-    }
-    moved_path(saved, root).unwrap_or(path)
-}
-
-/// The part of `saved` after its `Documents/Downloads/`, under `root`.
-fn moved_path(saved: &str, root: &Path) -> Option<PathBuf> {
-    const MARK: &str = "/Documents/Downloads/";
-    let at = saved.find(MARK)?;
-    Some(root.join(&saved[at + MARK.len()..]))
-}
-
 /// Where downloads go, in words for the screen.
 fn place_words(folder: &Path) -> String {
-    if cfg!(target_os = "ios") { "On My iPhone › Haven › Downloads".to_owned() } else { folder.display().to_string() }
+    folder.display().to_string()
 }
 
 fn size_words(bytes: i64) -> String {
@@ -212,10 +190,6 @@ impl Library {
 
     pub(super) fn start_downloads(self: &Rc<Self>, ui: &crate::AppWindow) {
         ui.set_download_rows(ModelRc::from(self.downloads.rows.clone()));
-        // On an iPhone the folder shows in the Files app only once it exists.
-        if cfg!(target_os = "ios") {
-            let _ = std::fs::create_dir_all(self.downloads_folder());
-        }
         ui.set_downloads_folder(place_words(&self.downloads_folder()).into());
         ui.on_download_stream({
             let library = self.clone();
@@ -306,7 +280,7 @@ impl Library {
                     self.keep_download_picture(id, url);
                 }
                 if let Some(ui) = self.ui.upgrade() {
-                    let place = if cfg!(target_os = "ios") { place_words(&path) } else { d.path.clone() };
+                    let place = &d.path;
                     ui.set_play_note(format!("Downloading to {place}. It is in your Library under Downloads.").into());
                 }
                 self.next_downloads();
@@ -333,8 +307,7 @@ impl Library {
         }
     }
 
-    fn run_download(&self, mut d: Download) {
-        d.path = current_path(&d.path, &self.downloads_folder()).display().to_string();
+    fn run_download(&self, d: Download) {
         let stop = Arc::new(AtomicBool::new(false));
         self.downloads.running.borrow_mut().insert(d.id, stop.clone());
         let _ = self.store.update_download(d.id, d.size, d.received, "loading");
@@ -385,7 +358,7 @@ impl Library {
         }
         let Some(d) = self.store.downloads().unwrap_or_default().into_iter().find(|d| d.id == id) else { return };
         let root = self.downloads_folder();
-        let path = current_path(&d.path, &root);
+        let path = PathBuf::from(&d.path);
         // Only ever delete inside Haven's downloads folder.
         if path.starts_with(&root) {
             let _ = std::fs::remove_file(&path);
@@ -406,7 +379,7 @@ impl Library {
 
     fn play_download(&self, id: i64) {
         let Some(d) = self.store.downloads().unwrap_or_default().into_iter().find(|d| d.id == id) else { return };
-        let path = current_path(&d.path, &self.downloads_folder());
+        let path = PathBuf::from(&d.path);
         if d.state != "done" || !path.exists() {
             return;
         }
@@ -576,14 +549,6 @@ mod tests {
     fn phone_files_sit_straight_in_the_folder() {
         assert_eq!(file_name(&sample("movie", None, None, ""), "mkv"), "Dune Part Two.mkv");
         assert_eq!(file_name(&sample("series", Some(1), Some(2), "S1 E2"), "mp4"), "Dune Part Two - S01E02.mp4");
-    }
-
-    #[test]
-    fn a_moved_phone_folder_is_found_again() {
-        let old = "/private/var/mobile/Containers/Data/Application/AAAA/Documents/Downloads/Movies/Dune.mkv";
-        let root = Path::new("/var/mobile/Containers/Data/Application/BBBB/Documents/Downloads");
-        assert_eq!(moved_path(old, root), Some(root.join("Movies/Dune.mkv")));
-        assert_eq!(moved_path("/Users/me/Movies/Haven/Movies/Dune.mkv", root), None);
     }
 
     #[test]

@@ -232,7 +232,7 @@ const NO_DETAILS: &str =
     words!("There are no details for this title.", "None of your add-ons has details for this title.");
 
 /// A phone or tablet build (updates come as a new APK or IPA).
-pub(crate) const MOBILE: bool = cfg!(any(target_os = "android", target_os = "ios"));
+pub(crate) const MOBILE: bool = cfg!(target_os = "android");
 
 /// A build without add-ons (the App Store build): no
 /// add-on code, no Add-ons page, never a word about add-ons. Every other

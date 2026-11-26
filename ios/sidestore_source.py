@@ -10,12 +10,13 @@ import json
 import os
 import shutil
 import sys
+import urllib.error
 import urllib.request
 
 REPO = "TinusTK/Haven"
 SITE = "https://tinustk.github.io/Haven"
 BUNDLE_ID = "net.haven.app"
-# The lowest iOS the IPA runs on: 15 for the Rust app (ios/bundle.sh),
+# The lowest iOS the IPA runs on: 15 for the old Rust app (before 0.2.5),
 # 17 for the Swift app (iphone/project.yml), which ships from 0.2.5 on.
 MIN_IOS = "15.0"
 MIN_IOS_SWIFT = "17.0"
@@ -35,17 +36,30 @@ if os.environ.get("GITHUB_TOKEN"):
     HEADERS["Authorization"] = f"Bearer {os.environ['GITHUB_TOKEN']}"
 
 
+def get(url):
+    with urllib.request.urlopen(urllib.request.Request(url, headers=HEADERS)) as answer:
+        return json.load(answer)
+
+
 def releases():
+    """Every release, plus the latest one: GitHub's list has been seen
+    leaving out a new release for hours while /releases/latest had it."""
+    seen = set()
     page = 1
     while True:
-        url = f"https://api.github.com/repos/{REPO}/releases?per_page=50&page={page}"
-        with urllib.request.urlopen(urllib.request.Request(url, headers=HEADERS)) as answer:
-            batch = json.load(answer)
+        batch = get(f"https://api.github.com/repos/{REPO}/releases?per_page=50&page={page}")
         if not batch:
-            return
-        yield from batch
+            break
+        for release in batch:
+            seen.add(release["id"])
+            yield release
         page += 1
-
+    try:
+        latest = get(f"https://api.github.com/repos/{REPO}/releases/latest")
+    except urllib.error.HTTPError:
+        return
+    if latest["id"] not in seen:
+        yield latest
 
 def main():
     out = sys.argv[1] if len(sys.argv) > 1 else "site"

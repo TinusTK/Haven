@@ -60,15 +60,6 @@ fn backup_folder() -> (PathBuf, String) {
             return (PathBuf::from(folder).join("backup"), "the test data folder".to_owned());
         }
     }
-    #[cfg(all(target_os = "ios", feature = "store"))]
-    if let Some(folder) = icloud::documents() {
-        return (folder, "iCloud Drive › Haven".to_owned());
-    }
-    #[cfg(target_os = "ios")]
-    {
-        let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
-        return (home.join("Documents"), "Files › On My iPhone › Haven".to_owned());
-    }
     #[cfg(target_os = "android")]
     {
         let shared = PathBuf::from("/storage/emulated/0/Documents/Haven");
@@ -78,7 +69,7 @@ fn backup_folder() -> (PathBuf, String) {
         let own = PathBuf::from("/storage/emulated/0/Android/data/net.haven.app/files");
         return (own, "Android › data › net.haven.app on this phone".to_owned());
     }
-    #[cfg(not(any(target_os = "ios", target_os = "android")))]
+    #[cfg(not(target_os = "android"))]
     {
         let documents = directories::UserDirs::new()
             .and_then(|dirs| dirs.document_dir().map(PathBuf::from))
@@ -86,55 +77,6 @@ fn backup_folder() -> (PathBuf, String) {
         let folder = documents.join("Haven");
         let words = folder.display().to_string();
         (folder, words)
-    }
-}
-
-/// iCloud Drive's folder for Haven, when the app is signed with the
-/// iCloud permission and the user is signed in to iCloud.
-#[cfg(all(target_os = "ios", feature = "store"))]
-mod icloud {
-    use std::{
-        ffi::{CStr, c_char, c_void},
-        path::PathBuf,
-    };
-
-    type Id = *mut c_void;
-
-    #[link(name = "objc")]
-    unsafe extern "C" {
-        fn objc_getClass(name: *const c_char) -> Id;
-        fn sel_registerName(name: *const c_char) -> Id;
-        fn objc_msgSend();
-        fn objc_autoreleasePoolPush() -> *mut c_void;
-        fn objc_autoreleasePoolPop(pool: *mut c_void);
-    }
-
-    #[link(name = "Foundation", kind = "framework")]
-    unsafe extern "C" {}
-
-    pub fn documents() -> Option<PathBuf> {
-        // SAFETY: plain Objective-C messages to Foundation classes, each
-        // cast to the signature of the method it calls; the pool frees
-        // what they hand back.
-        unsafe {
-            let send: extern "C" fn(Id, Id) -> Id = std::mem::transmute(objc_msgSend as *const ());
-            let send_id: extern "C" fn(Id, Id, Id) -> Id = std::mem::transmute(objc_msgSend as *const ());
-            let send_text: extern "C" fn(Id, Id) -> *const c_char = std::mem::transmute(objc_msgSend as *const ());
-            let pool = objc_autoreleasePoolPush();
-            let manager = send(objc_getClass(c"NSFileManager".as_ptr()), sel_registerName(c"defaultManager".as_ptr()));
-            let url = send_id(manager, sel_registerName(c"URLForUbiquityContainerIdentifier:".as_ptr()), std::ptr::null_mut());
-            let folder = if url.is_null() {
-                None
-            } else {
-                let path = send(url, sel_registerName(c"path".as_ptr()));
-                let text = send_text(path, sel_registerName(c"UTF8String".as_ptr()));
-                (!text.is_null())
-                    .then(|| CStr::from_ptr(text).to_str().ok().map(|p| PathBuf::from(p).join("Documents")))
-                    .flatten()
-            };
-            objc_autoreleasePoolPop(pool);
-            folder
-        }
     }
 }
 
@@ -190,11 +132,7 @@ impl Library {
         };
         ui.set_backup_status(status.into());
         ui.set_backup_where(
-            if cfg!(all(target_os = "ios", feature = "store")) {
-                "iCloud Drive"
-            } else if cfg!(target_os = "ios") {
-                "The Files app"
-            } else if cfg!(target_os = "android") {
+            if cfg!(target_os = "android") {
                 "On this phone"
             } else {
                 "Documents folder"

@@ -361,7 +361,6 @@ impl Player {
         self.seek_held.set(None);
         ui.set_player_open(true);
         ui.set_player_mini(false);
-        phone_bars(&ui, false);
 
         let address = request.address.clone();
         *self.playing.borrow_mut() = Some(Playing {
@@ -681,7 +680,6 @@ impl Player {
             ui.set_player_fullscreen(false);
             ui.set_player_open(false);
             ui.set_player_mini(false);
-            phone_bars(&ui, true);
             ui.set_player_frame(Image::default());
         }
     }
@@ -702,7 +700,6 @@ impl Player {
             ui.set_player_fullscreen(false);
             ui.set_player_open(false);
             ui.set_player_mini(false);
-            phone_bars(&ui, true);
             ui.set_player_frame(Image::default());
         }
         if let Some(closed) = self.closed.borrow().as_ref() {
@@ -805,22 +802,6 @@ fn share_loaded(status: &haven_player::video::Status) -> Option<f64> {
     (status.duration > 0.0).then(|| {
         ((status.position + status.ahead.unwrap_or(0.0)) / status.duration * 100.0).clamp(0.0, 100.0)
     })
-}
-
-/// iPhone and iPad: hides the status bar (the clock, signal and battery)
-/// and the home bar while a video plays, and shows them again after.
-fn phone_bars(ui: &AppWindow, shown: bool) {
-    #[cfg(target_os = "ios")]
-    {
-        use slint::winit_030::WinitWindowAccessor;
-        use winit::platform::ios::WindowExtIOS;
-        ui.window().with_winit_window(|window| {
-            window.set_prefers_status_bar_hidden(!shown);
-            window.set_prefers_home_indicator_hidden(!shown);
-        });
-    }
-    #[cfg(not(target_os = "ios"))]
-    let _ = (ui, shown);
 }
 
 fn arrival(bytes_a_second: Option<f64>, loaded: Option<f64>) -> String {

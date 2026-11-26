@@ -28,7 +28,7 @@ use super::{Library, on_ui};
 
 const OPTIONS: &str = "sync_options";
 /// A phone or tablet, where sync is paced to save battery.
-const PHONE: bool = cfg!(any(target_os = "android", target_os = "ios"));
+const PHONE: bool = cfg!(target_os = "android");
 /// How long after a change the queue is sent (on a phone, so changes
 /// travel together).
 const AFTER_A_CHANGE: Duration = Duration::from_secs(if PHONE { 20 } else { 2 });

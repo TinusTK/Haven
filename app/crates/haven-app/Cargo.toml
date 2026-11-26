@@ -142,12 +142,3 @@ required = false
 [[package.metadata.android.uses_feature]]
 name = "android.hardware.touchscreen"
 required = false
-
-# iOS: opening a web address or another app (a video player) goes
-# through the system; there are no programs to start.
-[target.'cfg(target_os = "ios")'.dependencies]
-# The player hides the status bar and home bar through the window.
-slint = { workspace = true, features = ["unstable-winit-030"] }
-winit = { version = "0.30", default-features = false }
-webbrowser = "1"
-libc = "0.2"
