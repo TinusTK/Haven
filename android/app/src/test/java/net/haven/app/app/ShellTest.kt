@@ -81,4 +81,26 @@ class ShellTest {
         Page.entries.forEach { assertTrue(it.icon, IconPaths.drawings.containsKey(it.icon)) }
         IconPaths.drawings.forEach { (name, d) -> assertTrue(name, PathParser().parsePathString(d).toNodes().isNotEmpty()) }
     }
+
+    @Test fun tvRowsAndPagesScrollOnlyAsFarAsNeeded() {
+        val d = net.haven.app.ui.TVScrolling::distance
+        // Showing, with room to spare: no scrolling.
+        assertEquals(0f, d(100f, 200f, 1000f, 50f), 0f)
+        // Past the far edge: just far enough to show it with the margin.
+        assertEquals(150f, d(900f, 200f, 1000f, 50f), 0f)
+        // Before the near edge: back to it, with the margin.
+        assertEquals(-80f, d(-30f, 200f, 1000f, 50f), 0f)
+        // Too big to fit with margins: its start goes to the edge.
+        assertEquals(300f, d(300f, 1000f, 1000f, 50f), 0f)
+        // A small margin where the container is barely bigger.
+        assertEquals(-10f, d(0f, 980f, 1000f, 50f), 0f)
+    }
+
+    @Test fun tvCardsAreTheAppleTVSizesHalved() {
+        assertEquals(120f, net.haven.app.ui.PosterFit.TV_POSTER, 0f)
+        assertEquals(220f, net.haven.app.ui.PosterFit.TV_WIDE, 0f)
+        // A TV page 864 dp wide fits 6 cells of about 130 dp.
+        assertEquals(6, net.haven.app.ui.PosterFit.grid(864f, tv = true).first)
+        assertEquals(4, net.haven.app.ui.PosterFit.grid(864f).first)
+    }
 }

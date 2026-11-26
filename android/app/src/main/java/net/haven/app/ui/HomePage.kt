@@ -1,5 +1,12 @@
 package net.haven.app.ui
 
+import androidx.compose.ui.focus.focusRestorer
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -50,6 +57,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -94,7 +102,7 @@ private fun HomeFilled(model: AppModel, library: Library) {
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val gutter = if (tv) 0.dp else 16.dp
         val width = maxWidth - gutter * 2
-        val wide = minOf(maxOf((width - 14.dp) / 2, 0.dp), if (tv) 420.dp else 380.dp)
+        val wide = if (tv) PosterFit.TV_WIDE.dp else minOf(maxOf((width - 14.dp) / 2, 0.dp), 380.dp)
         PullToRefreshBox(isRefreshing = library.refreshing, onRefresh = { scope.launch { library.refreshHome() } }) {
             LazyColumn(
                 Modifier.fillMaxSize(),
@@ -116,7 +124,7 @@ private fun HomeFilled(model: AppModel, library: Library) {
                 if (library.continueCards.isNotEmpty()) item("continue") {
                     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         RowHeading("Continue Watching") { model.openLibrary(3) }
-                        LazyRow(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                        LazyRow(Modifier.tvRow(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                             items(library.continueCards, key = { it.kind + it.id }) { card -> ContinueItem(card, wide, library, model) }
                         }
                     }
@@ -169,7 +177,7 @@ private fun ReleaseRow(title: String, cards: List<Releases.Card>, wide: Dp, paus
                 value = Instant.now()
             }
         }
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+        LazyRow(Modifier.tvRow(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
             items(cards, key = { it.kind + it.id }) { card ->
                 WideCard(
                     card.title, card.episode, card.picture, card.badge, wide,
@@ -210,8 +218,15 @@ private fun ContinueItem(card: HomeTop.ContinueCard, wide: Dp, library: Library,
 @Composable
 private fun HeroBanner(slides: List<HomeTop.Slide>, width: Dp, showing: Boolean, pause: Pause, firstPicture: () -> Unit, open: (HomeTop.Slide) -> Unit) {
     val palette = LocalPalette.current
+    val tv = LocalTV.current
     var index by remember { mutableIntStateOf(0) }
-    val height = if (width.value > PosterFit.WIDE) minOf(width * 0.45f, 480.dp) else minOf(maxOf(width * 1.2f, 420.dp), 560.dp)
+    // On a TV about a third as high as it is wide (Apple TV's 620 of 1760
+    // points), so the first row shows under it.
+    val height = when {
+        tv -> minOf(width * 0.36f, 310.dp)
+        width.value > PosterFit.WIDE -> minOf(width * 0.45f, 480.dp)
+        else -> minOf(maxOf(width * 1.2f, 420.dp), 560.dp)
+    }
     LaunchedEffect(showing, slides.size) {
         if (!showing || slides.size < 2) return@LaunchedEffect
         while (true) {
@@ -223,11 +238,29 @@ private fun HeroBanner(slides: List<HomeTop.Slide>, width: Dp, showing: Boolean,
     val shade = Color(0xFF0D0F14)
     Column(verticalArrangement = Arrangement.spacedBy(14.dp), horizontalAlignment = Alignment.CenterHorizontally) {
         val slide = slides[minOf(index, slides.size - 1)]
+        // The frame that takes the remote stays while the slides fade inside
+        // it: were it part of a slide, the remote would lose its place (and
+        // land on the tabs) each time the banner turned.
+        Box(
+            Modifier.size(width, height).clip(shape)
+                // Left and right on the banner turn it by hand (on a TV).
+                .onPreviewKeyEvent { event ->
+                    val step = when (event.key) {
+                        Key.DirectionRight -> 1
+                        Key.DirectionLeft -> slides.size - 1
+                        else -> 0
+                    }
+                    if (!tv || step == 0 || slides.size < 2) return@onPreviewKeyEvent false
+                    if (event.type == KeyEventType.KeyDown) index = (index + step) % slides.size
+                    true
+                }
+                .pressable(shape) { open(slide) }
+                .semantics { contentDescription = "Info about ${slide.title}" },
+        ) {
         AnimatedContent(slide, transitionSpec = { fadeIn(tween(300)) togetherWith fadeOut(tween(300)) }, label = "banner") { shown ->
             Box(
-                Modifier.size(width, height).clip(shape).background(palette.surface).border(1.dp, palette.border, shape)
-                    .pressable(shape) { open(shown) }
-                    .semantics { contentDescription = "Info about ${shown.title}" },
+                Modifier.size(width, height).background(palette.surface).border(1.dp, palette.border, shape)
+                    .clearAndSetSemantics {},
                 contentAlignment = Alignment.BottomCenter,
             ) {
                 RemotePicture(shown.image, PictureSize.Background, Modifier.fillMaxSize(), pause, loaded = { if (index == 0) firstPicture() })
@@ -239,7 +272,7 @@ private fun HeroBanner(slides: List<HomeTop.Slide>, width: Dp, showing: Boolean,
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
                     if (shown.logo != null) {
-                        RemotePicture(shown.logo, PictureSize.Logo, Modifier.widthIn(max = minOf(width - 40.dp, 320.dp)).height(96.dp).fillMaxWidth(), pause, ContentScale.Fit) {
+                        RemotePicture(shown.logo, PictureSize.Logo, Modifier.widthIn(max = minOf(width - 40.dp, 320.dp)).height(if (tv) 64.dp else 96.dp).fillMaxWidth(), pause, ContentScale.Fit) {
                             BannerTitle(shown.title)
                         }
                     } else {
@@ -248,7 +281,7 @@ private fun HeroBanner(slides: List<HomeTop.Slide>, width: Dp, showing: Boolean,
                     if (shown.facts.isNotEmpty()) Text(shown.facts, style = Type.font(13.sp, FontWeight.SemiBold, Color(0xFFF2F2F2)), textAlign = TextAlign.Center)
                     if (shown.scores.isNotEmpty()) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { shown.scores.forEach { ScoreTag(it) } }
                     if (shown.description.isNotEmpty()) {
-                        Text(shown.description, style = Type.font(13.sp, color = Color(0xFFD6D6D6)), textAlign = TextAlign.Center, maxLines = 3)
+                        Text(shown.description, style = Type.font(13.sp, color = Color(0xFFD6D6D6)), textAlign = TextAlign.Center, maxLines = if (tv) 2 else 3)
                     }
                     Row(
                         Modifier.padding(top = 6.dp).height(42.dp).background(palette.accent, RoundedCornerShape(50)).padding(horizontal = 30.dp),
@@ -261,12 +294,14 @@ private fun HeroBanner(slides: List<HomeTop.Slide>, width: Dp, showing: Boolean,
                 }
             }
         }
+        }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             slides.indices.forEach { at ->
                 Box(
                     Modifier.size(if (at == index) 30.dp else 8.dp, 8.dp)
                         .background(if (at == index) palette.text else palette.textDim.copy(alpha = 0.5f), RoundedCornerShape(50))
-                        .pressable(RoundedCornerShape(50)) { index = at },
+                        // On a TV the dots only show (left and right turn the banner).
+                        .then(if (tv) Modifier else Modifier.pressable(RoundedCornerShape(50)) { index = at }),
                 )
             }
         }
@@ -345,10 +380,10 @@ fun ShelfRow(shelf: Shelf, width: Dp, model: AppModel, counted: Boolean = true) 
 /** Posters sideways, 3.15 across a phone (160 dp each on a tablet). */
 @Composable
 fun PosterRow(items: List<MetaPreview>, width: Dp, model: AppModel, pause: Pause?) {
-    val card = PosterFit.row(width.value).dp
+    val card = if (LocalTV.current) PosterFit.TV_POSTER.dp else PosterFit.row(width.value).dp
     val library = model.library
     @Suppress("UNUSED_VARIABLE") val marks = library.marks
-    LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+    LazyRow(Modifier.tvRow(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         items(items, key = { it.kind + it.id }) { meta ->
             PosterCard(
                 meta.name, meta.poster, card,
@@ -358,3 +393,14 @@ fun PosterRow(items: List<MetaPreview>, width: Dp, model: AppModel, pause: Pause
         }
     }
 }
+
+/** A row the remote moves along (on a TV): coming back into it, the remote
+ *  lands on the card it was last on, and it stops at the row's ends. */
+@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
+@Composable
+fun Modifier.tvRow(): Modifier = if (!LocalTV.current) this else this
+    // Left and right stop at the row's ends (not a card in another row).
+    .focusProperties {
+        exit = { if (it == androidx.compose.ui.focus.FocusDirection.Left || it == androidx.compose.ui.focus.FocusDirection.Right) androidx.compose.ui.focus.FocusRequester.Cancel else androidx.compose.ui.focus.FocusRequester.Default }
+    }
+    .focusRestorer()

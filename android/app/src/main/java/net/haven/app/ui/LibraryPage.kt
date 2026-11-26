@@ -75,7 +75,7 @@ fun LibraryPage(model: AppModel) {
     LaunchedEffect(model.libraryTab) { if (model.libraryTab == 0 && library.localVideos.isEmpty() && !library.localBusy) look() }
     Column(Modifier.fillMaxSize().padding(top = 12.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         PageTitle("Library", Modifier.padding(horizontal = gutter))
-        LazyRow(contentPadding = PaddingValues(horizontal = gutter), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        LazyRow(Modifier.tvRow(), contentPadding = PaddingValues(horizontal = gutter), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             items(TABS.size) { index -> Chip(TABS[index], model.libraryTab == index) { model.libraryTab = index } }
         }
         when (model.libraryTab) {
@@ -220,7 +220,7 @@ private fun PosterGrid(model: AppModel, items: List<GridItem>, empty: String, re
     }
     @Suppress("UNUSED_VARIABLE") val marks = model.library.marks
     BoxWithConstraints(Modifier.fillMaxSize()) {
-        val (count, card) = PosterFit.grid(maxWidth.value + if (gutter.value == 0f) 32f else 0f)
+        val (count, card) = PosterFit.grid(maxWidth.value + if (gutter.value == 0f) 32f else 0f, LocalTV.current)
         LazyVerticalGrid(
             GridCells.Fixed(count),
             contentPadding = PaddingValues(start = gutter, end = gutter, bottom = 16.dp),

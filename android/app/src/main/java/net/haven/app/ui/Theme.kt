@@ -1,6 +1,9 @@
 package net.haven.app.ui
 
+import androidx.compose.ui.unit.dp
+
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.staticCompositionLocalOf
@@ -74,12 +77,46 @@ val LocalPalette = staticCompositionLocalOf { Palette.Dark }
 /** Whether Haven is on a TV (sizes grow, focus shows). */
 val LocalTV = staticCompositionLocalOf { false }
 
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 fun HavenTheme(dark: Boolean, tv: Boolean, content: @Composable () -> Unit) {
+    val margin = with(androidx.compose.ui.platform.LocalDensity.current) { TVScrolling.MARGIN.toPx() }
+    val scrolling = androidx.compose.foundation.gestures.LocalBringIntoViewSpec.current
     CompositionLocalProvider(
         LocalPalette provides if (dark) Palette.Dark else Palette.Light,
         LocalTV provides tv,
+        androidx.compose.foundation.gestures.LocalBringIntoViewSpec provides if (tv) remember(margin) { TVScrolling(margin) } else scrolling,
         content = content,
     )
+}
+
+/** How pages and rows scroll as the remote moves on a TV, as on Apple TV:
+ *  only as far as needed to show what the remote is on, with a margin (so a
+ *  row's heading above it, and the next card beside it, show too). Android
+ *  TV's own way keeps the focused thing at a fixed spot, so every press
+ *  slid the whole row or page. */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+class TVScrolling(private val margin: Float) : androidx.compose.foundation.gestures.BringIntoViewSpec {
+    override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float): Float =
+        TVScrolling.distance(offset, size, containerSize, margin)
+
+    companion object {
+        val MARGIN = 56.dp
+
+        /** How far to scroll so a thing `size` long at `offset` shows in a
+         *  container `containerSize` long, `margin` clear of its edges where
+         *  there is room. 0 when it already shows. */
+        fun distance(offset: Float, size: Float, containerSize: Float, margin: Float): Float {
+            val room = maxOf(minOf(margin, (containerSize - size) / 2), 0f)
+            val before = offset - room
+            val after = offset + size + room - containerSize
+            return when {
+                size + 2 * room >= containerSize -> before
+                before < 0 -> before
+                after > 0 -> after
+                else -> 0f
+            }
+        }
+    }
 }
 

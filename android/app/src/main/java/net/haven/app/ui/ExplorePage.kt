@@ -258,7 +258,7 @@ private fun TitleGrid(model: AppModel, explore: Explore, gutter: androidx.compos
     val scope = rememberCoroutineScope()
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         if (explore.kinds.isNotEmpty() || explore.genres.isNotEmpty()) {
-            LazyRow(contentPadding = PaddingValues(horizontal = gutter), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            LazyRow(Modifier.tvRow(), contentPadding = PaddingValues(horizontal = gutter), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 items(explore.kinds.size) { index -> Chip(explore.kinds[index], explore.kind == index) { explore.chooseKind(index) } }
                 if (explore.genres.isNotEmpty()) item { GenreMenu(explore) }
             }
@@ -267,7 +267,7 @@ private fun TitleGrid(model: AppModel, explore: Explore, gutter: androidx.compos
             Text(explore.note.ifEmpty { "Loading…" }, Modifier.padding(horizontal = gutter), style = Type.font(14.sp, color = palette.textDim), maxLines = 2)
         }
         BoxWithConstraints(Modifier.fillMaxSize()) {
-            val (count, card) = PosterFit.grid(maxWidth.value + if (gutter.value == 0f) 32f else 0f)
+            val (count, card) = PosterFit.grid(maxWidth.value + if (gutter.value == 0f) 32f else 0f, LocalTV.current)
             @Suppress("UNUSED_VARIABLE") val marks = model.library.marks
             PullToRefreshBox(explore.refreshing, onRefresh = { scope.launch { explore.refresh() } }) {
                 LazyVerticalGrid(

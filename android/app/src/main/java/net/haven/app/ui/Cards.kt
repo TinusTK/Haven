@@ -107,11 +107,17 @@ object PosterFit {
 
     /** Columns and card width for a grid `width` wide (its padding of 16 a
      *  side and gaps of 10 already taken off). */
-    fun grid(width: Float): Pair<Int, Float> {
+    fun grid(width: Float, tv: Boolean = false): Pair<Int, Float> {
         val inside = maxOf(width - 32, 1f)
-        val count = if (width < WIDE) 3 else maxOf(3, ((inside + 10) / 170).toInt())
+        val count = if (width < WIDE) 3 else maxOf(3, ((inside + 10) / if (tv) TV_CELL else 170f).toInt())
         return count to maxOf((inside - 10 * (count - 1)) / count, 1f)
     }
+
+    /** On a TV, as Apple TV's 230 and 440 points: a poster 120 dp wide,
+     *  a wide card 220 dp, and grid cells of about 130 dp. */
+    const val TV_POSTER = 120f
+    const val TV_WIDE = 220f
+    const val TV_CELL = 130f
 
     /** A poster in a row `width` wide: 3.15 across a phone. */
     fun row(width: Float): Float = if (width < WIDE) maxOf((width - 24) / 3.15f, 1f) else 160f

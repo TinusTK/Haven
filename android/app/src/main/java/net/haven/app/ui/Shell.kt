@@ -34,6 +34,7 @@ import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -43,6 +44,9 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.focusRestorer
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
@@ -65,6 +69,7 @@ import net.haven.app.app.Page
  *  tablet, the sidebar down the left; on a TV, the tabs along the top), and
  *  over them the loading screen and What's New. A tap outside a text field
  *  closes the keyboard. */
+@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
 fun Shell(model: AppModel, pictureInPicture: Boolean = false) {
     val palette = LocalPalette.current
@@ -83,6 +88,8 @@ fun Shell(model: AppModel, pictureInPicture: Boolean = false) {
             },
     ) {
         val layout = Layout.of(tv, maxWidth.value)
+        val pageFocus = remember { FocusRequester() }
+        val titleFocus = remember { FocusRequester() }
         val selectOrNull: (Page) -> Unit = { model.select(it) }
         when (layout) {
             Layout.Phone -> Column(Modifier.fillMaxSize()) {
@@ -95,12 +102,40 @@ fun Shell(model: AppModel, pictureInPicture: Boolean = false) {
             }
             Layout.TV -> Column(Modifier.fillMaxSize().padding(horizontal = 48.dp, vertical = 27.dp)) {
                 TVTabs(model.page, model.detailOpen, enabled = model.splashGone && !model.whatsNewShown, selectOrNull)
-                Box(Modifier.weight(1f).fillMaxWidth()) { PageView(model) }
+                Box(
+                    Modifier.weight(1f).fillMaxWidth().focusRequester(pageFocus)
+                        // Only up leaves the page (to the tabs): left or right at
+                        // the end of a row stays put, as on Apple TV.
+                        .focusProperties { exit = { if (it == FocusDirection.Left || it == FocusDirection.Right) FocusRequester.Cancel else FocusRequester.Default } }
+                        .focusRestorer(),
+                ) { CompositionLocalProvider(LocalFocusLayer provides FocusLayer.Page) { PageView(model) } }
             }
         }
 
         // A title's page lies over the pages, and the player over everything.
-        if (model.opening != null) TitlePageView(model)
+        if (model.opening != null) {
+            Box(
+                Modifier.fillMaxSize().focusRequester(titleFocus)
+                    // The remote stays on the title's page (not the page under it).
+                    .then(if (layout == Layout.TV) Modifier.focusProperties { exit = { FocusRequester.Cancel } } else Modifier)
+                    .focusRestorer(),
+            ) { CompositionLocalProvider(LocalFocusLayer provides FocusLayer.Title) { TitlePageView(model) } }
+        }
+        // On a TV, closing the player or a title's page puts the remote back
+        // where it was (the card that opened it), not on the first tab.
+        if (layout == Layout.TV) {
+            val titleOpen = model.opening != null
+            val playing = model.player.open
+            LaunchedEffect(titleOpen, playing) {
+                if (playing) return@LaunchedEffect
+                if (titleOpen) {
+                    if (!FocusMemory.restore(FocusLayer.Title)) runCatching { titleFocus.requestFocus() }
+                } else {
+                    FocusMemory.forgetTitle()
+                    if (!FocusMemory.restore(FocusLayer.Page)) runCatching { pageFocus.requestFocus() }
+                }
+            }
+        }
         if (model.player.open) {
             PlayerView(model.player, pictureInPicture)
             return@BoxWithConstraints

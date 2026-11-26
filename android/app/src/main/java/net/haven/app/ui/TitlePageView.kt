@@ -161,7 +161,7 @@ private fun WhereToWatchRow(page: TitlePage) {
     if (page.offers.isNotEmpty()) {
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text("Where to watch  ·  ${page.offersNote}", style = Type.font(12.sp, color = palette.textDim), maxLines = 1)
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            LazyRow(Modifier.tvRow(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 itemsIndexed(page.offers) { index, tile ->
                     Column(
                         Modifier.padding(start = if (tile.group.isNotEmpty() && index > 0) 16.dp else 0.dp)
@@ -189,7 +189,7 @@ private fun WhereToWatchRow(page: TitlePage) {
 /** The seasons; picking one lists its episodes in the panel. */
 @Composable
 private fun SeasonChips(page: TitlePage, selected: Boolean) {
-    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    LazyRow(Modifier.tvRow(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         items(page.seasons) { number ->
             Chip(if (number == 0) "Specials" else "Season $number", selected && number == page.season) {
                 if (selected) page.showSeason(number) else page.chooseSeason(number)
@@ -306,7 +306,7 @@ private fun SourcesList(page: TitlePage, sources: SourcesPanel, cast: net.haven.
         if (page.playNote.isNotEmpty()) Text(page.playNote, style = Type.font(13.sp, color = palette.accent))
         if (page.resumeNote.isNotEmpty()) Text(page.resumeNote, style = Type.font(13.sp, color = palette.accent))
         if (sources.groups.size > 1) {
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            LazyRow(Modifier.tvRow(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 item { Chip("All  ${sources.rows.size}", sources.group.isEmpty()) { sources.group = "" } }
                 items(sources.groups, key = { it.first }) { (name, count) -> Chip("$name  $count", sources.group == name) { sources.group = name } }
             }
@@ -335,7 +335,7 @@ private fun PlayOn(cast: net.haven.app.cast.CastModel) {
     if (LocalTV.current || !cast.available) return
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Box(Modifier.fillMaxWidth().height(1.dp).background(palette.border))
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+        LazyRow(Modifier.tvRow(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             item { Text("Play on", style = Type.font(13.sp, color = palette.textDim)) }
             item { Chip("This device", cast.target < 0) { cast.target = -1 } }
             items(cast.devices.size) { at -> Chip(cast.devices[at].name, cast.target == at) { cast.target = at } }

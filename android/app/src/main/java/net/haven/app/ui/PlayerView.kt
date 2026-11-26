@@ -217,7 +217,7 @@ private fun Controls(player: PlayerModel, onTouch: () -> Unit) {
                     SeekBar(player.duration, player.position, player.buffered, Modifier.weight(1f)) { player.seekTo(it); onTouch() }
                     Text(player.remainingText, Modifier.widthIn(min = 52.dp), style = Type.font(13.sp, color = Color.White.copy(alpha = 0.7f)))
                 }
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                LazyRow(Modifier.tvRow(), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                     val prefs = player.preferences
                     if (tv) {
                         item {
