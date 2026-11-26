@@ -146,6 +146,17 @@ class Library(
 
     /** Opens a title's page. */
     var open: (Opening) -> Unit = {}
+    /** The open title's page. */
+    val title = TitlePage(this, scope)
+    /** The Xtream Codes accounts' films and series, fetched once a run. */
+    val onDemand = net.haven.app.livetv.XtreamOnDemand(http)
+    /** Plays a film or episode: Haven's player, Chromecast or another app (K13). */
+    var play: ((PlayRequest) -> Unit)? = null
+    /** Leaves the player when the next episode could not start by itself. */
+    var dismissPlayer: () -> Unit = {}
+    /** Where the last film or episode played from (its source and the row's
+     *  name): the next episode plays from the same place. */
+    var lastPlayed: Pair<String, String>? = null
     /** Notes a watched mark or Watchlist change for the linked accounts. */
     var queueSync: (what: String, kind: String, titleId: String, videoId: String) -> Unit = { _, _, _, _ -> }
     /** Every title watched, the latest film or episode of each, newest first. */
@@ -455,6 +466,24 @@ class Library(
         val elsewhere = runCatching { store.finishedVideos(kind, link.imdb) }.getOrDefault(emptyList()).toSet()
         return link.merged(kind, titleId, own, elsewhere)
     }
+
+    /** Takes away the record kept under the IMDb id of a video being marked
+     *  unwatched on a title known by another id. */
+    fun forgetLinked(kind: String, titleId: String, videoId: String) {
+        if (Tmdb.isImdbId(titleId)) return
+        val (imdb, video) = serviceIds(kind, titleId, videoId) ?: return
+        if (kind == "series") {
+            runCatching { store.removeVideoProgress(kind, imdb, video) }
+        } else {
+            for (recorded in runCatching { store.finishedVideos(kind, imdb) }.getOrDefault(emptyList())) {
+                runCatching { store.removeVideoProgress(kind, imdb, recorded) }
+            }
+        }
+    }
+
+    /** Notes a Watchlist change for the linked accounts. */
+    fun trackWatchlist(kind: String, titleId: String, on: Boolean) =
+        queueSync(if (on) "watchlist_add" else "watchlist_remove", kind, titleId, "")
 
     /** Takes the watched marks an account no longer has off this device:
      *  each (kind, IMDb id, video) under its IMDb id, and the same film or

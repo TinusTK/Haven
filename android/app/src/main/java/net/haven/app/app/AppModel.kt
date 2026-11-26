@@ -118,9 +118,11 @@ class AppModel(val core: Core, val notes: WhatsNew.Notes?) {
         opening = title
         detailOpen = true
         library.homeShowing(false)
+        library.title.open(title)
     }
 
     fun closeTitle() {
+        library.title.close()
         opening = null
         detailOpen = false
         library.homeShowing(page == Page.Home)
@@ -141,6 +143,7 @@ class AppModel(val core: Core, val notes: WhatsNew.Notes?) {
 
     fun select(new: Page) {
         if (new == Page.Settings && page == Page.Settings && !detailOpen) settingsBackToList += 1
+        if (opening != null) library.title.close()
         opening = null
         detailOpen = false
         page = new

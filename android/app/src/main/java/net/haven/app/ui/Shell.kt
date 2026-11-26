@@ -99,13 +99,23 @@ fun Shell(model: AppModel) {
             }
         }
 
-        // A title's page (K12) lies over the pages.
-        model.opening?.let { TitleStandIn(it.title) { model.closeTitle() } }
+        // A title's page lies over the pages.
+        if (model.opening != null) TitlePageView(model)
 
         // Back steps back: a title's page closes, a page other than Home goes
         // to Home, then Haven closes (Android's own Back).
         BackHandler(enabled = model.splashGone && !model.whatsNewShown && (model.page != Page.Home || model.opening != null)) {
-            if (model.opening != null) model.closeTitle() else model.select(Page.Home)
+            val page = model.library.title
+            when {
+                model.opening == null -> model.select(Page.Home)
+                // Back steps out of the list first, then closes the page.
+                page.panelOpen && page.episodeOpen && page.isSeries -> page.episodeOpen = false
+                page.panelOpen -> {
+                    page.panelOpen = false
+                    page.episodeOpen = false
+                }
+                else -> model.closeTitle()
+            }
         }
 
         if (!model.splashGone) {
@@ -262,20 +272,3 @@ fun TVTabs(page: Page, detailOpen: Boolean, enabled: Boolean, select: (Page) -> 
 /** Calls `select` when the remote lands on this. */
 private fun Modifier.onFocusSelect(enabled: Boolean, select: () -> Unit): Modifier =
     if (!enabled) this else this.onFocusChanged { if (it.isFocused) select() }
-
-/** Stands in for a title's page until K12: its name, and Close. */
-@Composable
-private fun TitleStandIn(title: String, close: () -> Unit) {
-    val palette = LocalPalette.current
-    val focus = remember { FocusRequester() }
-    LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
-    Column(
-        Modifier.fillMaxSize().background(palette.background).safeDrawingPadding().padding(24.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterVertically),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Text(title, style = Type.heading(28.sp, palette.text))
-        Text("The title's page comes in the next section.", style = Type.font(14.sp, color = palette.textDim))
-        PrimaryButton("Close", Modifier.focusRequester(focus), onClick = close)
-    }
-}
