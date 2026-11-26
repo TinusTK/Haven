@@ -14,6 +14,10 @@ class FakeWeb {
     private val table = mutableMapOf<String, Pair<Int, String>>()
     private val counts = mutableMapOf<String, Int>()
     private val bodies = mutableMapOf<String, String>()
+    private val headerTable = mutableMapOf<String, Map<String, String>>()
+
+    /** The headers of the last request to `url`; null if it was not asked. */
+    fun headers(url: String): Map<String, String>? = synchronized(this) { headerTable[url] }
 
     fun answer(url: String, body: String, status: Int = 200) = synchronized(this) { table[url] = status to body }
 
@@ -28,6 +32,7 @@ class FakeWeb {
         val url = request.url.toString()
         val (status, body) = synchronized(this) {
             counts[url] = (counts[url] ?: 0) + 1
+            headerTable[url] = request.headers.toMap()
             request.body?.let { b -> okio.Buffer().also { b.writeTo(it) }.readUtf8() }?.let { bodies[url] = it }
             table[url] ?: (404 to "")
         }
