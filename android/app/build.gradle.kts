@@ -126,6 +126,19 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.8.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    // SQLite with the app: the shared database's tables are STRICT, which
+    // Android's own SQLite reads only from Android 14 on.
+    implementation("androidx.sqlite:sqlite:2.5.1")
+    implementation("androidx.sqlite:sqlite-bundled:2.5.1")
     debugImplementation("androidx.compose.ui:ui-tooling")
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
+    testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
+    // Unit tests run on the computer: the bundled SQLite's desktop build.
+    testImplementation("androidx.sqlite:sqlite-bundled-jvm:2.5.1")
+}
+
+// The Android build of the bundled SQLite cannot load on a computer.
+configurations.matching { it.name.endsWith("UnitTestRuntimeClasspath") }.configureEach {
+    exclude(group = "androidx.sqlite", module = "sqlite-bundled-android")
 }

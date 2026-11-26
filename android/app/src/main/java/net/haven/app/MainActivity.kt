@@ -33,12 +33,23 @@ class MainActivity : ComponentActivity() {
         val tv = (getSystemService(UI_MODE_SERVICE) as UiModeManager).currentModeType ==
             Configuration.UI_MODE_TYPE_TELEVISION
         val mpv = Mpv.apiVersion()
-        setContent { Starting(tv = tv, mpv = mpv) }
+        // K1 check: Haven's data where the Rust build kept it.
+        val paths = net.haven.app.core.AppPaths.of(this)
+        net.haven.app.core.Log.start(paths.logFile)
+        val data = runCatching {
+            net.haven.app.core.Store.open(paths.database).use { store ->
+                "schema ${store.schemaVersion()} · ${store.servers().size} servers · " +
+                    "${store.watchlist().size} on the Watchlist · ${store.allProgress().size} watched · " +
+                    "${store.tvSources().size} Live TV sources · theme ${net.haven.app.core.Settings.load(store).theme}"
+            }
+        }.getOrElse { "could not open the data: ${it.message}" }
+        net.haven.app.core.Log.note("data: $data")
+        setContent { Starting(tv = tv, mpv = mpv, data = data) }
     }
 }
 
 @Composable
-private fun Starting(tv: Boolean, mpv: Long?) {
+private fun Starting(tv: Boolean, mpv: Long?, data: String) {
     Column(
         modifier = Modifier.fillMaxSize().background(Color(0xFF0D0F14)),
         verticalArrangement = Arrangement.Center,
@@ -54,5 +65,6 @@ private fun Starting(tv: Boolean, mpv: Long?) {
             color = Color(0xFFE8B94A),
             fontSize = 14.sp,
         )
+        Text(data, color = Color(0xFFB0B4BE), fontSize = 13.sp)
     }
 }
