@@ -40,6 +40,8 @@ class MainActivity : ComponentActivity() {
                 },
             )
             model.openElsewhere = { request -> openElsewhere(request.address, request.title) }
+            // A finished download shows in the device's other apps too.
+            model.library.downloads.saved = { file -> android.media.MediaScannerConnection.scanFile(applicationContext, arrayOf(file.path), null, null) }
             // Debug builds only: `adb shell am start -n net.haven.app/.MainActivity
             // --es haven.play <address>` plays an address, to try the player.
             if (BuildConfig.DEBUG) intent?.getStringExtra("haven.play")?.let { address ->
@@ -128,6 +130,6 @@ object HavenApp {
         Cache.removeRustCache(paths)
         val notes = runCatching { activity.assets.open("whats-new.json").bufferedReader().use { it.readText() } }
             .getOrNull()?.let(WhatsNew::parse)
-        AppModel(Core.open(paths, activity.cacheDir), notes)
+        AppModel(Core.open(paths, activity.cacheDir, android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_MOVIES)), notes)
     }.onFailure { Log.note("could not start: ${it.message}") }.also { started = it }
 }

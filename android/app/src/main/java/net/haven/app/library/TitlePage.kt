@@ -340,6 +340,21 @@ class TitlePage(private val library: Library, private val scope: CoroutineScope)
         }
     }
 
+    /** Goes up when a download changes (the download buttons read it). */
+    val downloadsRevision get() = library.downloads.revision
+
+    /** Whether a row's stream was downloaded: 0 no, 1 on its way, 2 saved. */
+    fun savedState(row: StreamRow): Int = row.address?.let { library.downloads.savedState(it) } ?: 0
+
+    /** A row's download button: saves it to this device, or plays the saved copy. */
+    fun download(row: StreamRow) {
+        val request = request(row) ?: return
+        val video = meta?.videos?.firstOrNull { it.id == request.videoId && it.season != null }
+        val shown = meta?.videos?.firstOrNull { it.id == request.videoId }
+        val picture = shown?.thumbnail ?: meta?.background ?: meta?.poster
+        playNote = library.downloads.download(request, video?.season, video?.episode, picture) { copy -> library.play?.invoke(copy) }
+    }
+
     /** The episode after the one listed. */
     val nextVideo: Video? get() {
         val meta = meta ?: return null

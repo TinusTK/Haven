@@ -16,6 +16,7 @@ import java.util.Locale
  * the last. Like the desktop build's `haven-player/src/video.rs`.
  */
 class MpvEngine(context: Context) : PlayerEngine {
+    private val resolver = context.applicationContext.contentResolver
     private val main = Handler(Looper.getMainLooper())
     /** mpv puts what it has read ahead here, on disk; emptied when a film closes. */
     private val cache = File(context.cacheDir, "haven-stream")
@@ -174,9 +175,22 @@ class MpvEngine(context: Context) : PlayerEngine {
     }
 
     private fun load(address: String, at: Double?) {
+        val opened = playable(address)
         set("start", at?.let { String.format(Locale.ROOT, "%.1f", it) } ?: "none")
         set("pause", "no")
-        command("loadfile", address, "replace")
+        command("loadfile", opened, "replace")
+    }
+
+    /** A video from the device's media list (`content://`) is opened here and
+     *  handed over as an open file (`fdclose://<number>`, which mpv closes
+     *  when it is done); anything else plays as it is. */
+    private fun playable(address: String): String {
+        if (!address.startsWith("content://")) return address
+        return runCatching { "fdclose://" + resolver.openFileDescriptor(android.net.Uri.parse(address), "r")!!.detachFd() }
+            .getOrElse {
+                Log.note("player: could not open a video on this device: ${it.message}")
+                address
+            }
     }
 
     override fun stop() {

@@ -318,7 +318,8 @@ private fun SourcesList(page: TitlePage, sources: SourcesPanel, cast: net.haven.
             items(sources.shownRows, key = { it.id }) { row ->
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (row.heading.isNotEmpty()) Text(row.heading, Modifier.padding(top = 6.dp), style = Type.font(13.sp, FontWeight.Bold, palette.accent))
-                    SourceCard(row) { page.play(row) }
+                    @Suppress("UNUSED_VARIABLE") val seen = page.downloadsRevision
+                    SourceCard(row, if (row.kind == "Direct" && row.playable) page.savedState(row) else null, download = { page.download(row) }) { page.play(row) }
                     if (row.more > 0) Chip("Show more from ${row.group}  (${row.more} left)", false) { sources.showMore(row.group) }
                 }
             }
@@ -348,7 +349,7 @@ private fun PlayOn(cast: net.haven.app.cast.CastModel) {
  *  where it came from, and Play (or how it is delivered, when Haven cannot
  *  play it). */
 @Composable
-private fun SourceCard(row: StreamRow, play: () -> Unit) {
+private fun SourceCard(row: StreamRow, saved: Int?, download: () -> Unit, play: () -> Unit) {
     val palette = LocalPalette.current
     val shape = RoundedCornerShape(12.dp)
     Row(
@@ -382,6 +383,15 @@ private fun SourceCard(row: StreamRow, play: () -> Unit) {
             if (row.detail.isNotEmpty()) Text(row.detail, style = Type.font(12.sp, color = palette.textDim))
             if (row.detail2.isNotEmpty()) Text(row.detail2, style = Type.font(12.sp, color = palette.textDim))
             Text(if (row.group == row.source) row.source else "${row.group}  ·  ${row.source}", style = Type.font(11.sp, color = palette.textDim), maxLines = 1)
+        }
+        if (saved != null) {
+            // Filled once it is downloaded (or on its way): pressing it again
+            // plays the saved copy.
+            Box(
+                Modifier.size(38.dp).background(if (saved > 0) palette.accent else palette.selected, CircleShape).pressable(CircleShape, onClick = download)
+                    .semantics { contentDescription = when (saved) { 2 -> "Play the downloaded copy of ${row.name}"; 1 -> "Downloading ${row.name}"; else -> "Download ${row.name}" } },
+                contentAlignment = Alignment.Center,
+            ) { HavenIcon("download", 18.dp, if (saved > 0) palette.onAccent else palette.accent) }
         }
         if (row.playable) {
             Box(Modifier.size(38.dp).background(palette.selected, CircleShape), contentAlignment = Alignment.Center) {

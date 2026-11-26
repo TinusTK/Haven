@@ -64,6 +64,10 @@ class Library(
     val http: Http = Http.shared,
     val kept: Kept,
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate),
+    /** Where downloads go (Movies › Haven, else Haven's own folder). */
+    downloadsRoot: java.io.File = java.nio.file.Files.createTempDirectory("haven-downloads").toFile(),
+    /** Where downloads' pictures are kept. */
+    downloadPictures: java.io.File = java.io.File(downloadsRoot, ".pictures"),
 ) {
     var keys by mutableStateOf(keys)
         private set
@@ -159,6 +163,46 @@ class Library(
     var lastPlayed: Pair<String, String>? = null
     /** Notes a watched mark or Watchlist change for the linked accounts. */
     var queueSync: (what: String, kind: String, titleId: String, videoId: String) -> Unit = { _, _, _, _ -> }
+    /** Films and episodes saved to this device. */
+    val downloads = Downloads(store, downloadsRoot, scope, http, downloadPictures)
+
+    // Library › Local: the device's videos (Android's media list).
+    var localVideos by mutableStateOf(listOf<FoundVideo>())
+        private set
+    var localStatus by mutableStateOf("")
+        private set
+    var localBusy by mutableStateOf(false)
+        private set
+
+    /** Finds the device's videos (the Local tab opened, or Look again). */
+    fun lookForVideos(find: suspend () -> List<FoundVideo>) {
+        if (localBusy) return
+        localBusy = true
+        localStatus = "Looking for videos…"
+        scope.launch {
+            val found = runCatching { find() }
+            localBusy = false
+            found.fold(
+                onSuccess = {
+                    localVideos = it
+                    localStatus = DownloadRules.localStatus(it.size)
+                },
+                onFailure = { localStatus = "Could not look for videos: ${it.message}." },
+            )
+        }
+    }
+
+    fun sayLocal(words: String) {
+        localStatus = words
+    }
+
+    /** Plays a video from the device (always in Haven's own player: it is
+     *  not a web address another app could open). */
+    fun playLocal(found: FoundVideo) {
+        val id = "local:${found.address}"
+        play?.invoke(PlayRequest(found.address, found.name, "", "movie", id, id, null, "On this device"))
+    }
+
     /** Every title watched, the latest film or episode of each, newest first. */
     var history by mutableStateOf(listOf<WatchProgress>())
         private set
@@ -229,6 +273,7 @@ class Library(
         startServerRefresh()
         reloadCatalog()
         explore.rebuild()
+        downloads.start()
     }
 
     fun reloadHistory() {

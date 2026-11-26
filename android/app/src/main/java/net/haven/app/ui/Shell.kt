@@ -143,6 +143,7 @@ fun Shell(model: AppModel, pictureInPicture: Boolean = false) {
 private fun PageView(model: AppModel) {
     if (model.page == Page.Home) return HomePage(model)
     if (model.page == Page.Explore) return ExplorePage(model)
+    if (model.page == Page.Library) return LibraryPage(model)
     val palette = LocalPalette.current
     val tv = LocalTV.current
     Column(Modifier.fillMaxSize().padding(horizontal = if (tv) 0.dp else 16.dp, vertical = 12.dp)) {

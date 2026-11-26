@@ -25,13 +25,21 @@ import net.haven.app.tracking.Tracker
 /** What Haven opens at start: the data folder, its database, the service
  *  keys and the cache. `existing` is false on a fresh install (no settings
  *  saved yet). */
-class Core(val paths: AppPaths, val store: Store, val existing: Boolean, val secrets: Secrets, val kept: Kept) {
+class Core(
+    val paths: AppPaths,
+    val store: Store,
+    val existing: Boolean,
+    val secrets: Secrets,
+    val kept: Kept,
+    /** Where downloads go (Movies › Haven, else Haven's own folder). */
+    val downloads: java.io.File = java.io.File(paths.dataDir, "Downloads"),
+) {
     companion object {
-        fun open(paths: AppPaths, cacheDir: java.io.File): Core {
+        fun open(paths: AppPaths, cacheDir: java.io.File, movies: java.io.File? = null): Core {
             val store = Store.open(paths.database)
             val existing = store.rawValue(Settings.KEY) != null
             val secrets = runCatching { Keys.load(store) }.getOrDefault(Keys()).resolved(Secrets.fromFile(paths.secretsFile))
-            return Core(paths, store, existing, secrets, Cache.kept(cacheDir))
+            return Core(paths, store, existing, secrets, Cache.kept(cacheDir), net.haven.app.library.DownloadRules.root(movies, paths.dataDir))
         }
     }
 }
@@ -58,7 +66,8 @@ class AppModel(val core: Core, val notes: WhatsNew.Notes?) {
     var libraryTab by mutableStateOf(0)
 
     val tracker = Tracker(core.store, core.secrets)
-    val library = Library(core.store, core.secrets, kept = core.kept)
+    val library = Library(core.store, core.secrets, kept = core.kept, downloadsRoot = core.downloads,
+        downloadPictures = java.io.File(core.paths.dataDir, "download-pictures"))
     /** Haven's own player (libmpv); made by the app with the engine for this device. */
     lateinit var player: net.haven.app.player.PlayerModel
         private set
