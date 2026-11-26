@@ -68,6 +68,8 @@ class AppModel(val core: Core, val notes: WhatsNew.Notes?) {
     val tracker = Tracker(core.store, core.secrets)
     val library = Library(core.store, core.secrets, kept = core.kept, downloadsRoot = core.downloads,
         downloadPictures = java.io.File(core.paths.dataDir, "download-pictures"))
+    /** The Calendar page's month or week and the day picked. */
+    val calendar = net.haven.app.library.CalendarModel(library)
     /** Haven's own player (libmpv); made by the app with the engine for this device. */
     lateinit var player: net.haven.app.player.PlayerModel
         private set

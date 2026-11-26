@@ -145,6 +145,7 @@ private fun PageView(model: AppModel) {
     if (model.page == Page.Explore) return ExplorePage(model)
     if (model.page == Page.Library) return LibraryPage(model)
     if (model.page == Page.LiveTV) return LiveTVPage(model)
+    if (model.page == Page.Calendar) return CalendarPage(model)
     val palette = LocalPalette.current
     val tv = LocalTV.current
     Column(Modifier.fillMaxSize().padding(horizontal = if (tv) 0.dp else 16.dp, vertical = 12.dp)) {

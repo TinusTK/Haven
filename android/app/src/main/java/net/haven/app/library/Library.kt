@@ -137,7 +137,12 @@ class Library(
 
     private val releases = HashMap<Releases.Title, List<Release>>()
     private val calendarAsked = HashSet<Releases.Title>()
-    private var calendarWaiting = 0
+    /** Titles whose dates are still being looked up for the first time. */
+    var calendarWaiting by mutableIntStateOf(0)
+        private set
+    /** Goes up each time the dates change (the Calendar page draws again). */
+    var releasesChanged by mutableIntStateOf(0)
+        private set
     private val calendarPictures = HashMap<Releases.Title, String>()
     var upcoming by mutableStateOf(listOf<Releases.Card>())
         private set
@@ -686,7 +691,7 @@ class Library(
 
     // Continue Watching
 
-    private fun today() = Day.at(Instant.ofEpochSecond(now()), zone)
+    fun today() = Day.at(Instant.ofEpochSecond(now()), zone)
 
     /** Rebuilds Continue Watching from what was watched. */
     fun reloadContinue() {
@@ -806,6 +811,7 @@ class Library(
     private fun names() = watchlist.associate { Releases.Title(it.kind, it.titleId) to it.title }
 
     private fun updateUpcoming() {
+        releasesChanged += 1
         upcoming = Releases.upcoming(releases, names(), calendarPictures, today(), Instant.ofEpochSecond(now()), zone)
         updateWatchNow()
     }
