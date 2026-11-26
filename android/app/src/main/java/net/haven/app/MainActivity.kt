@@ -40,10 +40,28 @@ class MainActivity : ComponentActivity() {
                 },
             )
             model.openElsewhere = { request -> openElsewhere(request.address, request.title) }
+            // Settings: web pages, the picture cache, where the backup goes.
+            model.settingsPage.openLink = { address ->
+                runCatching { startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(address))) }
+            }
+            val pictures = HavenApp.pictures(this)
+            model.settingsPage.cacheText = { pictures.usageText(if (tv) "TV" else "device") }
+            model.settingsPage.clearPictures = { pictures.clear(model.core.kept) }
+            model.settingsPage.backupFolder = {
+                net.haven.app.core.Backup.folder(
+                    android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOCUMENTS),
+                    applicationContext.getExternalFilesDir(null) ?: applicationContext.filesDir,
+                )
+            }
             // A radio station keeps playing in the background, with a notification.
             net.haven.app.player.RadioService.player = model.player
             model.radio = { on ->
-                if (on) net.haven.app.player.RadioService.start(applicationContext) else net.haven.app.player.RadioService.stop(applicationContext)
+                if (on) {
+                    askForNotifications()
+                    net.haven.app.player.RadioService.start(applicationContext)
+                } else {
+                    net.haven.app.player.RadioService.stop(applicationContext)
+                }
             }
             // A finished download shows in the device's other apps too.
             model.library.downloads.saved = { file -> android.media.MediaScannerConnection.scanFile(applicationContext, arrayOf(file.path), null, null) }
@@ -75,6 +93,14 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /** Notes each press of an arrow (the TV tabs move pages only then). */
+    override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
+        // Only the arrows move the focus by hand (OK presses what is there).
+        val arrow = event.keyCode in android.view.KeyEvent.KEYCODE_DPAD_UP..android.view.KeyEvent.KEYCODE_DPAD_RIGHT
+        if (event.action == android.view.KeyEvent.ACTION_DOWN && arrow) net.haven.app.ui.RemoteKeys.pressed()
+        return super.dispatchKeyEvent(event)
+    }
+
     override fun onResume() {
         super.onResume()
         HavenApp.model(this).getOrNull()?.cameBack()
@@ -100,6 +126,19 @@ class MainActivity : ComponentActivity() {
     override fun onStop() {
         super.onStop()
         if (!isInPictureInPictureMode) HavenApp.model(this).getOrNull()?.player?.leaving()
+    }
+
+    /** Android 13 and later show the radio's notification (Play/Pause, Stop)
+     *  only once the user allows it: asked the first time a station plays in
+     *  a run. Radio plays on either way. */
+    private var askedForNotifications = false
+
+    private fun askForNotifications() {
+        if (askedForNotifications || android.os.Build.VERSION.SDK_INT < 33) return
+        val permission = android.Manifest.permission.POST_NOTIFICATIONS
+        if (checkSelfPermission(permission) == android.content.pm.PackageManager.PERMISSION_GRANTED) return
+        askedForNotifications = true
+        runCatching { requestPermissions(arrayOf(permission), 33) }
     }
 
     /** Hands a video to a player app: Android lists those installed (VLC, mpv

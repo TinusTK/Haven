@@ -137,29 +137,15 @@ fun Shell(model: AppModel, pictureInPicture: Boolean = false) {
     }
 }
 
-/** The page showing. Each page arrives in its own section (K11 Explore,
- *  K14 Library, K15 Live TV, K16 Calendar, K17 Settings). */
+/** The page showing. */
 @Composable
-private fun PageView(model: AppModel) {
-    if (model.page == Page.Home) return HomePage(model)
-    if (model.page == Page.Explore) return ExplorePage(model)
-    if (model.page == Page.Library) return LibraryPage(model)
-    if (model.page == Page.LiveTV) return LiveTVPage(model)
-    if (model.page == Page.Calendar) return CalendarPage(model)
-    val palette = LocalPalette.current
-    val tv = LocalTV.current
-    Column(Modifier.fillMaxSize().padding(horizontal = if (tv) 0.dp else 16.dp, vertical = 12.dp)) {
-        PageTitle(model.page.label)
-        Spacer(Modifier.height(8.dp))
-        Text(
-            "Haven ${net.haven.app.BuildConfig.VERSION_NAME} build ${net.haven.app.BuildConfig.HAVEN_BUILD}",
-            style = Type.font(if (tv) 20.sp else 14.sp, color = palette.textDim),
-        )
-        if (model.page == Page.Settings) {
-            Spacer(Modifier.height(16.dp))
-            PrimaryButton(if (model.dark) "Light theme" else "Dark theme") { model.setDark(!model.dark) }
-        }
-    }
+private fun PageView(model: AppModel) = when (model.page) {
+    Page.Home -> HomePage(model)
+    Page.Explore -> ExplorePage(model)
+    Page.Library -> LibraryPage(model)
+    Page.LiveTV -> LiveTVPage(model)
+    Page.Calendar -> CalendarPage(model)
+    Page.Settings -> SettingsPage(model)
 }
 
 /** Haven's pages along the bottom on a phone: six buttons on a floating
@@ -277,6 +263,20 @@ fun TVTabs(page: Page, detailOpen: Boolean, enabled: Boolean, select: (Page) -> 
     }
 }
 
-/** Calls `select` when the remote lands on this. */
+/** Calls `select` when the remote lands on this. Only an arrow press
+ *  moves pages: when what had the focus goes away (a part of
+ *  Settings opening, say), Android hands the focus to the first tab, and
+ *  that must not open Home. */
 private fun Modifier.onFocusSelect(enabled: Boolean, select: () -> Unit): Modifier =
-    if (!enabled) this else this.onFocusChanged { if (it.isFocused) select() }
+    if (!enabled) this else this.onFocusChanged { if (it.isFocused && RemoteKeys.justPressed()) select() }
+
+/** When an arrow of the remote was last pressed (MainActivity notes each one). */
+object RemoteKeys {
+    @Volatile var lastPress = 0L
+
+    fun pressed() {
+        lastPress = android.os.SystemClock.uptimeMillis()
+    }
+
+    fun justPressed(): Boolean = android.os.SystemClock.uptimeMillis() - lastPress < 600
+}

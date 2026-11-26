@@ -78,6 +78,8 @@ class AppModel(val core: Core, val notes: WhatsNew.Notes?) {
         private set
     /** Live TV and radio. */
     val live = net.haven.app.livetv.LiveTVModel(core.store, scope)
+    /** Settings' parts: what each shows and does. */
+    val settingsPage = SettingsModel(core.store, core.paths, library, tracker, live, scope, net.haven.app.BuildConfig.ADDON_SCREENS)
     /** A radio station started (true) or stopped (false): it keeps playing in
      *  the background meanwhile. */
     var radio: (Boolean) -> Unit = {}
@@ -118,6 +120,10 @@ class AppModel(val core: Core, val notes: WhatsNew.Notes?) {
         // Marks taken off on another device go from linked server titles too.
         tracker.forgetWatched = { gone -> library.forgetWatched(gone) }
         library.open = { open(it) }
+        // Settings shows the sign-ins and the sync as they change.
+        tracker.changed = { settingsPage.refresh() }
+        tracker.openLink = { settingsPage.openLink(it) }
+        settingsPage.player = { if (this::player.isInitialized) player else null }
     }
 
     /** Gives the app its player and Chromecast link (they need Android). */
@@ -177,6 +183,8 @@ class AppModel(val core: Core, val notes: WhatsNew.Notes?) {
         tracker.start()
         live.play = { play(it) }
         live.start()
+        settingsPage.stremioRefresh()
+        settingsPage.startBackups()
         runSplash()
     }
 

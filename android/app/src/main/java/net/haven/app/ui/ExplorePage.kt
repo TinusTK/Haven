@@ -1,5 +1,11 @@
 package net.haven.app.ui
 
+import androidx.compose.ui.focus.FocusDirection
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -111,10 +117,17 @@ fun HavenField(
     onSubmit: () -> Unit = {},
     leading: @Composable (() -> Unit)? = null,
     trailing: @Composable (() -> Unit)? = null,
+    /** A password: the letters show as dots. */
+    secret: Boolean = false,
 ) {
     val palette = LocalPalette.current
     var focused by remember { mutableStateOf(false) }
     val shape = RoundedCornerShape(50)
+    val tv = LocalTV.current
+    val focusManager = LocalFocusManager.current
+    val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
+    /** On a TV: OK was pressed on the box, so typing is on (until it loses the remote). */
+    var editing by remember { mutableStateOf(false) }
     Row(
         modifier.height(if (LocalTV.current) 52.dp else 40.dp).background(palette.surface, shape)
             .border(1.dp, if (focused) palette.accent else palette.border, shape).padding(start = 14.dp, end = 6.dp),
@@ -126,12 +139,43 @@ fun HavenField(
             if (text.isEmpty()) Text(placeholder, style = Type.font(14.sp, color = palette.textDim), maxLines = 1)
             BasicTextField(
                 text, onChange,
-                Modifier.fillMaxWidth().onFocusChanged { focused = it.isFocused }.semantics { contentDescription = placeholder },
+                Modifier.fillMaxWidth().onFocusChanged {
+                    focused = it.isFocused
+                    if (!it.isFocused) editing = false
+                }.semantics { contentDescription = placeholder }
+                    // On a TV the keyboard opens only on OK, and the remote's
+                    // up and down leave the box (else the remote is stuck in it).
+                    .then(
+                        if (!tv) Modifier else Modifier.onPreviewKeyEvent { event ->
+                            // OK starts typing and opens the keyboard (a read-only box
+                            // opens none as the remote passes over it).
+                            if (event.key == Key.DirectionCenter || event.key == Key.Enter || event.key == Key.NumPadEnter) {
+                                if (event.type == KeyEventType.KeyUp) {
+                                    editing = true
+                                    keyboard?.show()
+                                }
+                                return@onPreviewKeyEvent true
+                            }
+                            val way = when (event.key) {
+                                Key.DirectionUp -> FocusDirection.Up
+                                Key.DirectionDown -> FocusDirection.Down
+                                else -> null
+                            }
+                            if (way == null) return@onPreviewKeyEvent false
+                            if (event.type == KeyEventType.KeyDown) focusManager.moveFocus(way)
+                            true
+                        },
+                    ),
                 textStyle = Type.font(14.sp, color = palette.text),
                 singleLine = true,
+                readOnly = tv && !editing,
                 cursorBrush = SolidColor(palette.accent),
-                keyboardOptions = KeyboardOptions(autoCorrectEnabled = false, imeAction = imeAction),
+                keyboardOptions = KeyboardOptions(
+                    autoCorrectEnabled = false, imeAction = imeAction, showKeyboardOnFocus = !tv,
+                    keyboardType = if (secret) androidx.compose.ui.text.input.KeyboardType.Password else androidx.compose.ui.text.input.KeyboardType.Text,
+                ),
                 keyboardActions = KeyboardActions(onAny = { onSubmit() }),
+                visualTransformation = if (secret) androidx.compose.ui.text.input.PasswordVisualTransformation() else androidx.compose.ui.text.input.VisualTransformation.None,
             )
         }
         trailing?.invoke()
