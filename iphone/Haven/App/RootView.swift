@@ -1,6 +1,7 @@
 import SwiftUI
 
-/// Haven's window: the page showing, the tab bar along the bottom, and over
+/// Haven's window: the page showing, the tab bar along the bottom (on an
+/// iPad, or any wide window, a sidebar down the left instead), and over
 /// them the loading screen and What's New. Content stays clear of the
 /// status bar; the tab bar sits above the home bar.
 struct RootView: View {
@@ -34,23 +35,34 @@ struct RootView: View {
 private struct Shell: View {
     let model: AppModel
     @Environment(Typing.self) private var typing
+    @Environment(\.horizontalSizeClass) private var sizeClass
+
+    /// An iPad (or a wide window on one): the sidebar layout.
+    private var wide: Bool { sizeClass == .regular }
 
     var body: some View {
         ZStack {
             Palette.background.ignoresSafeArea()
-            VStack(spacing: 0) {
-                ZStack {
-                    PageView(model: model)
-                    if model.opening != nil {
-                        TitlePageView(model: model, page: model.library.title)
+            HStack(spacing: 0) {
+                if wide {
+                    SideBar(page: model.page, detailOpen: model.detailOpen) { model.select($0) }
+                }
+                VStack(spacing: 0) {
+                    ZStack {
+                        PageView(model: model)
+                        if model.opening != nil {
+                            TitlePageView(model: model, page: model.library.title)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    if let session = model.airPlay {
+                        AirPlayBar(session: session) { model.stopAirPlay() }
+                    }
+                    if !wide {
+                        TabBar(page: model.page, detailOpen: model.detailOpen) { model.select($0) }
+                            .background(Palette.background.ignoresSafeArea(edges: .bottom))
                     }
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                if let session = model.airPlay {
-                    AirPlayBar(session: session) { model.stopAirPlay() }
-                }
-                TabBar(page: model.page, detailOpen: model.detailOpen) { model.select($0) }
-                    .background(Palette.background.ignoresSafeArea(edges: .bottom))
             }
             .ignoresSafeArea(.keyboard)
             if let field = typing.field {

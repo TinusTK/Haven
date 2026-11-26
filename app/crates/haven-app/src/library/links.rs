@@ -6,6 +6,7 @@
 
 use std::collections::{HashMap, HashSet};
 
+use haven_core::storage::Progress;
 use haven_metadata::is_imdb_id;
 
 use super::Library;
@@ -98,6 +99,56 @@ impl Library {
                 let _ = self.store.remove_video_progress(kind, &imdb, &recorded);
             }
         }
+    }
+
+    /// Takes the watched marks an account no longer has off this device:
+    /// each `(kind, imdb, video)` under its IMDb id, and the same film or
+    /// episode of a media server's title linked to it (so it is not sent
+    /// back as watched). Partly watched videos keep their place. Says, for
+    /// each, whether anything was taken off.
+    pub(super) fn forget_watched(&self, gone: &[(String, String, String)]) -> Vec<bool> {
+        if gone.is_empty() {
+            return Vec::new();
+        }
+        // Server titles' finished videos, as the services know them.
+        let mut links = HashMap::new();
+        let linked: Vec<(Progress, String, String)> = self
+            .store
+            .all_progress()
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|row| row.finished && !is_imdb_id(&row.title_id))
+            .filter_map(|row| {
+                let link = links
+                    .entry((row.kind.clone(), row.title_id.clone()))
+                    .or_insert_with(|| self.imdb_link(&row.kind, &row.title_id))
+                    .as_ref()?;
+                let video = if row.kind == "series" { imdb_episode(&link.imdb, *link.episodes.get(&row.video_id)?) } else { link.imdb.clone() };
+                let imdb = link.imdb.clone();
+                Some((row, imdb, video))
+            })
+            .collect();
+        gone.iter()
+            .map(|(kind, imdb, video)| {
+                let mut any = false;
+                let own: Vec<String> = if kind == "series" {
+                    vec![video.clone()]
+                } else {
+                    self.store.finished_videos(kind, imdb).unwrap_or_default()
+                };
+                for recorded in own {
+                    if self.store.progress(kind, imdb, &recorded).ok().flatten().is_some_and(|row| row.finished) {
+                        any |= self.store.remove_video_progress(kind, imdb, &recorded).is_ok();
+                    }
+                }
+                for (row, linked_imdb, linked_video) in &linked {
+                    if &row.kind == kind && linked_imdb == imdb && (kind != "series" || linked_video == video) {
+                        any |= self.store.remove_video_progress(&row.kind, &row.title_id, &row.video_id).is_ok();
+                    }
+                }
+                any
+            })
+            .collect()
     }
 }
 

@@ -6,6 +6,8 @@
 #   scheme Haven       (Debug / Release)        GitHub IPA: add-ons, no network limit
 #   scheme HavenStore  (StoreDebug / Store)     App Store / TestFlight: no add-ons,
 #                                               media servers on the Local Area Network only
+# and the same two for Apple TV: scheme HavenTVGitHub (Debug / Release) and
+# scheme HavenTV (StoreDebug / Store).
 name: Haven
 
 options:
@@ -93,8 +95,10 @@ targets:
         basedOnDependencyAnalysis: false
 
   # Haven for Apple TV: the iPhone app's models and services, its own
-  # remote-driven screens in HavenTV/. App Store build only (HavenStore
-  # configs); same bundle ID as the iPhone app (one App Store record).
+  # remote-driven screens in HavenTV/. Both kinds, as the iPhone app (the
+  # GitHub one has add-ons; iCloud sharing needs the App Store signing, so
+  # only the store configs carry the entitlements); same bundle ID as the
+  # iPhone app (one App Store record).
   HavenTV:
     type: application
     platform: tvOS
@@ -136,9 +140,13 @@ targets:
         TARGETED_DEVICE_FAMILY: "3"
         INFOPLIST_FILE: HavenTV/Support/Info.plist
         ASSETCATALOG_COMPILER_APPICON_NAME: "App Icon & Top Shelf Image"
-        CODE_SIGN_ENTITLEMENTS: HavenTV/Support/HavenTV.entitlements
         CODE_SIGN_STYLE: Automatic
         LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/Frameworks"
+      configs:
+        StoreDebug:
+          CODE_SIGN_ENTITLEMENTS: HavenTV/Support/HavenTV.entitlements
+        Store:
+          CODE_SIGN_ENTITLEMENTS: HavenTV/Support/HavenTV.entitlements
     preBuildScripts:
       - name: Build keys
         script: '"$SRCROOT/scripts/build-keys.sh" "$SRCROOT/HavenTV/Generated/BuildKeys.swift"'
@@ -191,3 +199,11 @@ schemes:
       config: StoreDebug
     archive:
       config: Store
+  HavenTVGitHub:
+    build:
+      targets:
+        HavenTV: all
+    run:
+      config: Debug
+    archive:
+      config: Release

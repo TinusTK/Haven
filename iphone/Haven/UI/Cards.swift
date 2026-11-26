@@ -214,3 +214,23 @@ struct RowHeading: View {
         }
     }
 }
+
+/// Poster sizes that suit the width: three across a phone, more across an
+/// iPad (posters about 160 points wide there).
+enum PosterFit {
+    /// Wider than this, the page is laid out for an iPad.
+    static let wide: CGFloat = 700
+
+    /// Columns and card width for a grid `width` wide (its padding of 16 a
+    /// side and gaps of 10 already taken off).
+    static func grid(_ width: CGFloat) -> (count: Int, card: CGFloat) {
+        let inside = max(width - 32, 1)
+        let count = width < wide ? 3 : max(3, Int((inside + 10) / 170))
+        return (count, max((inside - 10 * CGFloat(count - 1)) / CGFloat(count), 1))
+    }
+
+    /// A poster in a row `width` wide: 3.15 across a phone.
+    static func row(_ width: CGFloat) -> CGFloat {
+        width < wide ? max((width - 24) / 3.15, 1) : 160
+    }
+}

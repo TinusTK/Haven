@@ -21,7 +21,8 @@ struct Played: Equatable, Sendable {
 @MainActor @Observable
 final class PlayerModel {
     /// Which list is open: none, audio, subtitles, speed, picture or info.
-    enum Menu: Int { case none = 0, audio, subtitles, speed, picture, info }
+    /// `sound` is Apple TV's Sound boost.
+    enum Menu: Int { case none = 0, audio, subtitles, speed, picture, info, sound }
 
     private struct Playing {
         var request: PlayRequest
@@ -431,7 +432,12 @@ final class PlayerModel {
 
     func setVolume(_ volume: Double) {
         // Moving the volume turns the sound back on.
-        change { $0.volume = min(max(volume, 0), 1); $0.muted = false }
+        change { $0.volume = min(max(volume, 0), $0.top); $0.muted = false }
+    }
+
+    /// Turned off, a volume above 100% comes back down to 100%.
+    func setLoud(_ on: Bool) {
+        change { $0.loud = on; $0.volume = min($0.volume, $0.top) }
     }
 
     func toggleMute() {

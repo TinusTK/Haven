@@ -23,7 +23,7 @@ env:
 
 jobs:
   # Which apps this run needs. iPhone: iphone/ except the Apple TV files.
-  # Apple TV: iphone/HavenTV/ and its build script. Both: the project
+  # Apple TV: any of iphone/ (it is built from the iPhone app's code too). Both: the project
   # file, the libmpv script, this file.
   changes:
     name: Which apps
@@ -41,12 +41,12 @@ jobs:
         run: |
           files="$(.github/scripts/changes.sh)"
           shared='^(iphone/project\.yml$|ios/fetch-libmpv\.sh$|\.github/workflows/iphone\.yml$|\.github/scripts/changes\.sh$)'
-          tv='^(iphone/HavenTV/|iphone/scripts/build-tv\.sh$)'
+          tv='^(iphone/HavenTV/|iphone/scripts/(build|package)-tv\.sh$)'
           if [ "$files" = ALL ] || grep -qE "$shared" <<<"$files"; then
             iphone=true; apple_tv=true
           else
             grep -E '^iphone/' <<<"$files" | grep -qvE "$tv" && iphone=true || iphone=false
-            grep -qE "$tv" <<<"$files" && apple_tv=true || apple_tv=false
+            grep -qE '^iphone/' <<<"$files" && apple_tv=true || apple_tv=false
           fi
           echo "iPhone: $iphone, Apple TV: $apple_tv"
           echo "iphone=$iphone" >> "$GITHUB_OUTPUT"
@@ -129,10 +129,11 @@ jobs:
           path: iphone/build/ipa/*.ipa
           if-no-files-found: error
 
-  # The Apple TV app: the App Store kind only, built for a device without
-  # signing, with the store check. Not uploaded anywhere yet.
+  # The Apple TV app, both kinds, built for a device without signing: the
+  # GitHub IPA (add-ons; whoever installs it signs it) and the App Store
+  # build with the store check (its signed IPA is made locally).
   tv:
-    name: Apple TV (App Store build)
+    name: Apple TV (GitHub and App Store builds)
     needs: changes
     if: needs.changes.outputs.tv == 'true'
     concurrency:
@@ -153,5 +154,12 @@ jobs:
         run: ios/fetch-libmpv.sh
         env:
           GH_TOKEN: ${{ github.token }}
+      - name: GitHub IPA (Apple TV, unsigned)
+        run: iphone/scripts/package-tv.sh github
+      - uses: actions/upload-artifact@v4
+        with:
+          name: haven-swift-tvos-ipa
+          path: iphone/build/tv-ipa/*.ipa
+          if-no-files-found: error
       - name: Build (Apple TV, App Store kind)
-        run: iphone/scripts/build-tv.sh device
+        run: iphone/scripts/build-tv.sh store device

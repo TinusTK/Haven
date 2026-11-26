@@ -1,8 +1,8 @@
 import SwiftUI
 
-/// The pages Apple TV has (the first build: Library and Calendar come later).
+/// The pages Apple TV has, in the iPhone's order.
 extension Page {
-    static let onTV: [Page] = [.home, .explore, .liveTV, .settings]
+    static let onTV: [Page] = [.home, .explore, .library, .liveTV, .calendar, .settings]
 }
 
 /// Haven's screen on Apple TV: the pages under tvOS's own tab bar along the
@@ -89,6 +89,8 @@ private struct TVPage: View {
     var body: some View {
         switch page {
         case .explore: TVExplorePage(model: model, explore: model.library.explore)
+        case .library: TVLibraryPage(model: model)
+        case .calendar: TVCalendarPage(model: model, calendar: model.calendar)
         case .liveTV: TVLiveTVPage(model: model, live: model.live)
         case .settings: TVSettingsPage(model: model, settings: model.settingsPage)
         default: TVHomePage(model: model)

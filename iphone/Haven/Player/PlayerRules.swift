@@ -180,15 +180,31 @@ enum PlayerRules {
     struct Preferences: Codable, Equatable, Sendable {
         static let key = "player"
 
-        /// 0 silent to 1 as recorded.
+        /// 0 silent to 1 as recorded; up to 2 (200%) when `loud` is on.
         var volume = 1.0
         var muted = false
         var subtitleScale = 1.0
         /// Dolby and DTS sound sent on as it is, to a receiver.
         var passthrough = false
+        /// Settings › General: the volume may go up to 200%.
+        var loud = false
+
+        /// The highest volume allowed: 1 (100%), or 2 (200%) when `loud`
+        /// is on. Apple TV has no volume slider, only the Sound boost in
+        /// the player's menu, so there it is always 2.
+        var top: Double {
+            #if os(tvOS)
+            2
+            #else
+            loud ? 2 : 1
+            #endif
+        }
+
+        /// Apple TV's Sound boost choices.
+        static let boosts = [1.0, 1.25, 1.5, 2.0]
 
         enum CodingKeys: String, CodingKey {
-            case volume, muted, passthrough
+            case volume, muted, passthrough, loud
             case subtitleScale = "subtitle_scale"
         }
 
@@ -200,6 +216,7 @@ enum PlayerRules {
             muted = try values.decodeIfPresent(Bool.self, forKey: .muted) ?? false
             subtitleScale = try values.decodeIfPresent(Double.self, forKey: .subtitleScale) ?? 1
             passthrough = try values.decodeIfPresent(Bool.self, forKey: .passthrough) ?? false
+            loud = try values.decodeIfPresent(Bool.self, forKey: .loud) ?? false
         }
     }
 

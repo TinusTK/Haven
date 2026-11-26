@@ -3,9 +3,93 @@ import Foundation
 /// One round of keeping Haven and the linked accounts in step:
 /// `exchange` (may take a while) renews tokens about to run out, sends the
 /// queued changes, and with `pull` brings in each account's Watchlist and
-/// what it says was watched; `addListed` and `addWatched` then put what came
-/// back into the store, where it is new there.
+/// what it says was watched. `changesSince` compares that with what the
+/// account held at its last pull (`Seen`): what was added there comes in,
+/// and what was taken off there (off the Watchlist, or marked unwatched)
+/// goes here too. Only what changed on the account counts, so a title one
+/// account still lists does not come back after it was taken off here. As
+/// the Rust build (`haven-tracking/src/sync.rs`), same kv `sync_seen`.
 enum Sync {
+    /// What one account held at its last pull. Keys from `listedKey` and
+    /// `watchedKey`.
+    struct Seen: Codable, Equatable, Sendable {
+        var watchlist: Set<String> = []
+        var watched: Set<String> = []
+
+        init(watchlist: Set<String> = [], watched: Set<String> = []) {
+            self.watchlist = watchlist
+            self.watched = watched
+        }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            watchlist = try c.decodeIfPresent(Set<String>.self, forKey: .watchlist) ?? []
+            watched = try c.decodeIfPresent(Set<String>.self, forKey: .watched) ?? []
+        }
+
+        /// Every account's, by the service's name (kv `sync_seen`).
+        static let key = "sync_seen"
+    }
+
+    /// "movie|tt1" or "series|tt1".
+    static func listedKey(_ title: Listed) -> String { "\(title.series ? "series" : "movie")|\(title.imdb)" }
+
+    /// "movie|tt1|tt1" for a film, "series|tt1|tt1:2:3" for an episode.
+    static func watchedKey(_ entry: Watched) -> String {
+        if let (season, episode) = entry.episode { return "series|\(entry.imdb)|\(entry.imdb):\(season):\(episode)" }
+        return "movie|\(entry.imdb)|\(entry.imdb)"
+    }
+
+    /// The kind, title id and (for a watched key) video id in a key.
+    static func keyParts(_ key: String) -> (kind: String, titleID: String, videoID: String) {
+        let parts = key.split(separator: "|", maxSplits: 2, omittingEmptySubsequences: false).map(String.init)
+        return (parts.first ?? "", parts.count > 1 ? parts[1] : "", parts.count > 2 ? parts[2] : "")
+    }
+
+    /// Whether a change of this device's for what `key` names is still
+    /// waiting to be sent: then its word stands.
+    static func waiting(_ queued: [Change], _ key: String) -> Bool {
+        let (kind, title, video) = keyParts(key)
+        return queued.contains {
+            $0.kind == kind && $0.titleID == title && (video.isEmpty || $0.what.hasPrefix("watchlist") || $0.videoID == video)
+        }
+    }
+
+    /// What one account holds now; nil where it could not be read.
+    struct Pulled: Sendable {
+        var service: TrackingService
+        var watchlist: [Listed]?
+        var watched: [Watched]?
+    }
+
+    /// What changed on one account since its last pull, and its new `Seen`.
+    struct AccountChanges {
+        var addedListed: [Listed] = []
+        var goneListed: [String] = []
+        var addedWatched: [Watched] = []
+        var goneWatched: [String] = []
+        var seen = Seen()
+    }
+
+    /// Compares what an account holds with what it held at its last pull
+    /// (nil the first time: everything is new, nothing was taken off).
+    static func changesSince(_ previous: Seen?, _ pulled: Pulled) -> AccountChanges {
+        var changes = AccountChanges(seen: previous ?? Seen())
+        if let listed = pulled.watchlist {
+            let now = Set(listed.map(listedKey))
+            changes.addedListed = listed.filter { previous?.watchlist.contains(listedKey($0)) != true }
+            if let previous { changes.goneListed = previous.watchlist.subtracting(now).sorted() }
+            changes.seen.watchlist = now
+        }
+        if let watched = pulled.watched {
+            let now = Set(watched.map(watchedKey))
+            changes.addedWatched = watched.filter { previous?.watched.contains(watchedKey($0)) != true }
+            if let previous { changes.goneWatched = previous.watched.subtracting(now).sorted() }
+            changes.seen.watched = now
+        }
+        return changes
+    }
+
     /// What one round brought back.
     struct Outcome: Sendable {
         /// Queued changes every account now has (to take off the queue).
@@ -13,8 +97,8 @@ enum Sync {
         var problems: [String] = []
         /// Accounts whose tokens were renewed (to keep in place of the old).
         var renewed: [TrackedAccount] = []
-        var watchlists: [Listed] = []
-        var watched: [Watched] = []
+        /// What each account holds, when brought in.
+        var pulls: [Pulled] = []
         var pulled = false
     }
 
@@ -67,8 +151,10 @@ enum Sync {
         }
         if pull {
             for account in ready {
-                do { outcome.watchlists += try await client.watchlist(account) } catch { problem(account, error) }
-                do { outcome.watched += try await client.watched(account) } catch { problem(account, error) }
+                var pulled = Pulled(service: account.service)
+                do { pulled.watchlist = try await client.watchlist(account) } catch { problem(account, error) }
+                do { pulled.watched = try await client.watched(account) } catch { problem(account, error) }
+                outcome.pulls.append(pulled)
             }
         }
         return outcome

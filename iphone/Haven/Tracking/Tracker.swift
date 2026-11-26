@@ -8,16 +8,24 @@ import Observation
 /// queue in its database. The queue goes to the linked accounts in one go:
 /// 20 s after a change (so several changes travel together), 8 s after
 /// start, and on "Sync now". A change that cannot be sent stays queued.
-/// What the accounts hold is brought in at start at most every 6 hours, and
-/// on "Sync now". Nothing runs while Haven is closed.
+/// What the accounts hold is brought in at start, on coming back to Haven
+/// (when the last time was 10 minutes ago or more), a little after
+/// something was watched, every half hour while Haven is open, and on
+/// "Sync now". Both ways: what was added on an account comes in, and what
+/// was taken off there (off the Watchlist, or marked unwatched) is taken
+/// off here too (`Sync.Seen`). Nothing runs while Haven is closed.
 @MainActor @Observable
 final class Tracker {
     /// How long after a change the queue is sent, and after start the
     /// first sync runs (Home loads first).
     var afterAChange: Double = 20
     var afterStart: Double = 8
-    /// Bring things in from the accounts at start at most this often.
-    static let pullEverySeconds: Int64 = 6 * 60 * 60
+    /// How long after a video closes things are brought in.
+    var afterWatching: Double = 5
+    /// Coming back to Haven brings things in when the last time was this long ago.
+    static let pullOnReturnSeconds: Int64 = 10 * 60
+    /// Brings things in this often while Haven is open.
+    static let pullWhileOpen: Double = 30 * 60
 
     private let store: Store
     private(set) var keys: Secrets
@@ -47,6 +55,11 @@ final class Tracker {
     var watchedChanged: () -> Void = {}
     /// After a full pull: catch up what the accounts lack.
     var pulledAll: () -> Void = {}
+    /// Takes watched marks an account no longer has off this device, each
+    /// (kind, IMDb id, video id), with media-server titles linked to them;
+    /// says for each whether anything was taken off. The Library sets it.
+    var forgetWatched: ([(kind: String, titleID: String, videoID: String)]) -> [Bool]
+    private var whileOpen: Task<Void, Never>?
     /// Opens a web page (the service's code page).
     var openLink: (String) -> Void = { _ in }
 
@@ -55,6 +68,16 @@ final class Tracker {
         self.keys = keys
         self.http = http
         accounts = TrackedAccount.load(store)
+        forgetWatched = { gone in
+            gone.map { item in
+                let videos = item.kind == "series" ? [item.videoID] : ((try? store.finishedVideos(kind: item.kind, titleID: item.titleID)) ?? [])
+                var any = false
+                for video in videos where (try? store.progress(kind: item.kind, titleID: item.titleID, videoID: video))??.finished == true {
+                    any = (try? store.removeVideoProgress(kind: item.kind, titleID: item.titleID, videoID: video)) != nil || any
+                }
+                return any
+            }
+        }
     }
 
     var client: TrackingClient {
@@ -87,10 +110,29 @@ final class Tracker {
         return accounts.filter { !off.contains($0.service.label) }
     }
 
-    /// The first run, a little after start; it brings things in when the
-    /// last pull was more than 6 hours ago.
+    /// The first run, a little after start, brings things in; so does one
+    /// every half hour while Haven is open.
     func start() {
-        schedule(after: afterStart, pull: now() - options.lastPull > Self.pullEverySeconds)
+        schedule(after: afterStart, pull: true)
+        whileOpen?.cancel()
+        whileOpen = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(Self.pullWhileOpen))
+                guard !Task.isCancelled, let self else { return }
+                await self.run(pull: true)
+            }
+        }
+    }
+
+    /// Coming back to Haven: brings things in when the last time was a while ago.
+    func cameBack() {
+        if now() - options.lastPull >= Self.pullOnReturnSeconds { schedule(after: 1, pull: true) }
+    }
+
+    /// After a video: the watched mark goes out and what the accounts hold
+    /// comes in, so another device's changes show here too.
+    func watchedSomething() {
+        if !syncing.isEmpty { schedule(after: afterWatching, pull: true) }
     }
 
     /// Runs the queue later. A run already waiting keeps its pull.
@@ -164,8 +206,9 @@ final class Tracker {
         var options = options
         if outcome.problems.isEmpty { options.lastSync = now() }
         if outcome.pulled {
-            if Sync.addListed(store, outcome.watchlists, now: now()) > 0 { watchlistChanged() }
-            if Sync.addWatched(store, outcome.watched) > 0 { watchedChanged() }
+            let (listChanged, marksChanged) = takeIn(outcome.pulls)
+            if listChanged { watchlistChanged() }
+            if marksChanged { watchedChanged() }
             if outcome.problems.isEmpty { options.lastPull = now() }
         }
         options.save(store)
@@ -173,6 +216,57 @@ final class Tracker {
         for problem in outcome.problems { Log.note("sync: \(problem)") }
         running = false
         if outcome.pulled && outcome.problems.isEmpty { pulledAll() }
+    }
+
+    /// Brings in what changed on each account since its last pull: what was
+    /// added there, and what was taken off there goes here too, unless a
+    /// change of this device's for it is still waiting to be sent. With
+    /// more than one account, what changed on one is passed on to the
+    /// others (not on an account's first pull, which would send its whole
+    /// history). Says whether the Watchlist and the watched marks changed.
+    private func takeIn(_ pulls: [Sync.Pulled]) -> (Bool, Bool) {
+        var seen = ((try? store.get(Sync.Seen.key, as: [String: Sync.Seen].self)) ?? nil) ?? [:]
+        let queued = (try? store.queuedChanges()) ?? []
+        let others = syncing.count > 1
+        var listChanged = false, marksChanged = false
+        var passOn: [(String, String)] = []
+        for pulled in pulls {
+            let label = pulled.service.label
+            let first = seen[label] == nil
+            let changes = Sync.changesSince(seen[label], pulled)
+            let before = passOn.count
+            for title in changes.addedListed where Sync.addListed(store, [title], now: now()) > 0 {
+                listChanged = true
+                passOn.append(("watchlist_add", Sync.listedKey(title)))
+            }
+            for key in changes.goneListed where !Sync.waiting(queued, key) {
+                let (kind, title, _) = Sync.keyParts(key)
+                if (try? store.inWatchlist(kind: kind, titleID: title)) == true,
+                   (try? store.removeFromWatchlist(kind: kind, titleID: title)) != nil {
+                    listChanged = true
+                    passOn.append(("watchlist_remove", key))
+                }
+            }
+            for entry in changes.addedWatched where Sync.addWatched(store, [entry]) > 0 {
+                marksChanged = true
+                passOn.append(("watched", Sync.watchedKey(entry)))
+            }
+            let gone = changes.goneWatched.filter { !Sync.waiting(queued, $0) }
+            for (key, removed) in zip(gone, forgetWatched(gone.map(Sync.keyParts))) where removed {
+                marksChanged = true
+                passOn.append(("unwatched", key))
+            }
+            if first { passOn.removeSubrange(before...) }
+            seen[label] = changes.seen
+        }
+        do { try store.put(Sync.Seen.key, seen) } catch { Log.note("could not keep what the accounts hold: \(error.localizedDescription)") }
+        if others {
+            for (what, key) in passOn {
+                let (kind, title, video) = Sync.keyParts(key)
+                queue(what, kind: kind, titleID: title, videoID: video)
+            }
+        }
+        return (listChanged, marksChanged)
     }
 
     /// Switches one account's sync on or off; on, it syncs at once.
@@ -201,7 +295,10 @@ final class Tracker {
         }
     }
 
-    static let syncNote = "Changes go out in one go shortly after they happen and when Haven opens. "
+    static let syncNote = "Changes go out in one go shortly after they happen. "
+        + "Haven brings in your accounts' Watchlist and what you watched when it opens, when you come back to it, "
+        + "after you watch something, and every half hour while it is open. "
+        + "What you take off or mark unwatched on one device goes on the others too. "
         + "Nothing runs while Haven is closed, so it barely touches the battery."
 
     var status: Status {

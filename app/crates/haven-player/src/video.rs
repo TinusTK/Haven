@@ -398,6 +398,8 @@ impl Video {
                 }
                 // Don't let mpv's renderer sleep on the UI thread.
                 init.set_property("video-timing-offset", "0")?;
+                // The volume may go up to 200% (mpv stops at 130% unless told).
+                init.set_property("volume-max", "200")?;
                 // Addresses are opened as they are: no helper programs.
                 // A libmpv built without scripting (the one shipped on
                 // macOS) has no such option, which comes to the same;
@@ -737,10 +739,11 @@ impl Video {
         }
     }
 
-    /// Loudness from 0 (silent) to 1 (as recorded).
+    /// Loudness from 0 (silent) to 1 (as recorded), up to 2 (200%,
+    /// amplified by mpv).
     pub fn set_volume(&self, volume: f64) {
         if let Some(mpv) = self.mpv {
-            let _ = mpv.set_property("volume", (volume.clamp(0.0, 1.0) * 100.0).round());
+            let _ = mpv.set_property("volume", (volume.clamp(0.0, 2.0) * 100.0).round());
         }
     }
 

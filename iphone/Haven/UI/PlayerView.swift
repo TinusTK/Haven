@@ -139,10 +139,17 @@ private struct Controls: View {
                             PlayerButton(label: silent ? "Muted" : "Volume", name: player.preferences.muted ? "Turn the sound on" : "Mute",
                                          active: silent) { player.toggleMute() }
                             Slider(value: Binding(get: { player.preferences.muted ? 0 : player.preferences.volume },
-                                                  set: { player.setVolume($0) }), in: 0 ... 1)
+                                                  set: { player.setVolume($0) }), in: 0 ... player.preferences.top)
                                 .tint(Palette.accent)
-                                .frame(width: 110)
+                                .frame(width: player.preferences.loud ? 150 : 110)
                                 .accessibilityLabel("Volume")
+                                .accessibilityValue("\(Int((player.preferences.volume * 100).rounded())) percent")
+                            // Above 100%, how loud, in gold.
+                            if player.preferences.loud && !player.preferences.muted && player.preferences.volume > 1.001 {
+                                Text("\(Int((player.preferences.volume * 100).rounded()))%")
+                                    .font(Palette.font(13, .bold).monospacedDigit())
+                                    .foregroundStyle(Palette.accent)
+                            }
                             if player.audioTracks.count > 1 {
                                 PlayerButton(label: "Audio", active: player.menu == .audio) { player.toggleMenu(.audio) }
                             }
@@ -307,7 +314,7 @@ private struct MenuPanel: View {
         case .subtitles: "Subtitles"
         case .speed: "Speed"
         case .picture: "Picture"
-        case .info, .none: "About what is playing"
+        case .info, .none, .sound: "About what is playing"
         }
     }
 
@@ -350,7 +357,7 @@ private struct MenuPanel: View {
             ForEach(MPV.Fit.allCases, id: \.rawValue) { fit in
                 Choice(label: PlayerRules.fits[fit.rawValue], selected: player.fit == fit) { player.setFit(fit) }
             }
-        case .info, .none:
+        case .info, .none, .sound:
             Text(player.info.isEmpty ? "Nothing is known yet." : player.info)
                 .font(Palette.font(13))
                 .foregroundStyle(.white)

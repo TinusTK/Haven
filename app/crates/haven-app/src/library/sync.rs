@@ -3,16 +3,19 @@
 //! queue is sent to the linked accounts (Trakt, Simkl) in one go: a
 //! little while after a change (so several changes travel together),
 //! when Haven starts, and on "Sync now". A change that cannot be sent
-//! stays queued for the next time. What the accounts hold (their
-//! Watchlist and, for Trakt, what was watched) is brought in at start
-//! at most every few hours, and on "Sync now".
+//! stays queued for the next time.
 //!
-//! On a phone or tablet nothing runs while Haven is closed and there is
-//! no timer ticking in the background: the network is only used when
-//! there is something to send or it is time to bring things in, which
-//! keeps the battery use to a few short requests. A computer has no
-//! battery to save (user, 2026-11-19): it sends a change at once and
-//! brings things in every quarter of an hour while Haven is open.
+//! What the accounts hold (their Watchlist and what was watched) is
+//! brought in when Haven starts, a little after something was watched,
+//! on "Sync now", and while Haven is open every quarter of an hour on a
+//! computer, every half hour on a phone. Both ways: what was added on an
+//! account comes in, and what was taken off there (off the Watchlist, or
+//! marked unwatched) is taken off here too (`haven_tracking::sync::Seen`),
+//! so every device ends up the same.
+//!
+//! On a phone nothing runs while Haven is closed: the network is only
+//! used when there is something to send or it is time to bring things in,
+//! which keeps the battery use to a few short requests.
 
 use std::{
     cell::{Cell, RefCell},
@@ -21,6 +24,7 @@ use std::{
 };
 
 use haven_core::storage::Change;
+use haven_tracking::sync::{Pulled, SEEN, SeenByAccount, changes_since, key_parts, listed_key, waiting, watched_key};
 use haven_tracking::{Account, Listed, Watched, subject};
 use serde::{Deserialize, Serialize};
 
@@ -34,10 +38,12 @@ const PHONE: bool = cfg!(target_os = "android");
 const AFTER_A_CHANGE: Duration = Duration::from_secs(if PHONE { 20 } else { 2 });
 /// How long after start the first sync runs (Home loads first).
 const AFTER_START: Duration = Duration::from_secs(if PHONE { 8 } else { 3 });
-/// On a phone, bring things in from the accounts at start at most this often.
-const PULL_EVERY_SECONDS: i64 = 6 * 60 * 60;
-/// On a computer, bring things in this often while Haven is open.
-const COMPUTER_PULL: Duration = Duration::from_secs(15 * 60);
+/// Bring things in this often while Haven is open: a quarter of an hour
+/// on a computer, half an hour on a phone.
+const PULL_WHILE_OPEN: Duration = Duration::from_secs(if PHONE { 30 * 60 } else { 15 * 60 });
+/// How long after a video closes what the accounts hold is brought in
+/// (the watched mark goes out first, with it).
+const AFTER_WATCHING: Duration = Duration::from_secs(5);
 
 fn yes() -> bool {
     true
@@ -73,7 +79,9 @@ impl Default for Options {
 #[derive(Default)]
 pub(super) struct SyncState {
     timer: slint::Timer,
-    /// A computer only: brings things in every quarter of an hour.
+    /// The next run of `timer` also brings things in.
+    pull_next: Cell<bool>,
+    /// Brings things in while Haven is open.
     pull_timer: slint::Timer,
     running: Cell<bool>,
     /// Asked to run again (or to bring things in) while it was running.
@@ -138,15 +146,13 @@ impl Library {
         });
         self.show_sync();
         // The first run waits a little so Home loads first.
-        let pull = options.pull && (!PHONE || now() - options.last_pull > PULL_EVERY_SECONDS);
-        if !PHONE {
-            let library = Rc::downgrade(self);
-            self.sync.pull_timer.start(slint::TimerMode::Repeated, COMPUTER_PULL, move || {
-                if let Some(library) = library.upgrade() {
-                    library.run_sync(true);
-                }
-            });
-        }
+        let pull = options.pull;
+        let library = Rc::downgrade(self);
+        self.sync.pull_timer.start(slint::TimerMode::Repeated, PULL_WHILE_OPEN, move || {
+            if let Some(library) = library.upgrade() {
+                library.run_sync(true);
+            }
+        });
         let library = Rc::downgrade(self);
         self.sync.timer.start(slint::TimerMode::SingleShot, AFTER_START, move || {
             if let Some(library) = library.upgrade() {
@@ -181,12 +187,27 @@ impl Library {
             return eprintln!("haven: could not note a change to sync: {err}");
         }
         self.show_sync();
+        self.sync_soon(AFTER_A_CHANGE, false);
+    }
+
+    /// Runs the sync after `wait`; with `pull` it also brings in what the
+    /// accounts hold (kept if a change asks for a run meanwhile).
+    pub(super) fn sync_soon(&self, wait: Duration, pull: bool) {
+        self.sync.pull_next.set(self.sync.pull_next.get() || pull);
         let library = self.ui.clone();
-        self.sync.timer.start(slint::TimerMode::SingleShot, AFTER_A_CHANGE, move || {
+        self.sync.timer.start(slint::TimerMode::SingleShot, wait, move || {
             if library.upgrade().is_some() {
-                on_ui(|library| library.run_sync(false));
+                on_ui(|library| library.run_sync(library.sync.pull_next.take()));
             }
         });
+    }
+
+    /// After a video: the watched mark goes out and what the accounts hold
+    /// comes in, so another device's changes show here too.
+    pub(super) fn sync_after_watching(&self) {
+        if !self.syncing_accounts().is_empty() {
+            self.sync_soon(AFTER_WATCHING, true);
+        }
     }
 
     /// Sends the queue, and with `pull` brings in what the accounts hold.
@@ -225,9 +246,7 @@ impl Library {
             options.last_sync = now();
         }
         if outcome.pulled {
-            let options_now = &options;
-            let watchlist_changed = options_now.watchlist && self.add_listed(&outcome.watchlists) > 0;
-            let watched_changed = options_now.watched && self.add_watched(&outcome.watched) > 0;
+            let (watchlist_changed, watched_changed) = self.take_in(&outcome.pulls);
             if watchlist_changed {
                 self.reload_watchlist();
             }
@@ -285,6 +304,74 @@ impl Library {
         for row in missing {
             self.queue_sync("watched", &row.kind, &row.title_id, &row.video_id);
         }
+    }
+
+    /// Brings in what changed on each account since its last pull: what
+    /// was added there, and what was taken off there (off the Watchlist,
+    /// or marked unwatched) goes here too, unless a change of this
+    /// device's for it is still waiting to be sent. With more than one
+    /// account, what changed on one is passed on to the others (not on an
+    /// account's first pull, which would send its whole history). Says
+    /// whether the Watchlist and the watched marks changed.
+    fn take_in(&self, pulls: &[Pulled]) -> (bool, bool) {
+        let mut seen: SeenByAccount = self.store.get(SEEN).ok().flatten().unwrap_or_default();
+        let queued = self.store.queued_changes().unwrap_or_default();
+        let others = self.syncing_accounts().len() > 1;
+        let (mut watchlist_changed, mut watched_changed) = (false, false);
+        let mut pass_on = Vec::new();
+        for pulled in pulls {
+            let label = pulled.service.label().to_owned();
+            let first = !seen.contains_key(&label);
+            let changes = changes_since(seen.get(&label), pulled);
+            let before = pass_on.len();
+            for title in &changes.added_listed {
+                if self.add_listed(std::slice::from_ref(title)) > 0 {
+                    watchlist_changed = true;
+                    pass_on.push(("watchlist_add", listed_key(title)));
+                }
+            }
+            for key in changes.gone_listed.iter().filter(|key| !waiting(&queued, key)) {
+                let (kind, title, _) = key_parts(key);
+                if self.store.in_watchlist(kind, title).unwrap_or(false) && self.store.remove_from_watchlist(kind, title).is_ok() {
+                    watchlist_changed = true;
+                    pass_on.push(("watchlist_remove", key.clone()));
+                }
+            }
+            for entry in &changes.added_watched {
+                if self.add_watched(std::slice::from_ref(entry)) > 0 {
+                    watched_changed = true;
+                    pass_on.push(("watched", watched_key(entry)));
+                }
+            }
+            let gone: Vec<&String> = changes.gone_watched.iter().filter(|key| !waiting(&queued, key)).collect();
+            let parts: Vec<(String, String, String)> = gone
+                .iter()
+                .map(|key| {
+                    let (kind, title, video) = key_parts(key);
+                    (kind.to_owned(), title.to_owned(), video.to_owned())
+                })
+                .collect();
+            for (key, removed) in gone.iter().zip(self.forget_watched(&parts)) {
+                if removed {
+                    watched_changed = true;
+                    pass_on.push(("unwatched", (*key).clone()));
+                }
+            }
+            if first {
+                pass_on.truncate(before);
+            }
+            seen.insert(label, changes.seen);
+        }
+        if let Err(err) = self.store.put(SEEN, &seen) {
+            eprintln!("haven: could not keep what the accounts hold: {err}");
+        }
+        if others {
+            for (what, key) in pass_on {
+                let (kind, title, video) = key_parts(&key);
+                self.queue_sync(what, kind, title, video);
+            }
+        }
+        (watchlist_changed, watched_changed)
     }
 
     /// Puts titles from an account's Watchlist on Haven's, if new there.
@@ -359,9 +446,9 @@ impl Library {
         ui.set_sync_linked(!syncing.is_empty());
         ui.set_sync_note(
             if PHONE {
-                "Changes go out in one go shortly after they happen and when Haven opens. Nothing runs while Haven is closed, so it barely touches the battery."
+                "Changes go out in one go shortly after they happen. Haven brings in your accounts' Watchlist and what you watched when it opens, after you watch something, and every half hour while it is open. What you take off or mark unwatched on one device goes on the others too. Nothing runs while Haven is closed, so it barely touches the battery."
             } else {
-                "Changes go out straight away. While Haven is open it also brings in your accounts' Watchlist and what you watched every 15 minutes."
+                "Changes go out straight away. Haven brings in your accounts' Watchlist and what you watched when it starts, after you watch something, and every 15 minutes while it is open. What you take off or mark unwatched on one device goes on the others too."
             }
             .into(),
         );

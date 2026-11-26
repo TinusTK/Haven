@@ -222,6 +222,10 @@ private struct GeneralSettings: View {
                 HavenToggle(label: "Send surround sound to a receiver untouched", on: settings.passthrough) { settings.setPassthrough($0) }
             }
             Note(text: "Off, Haven decodes the sound itself and plays it on whatever this iPhone has, in surround where the device can. On, Dolby Digital, Dolby TrueHD and DTS sound is passed on as it is in the file for the receiver to decode. Turn it on only with a receiver or soundbar that takes those; without one there may be no sound.")
+            SettingsRow(label: "Let the volume go up to 200%",
+                        detail: "For quiet films: the player's volume goes past 100%, made louder by Haven. Very loud sound can crackle.") {
+                HavenToggle(label: "Let the volume go up to 200%", on: settings.loud) { settings.setLoud($0) }
+            }
         }
     }
 }
@@ -285,6 +289,9 @@ private struct AccountSettings: View {
             }
             if !tracker.linkStatus.isEmpty { Note(text: tracker.linkStatus) }
         }
+        #if ADDONS
+        StremioCard(settings: settings)
+        #endif
         SettingsCard(title: "Your own keys") {
             key("TMDB API key", $settings.keys.tmdb)
             key("Trakt client ID", $settings.keys.traktID)
@@ -304,6 +311,39 @@ private struct AccountSettings: View {
         }
     }
 }
+
+#if ADDONS
+/// Signing in to a Stremio account brings in the add-ons it uses.
+private struct StremioCard: View {
+    @Bindable var settings: SettingsModel
+
+    var body: some View {
+        SettingsCard(title: "Stremio") {
+            if settings.stremioEmail.isEmpty {
+                Note(text: "Sign in with your Stremio account and Haven uses the add-ons it has, asking them itself as Stremio does. Your password is not kept.")
+                HavenField(placeholder: "Email address", text: $settings.stremioEmailEntered)
+                    .textContentType(.username)
+                    .keyboardType(.emailAddress)
+                    .textInputAutocapitalization(.never)
+                    .accessibilityLabel("Stremio email address")
+                HavenField(placeholder: "Password", text: $settings.stremioPasswordEntered, secure: true,
+                           submit: { _ in settings.stremioSignIn() })
+                    .textContentType(.password)
+                    .accessibilityLabel("Stremio password")
+                PrimaryButton(text: settings.stremioBusy ? "Signing in…" : "Sign in", enabled: !settings.stremioBusy) {
+                    settings.stremioSignIn()
+                }
+            } else {
+                SettingsRow(label: "Signed in", detail: "\(settings.stremioEmail). The add-ons on this account are used, and follow it each time Haven starts.") {
+                    EmptyView()
+                }
+                Chip(label: "Sign out") { settings.stremioSignOut() }
+            }
+            if !settings.stremioStatus.isEmpty { Note(text: settings.stremioStatus) }
+        }
+    }
+}
+#endif
 
 // MARK: Sync options
 

@@ -180,10 +180,64 @@ struct TrackerTests {
         // 1 sent, 2 nothing to send, 3 not trackable; 4 failed (no answer set up: 404).
         #expect(outcome.sent == [1, 2, 3])
         #expect(outcome.problems == ["Trakt: the service answered with error 404"])
-        #expect(outcome.watchlists.map(\.imdb) == ["tt5"] && outcome.watched.map(\.imdb) == ["tt6"])
+        #expect(outcome.pulls.first?.watchlist?.map(\.imdb) == ["tt5"] && outcome.pulls.first?.watched?.map(\.imdb) == ["tt6"])
         var accounts = [near]
         Sync.keepRenewed(&accounts, outcome.renewed)
         #expect(accounts.map(\.token) == ["new"])
+    }
+
+    @Test func onlyWhatChangedOnTheAccountCounts() {
+        let film = { (imdb: String) in Listed(imdb: imdb, series: false, title: imdb, year: "") }
+        let episode = { (number: Int) in Watched(imdb: "tt9", title: "S", episode: (1, number), at: 0) }
+        // The first pull: everything comes in, nothing is taken off.
+        let first = Sync.changesSince(nil, Sync.Pulled(service: .trakt, watchlist: [film("tt1")], watched: [episode(1)]))
+        #expect(first.addedListed.count == 1 && first.addedWatched.count == 1)
+        #expect(first.goneListed.isEmpty && first.goneWatched.isEmpty)
+        let before = Sync.Seen(watchlist: ["movie|tt1", "movie|tt2"], watched: ["series|tt9|tt9:1:1", "series|tt9|tt9:1:2"])
+        let changes = Sync.changesSince(before, Sync.Pulled(service: .trakt, watchlist: [film("tt1"), film("tt3")], watched: [episode(1)]))
+        #expect(changes.addedListed.map(\.imdb) == ["tt3"])
+        #expect(changes.goneListed == ["movie|tt2"])
+        #expect(changes.addedWatched.isEmpty)
+        #expect(changes.goneWatched == ["series|tt9|tt9:1:2"])
+        // A part that could not be read changes nothing.
+        let unread = Sync.changesSince(before, Sync.Pulled(service: .simkl))
+        #expect(unread.goneListed.isEmpty && unread.goneWatched.isEmpty && unread.seen == before)
+        // A change still waiting here wins.
+        let waiting = [Change(what: "watched", kind: "series", titleID: "tt9", videoID: "tt9:1:2", createdAt: 0)]
+        #expect(Sync.waiting(waiting, "series|tt9|tt9:1:2") && !Sync.waiting(waiting, "series|tt9|tt9:1:3"))
+        #expect(Sync.keyParts("series|tt9|tt9:1:2") == ("series", "tt9", "tt9:1:2"))
+    }
+
+    @Test func simklsWatchedAnswerIsReadLikeTrakts() {
+        let shows: [String: Any] = ["shows": [["status": "watching",
+                                               "show": ["title": "A Show", "ids": ["simkl": 1, "imdb": "tt9"]],
+                                               "seasons": [["number": 1, "episodes": [["number": 2, "watched_at": "2026-11-20T10:00:00Z"]]]]]]]
+        let found = Tracking.readWatched(shows, series: true)
+        #expect(found.count == 1 && found.first?.imdb == "tt9" && found.first?.episode?.number == 2 && (found.first?.at ?? 0) > 0)
+        let films: [String: Any] = ["movies": [["last_watched_at": "2026-11-20T10:00:00Z", "movie": ["title": "A Film", "ids": ["imdb": "tt5"]]]]]
+        #expect(Tracking.readWatched(films, series: false).first?.imdb == "tt5")
+    }
+
+    @Test func whatWasTakenOffAnAccountGoesHereToo() async throws {
+        let store = try Store.inMemory()
+        try store.put(TrackedAccount.key, [TrackedAccount(service: .trakt, token: "t")])
+        let tracker = Tracker(store: store, keys: keys, http: HTTP(protocolClasses: [FixtureServer.self]))
+        tracker.traktAPI = "https://p1.trakt.test"
+        tracker.now = { 1_767_323_045 }
+        FixtureServer.answer("https://p1.trakt.test/sync/watchlist/movies", #"[{"movie": {"title": "Kept", "year": 2021, "ids": {"imdb": "tt1"}}}, {"movie": {"title": "Gone", "year": 2021, "ids": {"imdb": "tt2"}}}]"#)
+        FixtureServer.answer("https://p1.trakt.test/sync/watchlist/shows", "[]")
+        FixtureServer.answer("https://p1.trakt.test/sync/watched/movies", #"[{"movie": {"title": "Seen", "ids": {"imdb": "tt6"}}}]"#)
+        FixtureServer.answer("https://p1.trakt.test/sync/watched/shows", "[]")
+        await tracker.run(pull: true)
+        #expect(try store.inWatchlist(kind: "movie", titleID: "tt2"))
+        #expect(try store.progress(kind: "movie", titleID: "tt6", videoID: "tt6")?.finished == true)
+        // On another device tt2 left the Watchlist and tt6 was unmarked.
+        FixtureServer.answer("https://p1.trakt.test/sync/watchlist/movies", #"[{"movie": {"title": "Kept", "year": 2021, "ids": {"imdb": "tt1"}}}]"#)
+        FixtureServer.answer("https://p1.trakt.test/sync/watched/movies", "[]")
+        await tracker.run(pull: true)
+        #expect(try !store.inWatchlist(kind: "movie", titleID: "tt2"))
+        #expect(try store.inWatchlist(kind: "movie", titleID: "tt1"))
+        #expect(try store.progress(kind: "movie", titleID: "tt6", videoID: "tt6") == nil)
     }
 
     @Test func theTrackerQueuesSendsAndSaysHowItStands() async throws {

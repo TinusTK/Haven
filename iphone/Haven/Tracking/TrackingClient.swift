@@ -218,13 +218,21 @@ struct TrackingClient: Sendable {
         }
     }
 
-    /// What the account has watched (Trakt only; Simkl answers empty).
+    /// What the account has watched: films, and each episode of a series.
+    /// Simkl: completed films, and the watched episodes of every series it
+    /// has (whatever its list), with when each was watched.
     func watched(_ account: TrackedAccount) async throws -> [Watched] {
-        guard account.service == .trakt else { return [] }
         let headers = try headers(account)
         var found: [Watched] = []
         for series in [false, true] {
-            let (status, answer) = try await call(.trakt, "\(trakt)/sync/watched/\(series ? "shows" : "movies")", headers: headers)
+            let url: String
+            switch (account.service, series) {
+            case (.trakt, _): url = "\(trakt)/sync/watched/\(series ? "shows" : "movies")"
+            case (.simkl, true):
+                url = Self.simklURL(simkl, "/sync/all-items/shows?extended=full&episode_watched_at=yes", clientID: try simklKey())
+            case (.simkl, false): url = Self.simklURL(simkl, "/sync/all-items/movies/completed", clientID: try simklKey())
+            }
+            let (status, answer) = try await call(account.service, url, headers: headers)
             guard (200 ..< 300).contains(status) else { throw TrackingError.status(status) }
             found += Tracking.readWatched(answer, series: series)
         }

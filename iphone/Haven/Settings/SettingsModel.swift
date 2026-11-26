@@ -120,6 +120,10 @@ final class SettingsModel {
 
     func setPassthrough(_ on: Bool) { player.setPassthrough(on) }
 
+    var loud: Bool { player.preferences.loud }
+
+    func setLoud(_ on: Bool) { player.setLoud(on) }
+
     // MARK: Accounts: your own keys
 
     var keys: Keys
@@ -350,6 +354,68 @@ final class SettingsModel {
         library.loadSources()
         library.reloadHome()
         changed()
+    }
+
+    // MARK: Stremio account (GitHub build)
+
+    var stremioEmailEntered = ""
+    var stremioPasswordEntered = ""
+    private(set) var stremioStatus = ""
+    private(set) var stremioBusy = false
+
+    /// The signed-in account's email; empty when signed out.
+    var stremioEmail: String {
+        _ = revision
+        return Stremio.account(store)?.email ?? ""
+    }
+
+    func stremioSignIn() {
+        let (email, password) = (stremioEmailEntered, stremioPasswordEntered)
+        guard !email.trimmingCharacters(in: .whitespaces).isEmpty, !password.isEmpty else {
+            stremioStatus = "Type your Stremio email address and password."
+            return
+        }
+        stremioBusy = true
+        stremioStatus = "Signing in to Stremio…"
+        let store = store
+        Task {
+            do {
+                let account = try await Stremio.login(email: email, password: password)
+                let listed = try await Stremio.listed(account)
+                try store.put(Stremio.accountKey, account)
+                stremioPasswordEntered = ""
+                stremioStatus = ""
+                if Stremio.follow(listed, store: store) { addonsChanged() } else { changed() }
+            } catch {
+                stremioStatus = "Could not sign in: \(error.localizedDescription)."
+            }
+            stremioBusy = false
+        }
+    }
+
+    func stremioSignOut() {
+        guard let account = Stremio.account(store) else { return }
+        try? store.remove(Stremio.accountKey)
+        // What came from the account goes.
+        if Stremio.follow([], store: store) { addonsChanged() } else { changed() }
+        stremioStatus = "Signed out of Stremio."
+        Task { await Stremio.logout(account) }
+    }
+
+    /// At start: the account's list again. Offline, what is installed stays.
+    func stremioRefresh() {
+        guard let account = Stremio.account(store) else { return }
+        let store = store
+        Task {
+            do {
+                let listed = try await Stremio.listed(account)
+                if Stremio.follow(listed, store: store) { addonsChanged() }
+            } catch Stremio.Failure.refused {
+                stremioStatus = "Stremio asks you to sign in again."
+            } catch {
+                Log.note("stremio: kept the last list: \(error.localizedDescription)")
+            }
+        }
     }
     #endif
 

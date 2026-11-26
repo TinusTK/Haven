@@ -109,11 +109,17 @@ final class AppModel {
             tracker.queue(what, kind: kind, titleID: ids.titleID, videoID: ids.videoID)
         }
         tracker.pulledAll = { [weak library] in library?.sendMissingLinked() }
+        // Marks taken off on another device go from linked server titles too.
+        tracker.forgetWatched = { [weak library] gone in library?.forgetWatched(gone) ?? gone.map { _ in false } }
         player = PlayerModel(store: core.store)
         live = LiveTVModel(store: core.store)
         calendar = CalendarModel(library: library)
         settingsPage = SettingsModel(core: core, library: library, tracker: tracker, live: live, player: player)
-        player.closed = { [library] in library.playerClosed($0) }
+        player.closed = { [library, tracker] in
+            library.playerClosed($0)
+            // The watched mark goes out and other devices' changes come in.
+            tracker.watchedSomething()
+        }
         player.next = { [library] in library.playNext($0) }
         library.dismissPlayer = { [player] in player.dismiss() }
         library.play = { [weak self] in self?.play($0) }
@@ -140,8 +146,16 @@ final class AppModel {
             return library.startupProgress(homeShowing: page == .home && !detailOpen)
         }
         tracker.start()
+        #if canImport(UIKit)
+        NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [tracker] _ in
+            MainActor.assumeIsolated { tracker.cameBack() }
+        }
+        #endif
         live.start()
         settingsPage.startBackups()
+        #if ADDONS
+        settingsPage.stremioRefresh()
+        #endif
         icloud.start()
         runSplash()
     }

@@ -39,17 +39,26 @@ const PREFERENCES: &str = "player";
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 struct Preferences {
-    /// 0 silent to 1 as recorded.
+    /// 0 silent to 1 as recorded; up to 2 (200%) when `loud` is on.
     volume: f64,
     muted: bool,
     subtitle_scale: f64,
     /// Send Dolby and DTS sound untouched to a receiver.
     passthrough: bool,
+    /// Settings › General: the volume may go up to 200%.
+    loud: bool,
+}
+
+impl Preferences {
+    /// The highest volume allowed: 1 (100%), or 2 (200%) when `loud` is on.
+    fn top(&self) -> f64 {
+        if self.loud { 2.0 } else { 1.0 }
+    }
 }
 
 impl Default for Preferences {
     fn default() -> Self {
-        Self { volume: 1.0, muted: false, subtitle_scale: 1.0, passthrough: false }
+        Self { volume: 1.0, muted: false, subtitle_scale: 1.0, passthrough: false, loud: false }
     }
 }
 
@@ -193,6 +202,11 @@ impl Player {
         connect!(on_player_set_fit, |fit| |p: &Rc<Self>| p.set_fit(fit));
         connect!(on_player_set_passthrough, |on| |p: &Rc<Self>| p
             .change_preferences(|preferences| preferences.passthrough = on));
+        // Turned off, a volume above 100% comes back down to 100%.
+        connect!(on_player_set_loud, |on| |p: &Rc<Self>| p.change_preferences(|preferences| {
+            preferences.loud = on;
+            preferences.volume = preferences.volume.min(preferences.top());
+        }));
         connect!(on_player_subtitle_scale_step, |way| |p: &Rc<Self>| p.step_subtitle_scale(way));
         connect!(on_player_subtitle_delay_step, |way| |p: &Rc<Self>| p.step_subtitle_delay(way));
         connect!(on_player_subtitle_sync, |way| |p: &Rc<Self>| p.sync_subtitles(way));
@@ -234,6 +248,7 @@ impl Player {
         ui.set_player_muted(preferences.muted);
         ui.set_player_subtitle_scale(preferences.subtitle_scale as f32);
         ui.set_player_passthrough(preferences.passthrough);
+        ui.set_player_loud(preferences.loud);
         ui.set_player_speed(self.speed.get() as f32);
         ui.set_player_fit(self.fit.get());
         ui.set_player_subtitle_delay(self.subtitle_delay.get() as f32);
@@ -267,7 +282,7 @@ impl Player {
     fn set_volume(&self, volume: f64) {
         // Moving the volume turns the sound back on.
         self.change_preferences(|preferences| {
-            preferences.volume = volume.clamp(0.0, 1.0);
+            preferences.volume = volume.clamp(0.0, preferences.top());
             preferences.muted = false;
         });
     }

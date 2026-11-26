@@ -139,6 +139,7 @@ struct TVPlayerView: View {
                         button(5, player.speed == 1 ? "Speed" : "\(PlayerRules.formatted(player.speed))×",
                                active: player.menu == .speed || player.speed != 1) { open(.speed, 5) }
                         button(6, "Picture", active: player.menu == .picture || player.fit != .whole) { open(.picture, 6) }
+                        button(9, boostLabel, active: player.menu == .sound || player.preferences.volume > 1.001) { open(.sound, 9) }
                         button(7, "Info", active: player.menu == .info) { open(.info, 7) }
                         if !player.nextTitle.isEmpty {
                             button(8, "Next episode") { player.goNext() }
@@ -160,6 +161,11 @@ struct TVPlayerView: View {
             }
         }
         .ignoresSafeArea()
+    }
+
+    /// The Sound button: how much louder, when boosted.
+    private var boostLabel: String {
+        player.preferences.volume > 1.001 ? "Sound \(Int((player.preferences.volume * 100).rounded()))%" : "Sound"
     }
 
     private func open(_ menu: PlayerModel.Menu, _ index: Int) {
@@ -204,6 +210,7 @@ struct TVPlayerView: View {
         case .subtitles: "Subtitles"
         case .speed: "Speed"
         case .picture: "Picture"
+        case .sound: "Sound boost"
         case .info, .none: "About what is playing"
         }
     }
@@ -234,6 +241,12 @@ struct TVPlayerView: View {
             ForEach(MPV.Fit.allCases, id: \.rawValue) { fit in
                 choice(fit.rawValue, PlayerRules.fits[fit.rawValue], player.fit == fit) { player.setFit(fit) }
             }
+        case .sound:
+            ForEach(Array(PlayerRules.Preferences.boosts.enumerated()), id: \.offset) { at, boost in
+                choice(at, boost == 1 ? "Off (100%)" : "\(Int((boost * 100).rounded()))%",
+                       abs(player.preferences.volume - boost) < 0.01) { player.setVolume(boost) }
+            }
+            TVNote(text: "Makes quiet films louder than the TV's own volume can. Very loud sound can crackle.")
         case .info, .none:
             Text(player.info.isEmpty ? "Nothing is known yet." : player.info)
                 .font(Palette.font(24))

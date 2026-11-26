@@ -22,7 +22,7 @@ struct HomePage: View {
     private var filled: some View {
         GeometryReader { geometry in
             let width = geometry.size.width
-            let wide = max((width - 32 - 14) / 2, 0)
+            let wide = min(max((width - 32 - 14) / 2, 0), 380)
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 28) {
                     if !library.hero.isEmpty {
@@ -377,7 +377,7 @@ struct ShelfRow: View {
     }
 }
 
-/// Posters sideways, 3.15 across a phone.
+/// Posters sideways, 3.15 across a phone (160 points each on an iPad).
 struct PosterRow: View {
     let items: [MetaPreview]
     let width: CGFloat
@@ -385,7 +385,7 @@ struct PosterRow: View {
     var pause: Pause?
 
     var body: some View {
-        let card = max((width - 24) / 3.15, 1)
+        let card = PosterFit.row(width)
         ScrollView(.horizontal, showsIndicators: false) {
             LazyHStack(spacing: 10) {
                 ForEach(items, id: \.id) { meta in

@@ -221,9 +221,10 @@ private struct TitleGrid: View {
                     .padding(.horizontal, 16)
             }
             GeometryReader { geometry in
-                let card = max((geometry.size.width - 32 - 20) / 3, 1)
+                let fit = PosterFit.grid(geometry.size.width)
+                let card = fit.card
                 ScrollView {
-                    LazyVGrid(columns: Array(repeating: GridItem(.fixed(card), spacing: 10, alignment: .top), count: 3),
+                    LazyVGrid(columns: Array(repeating: GridItem(.fixed(card), spacing: 10, alignment: .top), count: fit.count),
                               alignment: .leading, spacing: 14) {
                         ForEach(explore.items, id: \.self) { meta in
                             Button {

@@ -66,6 +66,7 @@ Get the newest version from the
 | Linux (Debian, Ubuntu and alike, x64) | `haven_amd64.deb` | `sudo apt install ./haven_amd64.deb` |
 | Android 8 or newer | `Haven-android.apk` | Open the file on the phone and allow your browser or file app to install apps when asked. |
 | iPhone and iPad (iOS 17 or newer) | `Haven-ios-unsigned.ipa` | Not signed: add [Haven's source](#add-haven-to-sidestore--altstore--sideinstaller-iphone-and-ipad) to SideStore or AltStore, or install the IPA with your own Apple ID using Sideloadly or a similar tool. |
+| Apple TV (tvOS 17 or newer) | `Haven-tvos-unsigned.ipa` | Not signed: install it with your own Apple ID using Sideloadly or Xcode (SideStore and AltStore do not install Apple TV apps). |
 
 On Android and iOS, videos play in Haven's own player. The pages Home, Explore,
 Search and Live TV are tabs along the bottom; Radio, Watchlist, Calendar,

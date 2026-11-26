@@ -124,6 +124,8 @@ final class MPV {
         // Apple's sound decoders first where they cover the format.
         option("ad", "ac3_at,eac3_at,aac_at,mp3_at")
         option("video-timing-offset", "0")
+        // The volume may go up to 200% (mpv stops at 130% unless told).
+        option("volume-max", "200")
         // Addresses are opened as they are: no helper programs.
         option("ytdl", "no")
         option("sub-auto", "no")
@@ -261,8 +263,8 @@ final class MPV {
     /// How far subtitles sit above the bottom (the picture is 720 high).
     func setSubtitleMargin(_ margin: Int) { set("sub-margin-y", String(min(max(margin, 0), 400))) }
 
-    /// 0 silent to 1 as recorded.
-    func setVolume(_ volume: Double) { set("volume", String(Int((min(max(volume, 0), 1) * 100).rounded()))) }
+    /// 0 silent to 1 as recorded, up to 2 (200%, amplified by mpv).
+    func setVolume(_ volume: Double) { set("volume", String(Int((min(max(volume, 0), 2) * 100).rounded()))) }
 
     func setMuted(_ muted: Bool) { set("mute", muted ? "yes" : "no") }
 

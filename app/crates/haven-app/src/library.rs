@@ -576,6 +576,7 @@ impl Library {
         self.reload_continue();
         self.show_resume_note();
         self.refresh_ticks();
+        self.sync_after_watching();
     }
 
     /// Puts the gold ticks right after something was watched: the open

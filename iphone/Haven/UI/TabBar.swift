@@ -63,3 +63,63 @@ private struct TabButton: View {
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }
+
+/// Haven's pages down the left on an iPad: the halo, then a row for each
+/// page (icon and name), the chosen one filled.
+struct SideBar: View {
+    let page: Page
+    /// A title's page is open: no page is highlighted.
+    let detailOpen: Bool
+    let select: (Page) -> Void
+
+    static let width: CGFloat = 220
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 10) {
+                Image("Halo").resizable().scaledToFit().frame(width: 34, height: 34)
+                Text("Haven").font(Palette.heading(24)).foregroundStyle(Palette.text)
+            }
+            .padding(.horizontal, 12)
+            .padding(.bottom, 18)
+            .accessibilityHidden(true)
+            ForEach(Page.allCases) { tab in
+                SideButton(page: tab, selected: !detailOpen && page == tab) { select(tab) }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12)
+        .padding(.top, 20)
+        .frame(width: Self.width)
+        .frame(maxHeight: .infinity, alignment: .top)
+        .background(Palette.surface.ignoresSafeArea())
+        .overlay(alignment: .trailing) { Rectangle().fill(Palette.border).frame(width: 1).ignoresSafeArea() }
+    }
+}
+
+private struct SideButton: View {
+    let page: Page
+    let selected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                HavenIcon(name: page.icon, size: 22, tint: selected ? Palette.text : Palette.textDim)
+                Text(page.label)
+                    .font(Palette.font(16, .bold))
+                    .foregroundStyle(selected ? Palette.text : Palette.textDim)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 14)
+            .frame(height: 48)
+            .background(RoundedRectangle(cornerRadius: 12).fill(selected ? Palette.selected : .clear))
+            .contentShape(RoundedRectangle(cornerRadius: 12))
+            .animation(.easeInOut(duration: 0.15), value: selected)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(page.label)
+        .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+}

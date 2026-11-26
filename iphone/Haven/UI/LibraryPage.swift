@@ -210,7 +210,7 @@ struct GridItemInfo: Identifiable {
     var watched: Bool
 }
 
-/// Posters three across; History's can be taken off with a long press.
+/// Posters three across a phone, more on an iPad; History's can be taken off with a long press.
 private struct PosterGrid: View {
     let model: AppModel
     let items: [GridItemInfo]
@@ -226,9 +226,10 @@ private struct PosterGrid: View {
             Spacer(minLength: 0)
         } else {
             GeometryReader { geometry in
-                let card = max((geometry.size.width - 32 - 20) / 3, 1)
+                let fit = PosterFit.grid(geometry.size.width)
+                let card = fit.card
                 ScrollView {
-                    LazyVGrid(columns: Array(repeating: GridItem(.fixed(card), spacing: 10, alignment: .top), count: 3),
+                    LazyVGrid(columns: Array(repeating: GridItem(.fixed(card), spacing: 10, alignment: .top), count: fit.count),
                               alignment: .leading, spacing: 14) {
                         ForEach(Array(items.enumerated()), id: \.offset) { _, item in
                             Button {

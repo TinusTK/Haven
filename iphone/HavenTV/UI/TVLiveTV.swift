@@ -1,12 +1,13 @@
 import SwiftUI
 
 /// Live TV on the television: TV or Radio, the categories down the left
-/// (Favourites groups first) and the chosen category's channels on the
-/// right. Hold Select on a channel for its Favourites groups.
+/// (Favourites groups first, with a box to find one) and the chosen
+/// category's channels on the right. Hold Select on a channel for its Favourites groups.
 struct TVLiveTVPage: View {
     let model: AppModel
     @Bindable var live: LiveTVModel
     @State private var words = ""
+    @State private var find = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 30) {
@@ -41,7 +42,11 @@ struct TVLiveTVPage: View {
         .padding(.horizontal, TV.side)
         .padding(.top, 40)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .onAppear { words = live.board.words }
+        .onAppear {
+            words = live.board.words
+            find = live.board.categoryWords
+        }
+        .onChange(of: live.band) { _, _ in find = live.board.categoryWords }
         .sheet(isPresented: Binding(get: { live.choosing != nil }, set: { if !$0 { live.closeChooser() } })) {
             TVFavourites(live: live)
         }
@@ -50,6 +55,13 @@ struct TVLiveTVPage: View {
     private var categories: some View {
         ScrollView {
             LazyVStack(spacing: 12) {
+                TextField("Find a category", text: $find)
+                    .font(Palette.font(24))
+                    .onSubmit { live.setCategoryWords(find) }
+                    .onChange(of: find) { _, now in live.setCategoryWords(now) }
+                if live.categories.isEmpty && !find.isEmpty {
+                    TVNote(text: "No category has that in its name.")
+                }
                 ForEach(live.categories, id: \.key) { row in
                     TVRow(selected: row.key == live.board.category) {
                         live.choose(row.key)

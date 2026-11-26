@@ -7,7 +7,10 @@ struct TVSettingsPage: View {
     let model: AppModel
     @Bindable var settings: SettingsModel
 
-    static let sections: [SettingsModel.Section] = [.servers, .liveTV, .accounts, .sync, .general, .storage, .about]
+    /// Add-ons only in the GitHub build.
+    static let sections: [SettingsModel.Section] = Build.hasAddons
+        ? [.servers, .liveTV, .addons, .accounts, .sync, .general, .storage, .about]
+        : [.servers, .liveTV, .accounts, .sync, .general, .storage, .about]
 
     private var shown: SettingsModel.Section { settings.section ?? .servers }
 
@@ -56,7 +59,13 @@ struct TVSettingsPage: View {
                 TVChip(label: "Clear cache") { settings.clearCache() }
                 TVNote(text: "Posters and other pictures are kept on this Apple TV once fetched. Apple TV may also clear them itself when it runs short of space.")
             }
-        case .about, .addons: TVAboutSettings(settings: settings)
+        case .addons:
+            #if ADDONS
+            TVAddonSettings(settings: settings)
+            #else
+            TVAboutSettings(settings: settings)
+            #endif
+        case .about: TVAboutSettings(settings: settings)
         }
     }
 }
@@ -132,7 +141,9 @@ private struct TVServerSettings: View {
 
     var body: some View {
         TVCard(title: "Sign in") {
-            TVNote(text: "Sign in to your own Jellyfin, Emby or Plex server on your Local Area Network.")
+            TVNote(text: Build.ownNetworkOnly
+                ? "Sign in to your own Jellyfin, Emby or Plex server on your Local Area Network."
+                : "Sign in to your own Jellyfin, Emby or Plex server.")
             HStack(spacing: 20) {
                 ForEach(SettingsModel.ServerKindChoice.allCases, id: \.rawValue) { kind in
                     TVChip(label: ["Jellyfin", "Emby", "Plex"][kind.rawValue], selected: settings.serverKind == kind) {
@@ -266,6 +277,9 @@ private struct TVAccountSettings: View {
             }
             if !tracker.linkStatus.isEmpty { TVNote(text: tracker.linkStatus) }
         }
+        #if ADDONS
+        TVStremioCard(settings: settings)
+        #endif
         TVCard(title: "Your own keys") {
             TVField(label: "TMDB API key", text: $settings.keys.tmdb)
             TVField(label: "Trakt client ID", text: $settings.keys.traktID)
@@ -391,3 +405,59 @@ private struct TVAboutSettings: View {
         This product uses the TMDB API but is not endorsed or certified by TMDB.
         """
 }
+
+#if ADDONS
+// MARK: Add-ons (GitHub build)
+
+private struct TVAddonSettings: View {
+    @Bindable var settings: SettingsModel
+
+    var body: some View {
+        TVCard(title: "Install") {
+            TVNote(text: "Type an add-on's address to install it. Its catalogues show up as shelves on Home, next to Cinemeta, the free catalogue of films and series built into Haven.")
+            TVField(label: "https://…/manifest.json", text: $settings.addonAddress) { settings.installAddon() }
+            TVChip(label: settings.addonBusy ? "Installing…" : "Install", selected: true) { settings.installAddon() }
+                .disabled(settings.addonBusy)
+            if let status = settings.addonStatus { TVNote(text: status.message, error: status.isError) }
+        }
+        TVCard(title: "Installed") {
+            if settings.addons.isEmpty { TVNote(text: "No add-ons installed yet.") }
+            ForEach(settings.addons, id: \.url) { row in
+                HStack(spacing: 20) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(row.name).font(Palette.font(26, .semibold)).foregroundStyle(Palette.text)
+                        Text([row.version.isEmpty ? "" : "Version \(row.version)", row.description]
+                            .filter { !$0.isEmpty }.joined(separator: " · "))
+                            .font(Palette.font(20)).foregroundStyle(Palette.textDim).lineLimit(2)
+                    }
+                    Spacer(minLength: 0)
+                    TVChip(label: row.enabled ? "On" : "Off", selected: row.enabled) { settings.setAddon(row.url, on: !row.enabled) }
+                    TVRemove(name: row.name, what: "Its catalogues leave Home.") { settings.removeAddon(row.url) }
+                }
+                .focusSection()
+            }
+        }
+    }
+}
+
+/// Signing in to a Stremio account brings in the add-ons it uses.
+private struct TVStremioCard: View {
+    @Bindable var settings: SettingsModel
+
+    var body: some View {
+        TVCard(title: "Stremio") {
+            if settings.stremioEmail.isEmpty {
+                TVNote(text: "Sign in with your Stremio account and Haven uses the add-ons it has, asking them itself as Stremio does. Your password is not kept.")
+                TVField(label: "Email address", text: $settings.stremioEmailEntered)
+                TVField(label: "Password", text: $settings.stremioPasswordEntered, secure: true) { settings.stremioSignIn() }
+                TVChip(label: settings.stremioBusy ? "Signing in…" : "Sign in", selected: true) { settings.stremioSignIn() }
+                    .disabled(settings.stremioBusy)
+            } else {
+                TVNote(text: "Signed in as \(settings.stremioEmail). The add-ons on this account are used, and follow it each time Haven starts.")
+                TVChip(label: "Sign out") { settings.stremioSignOut() }
+            }
+            if !settings.stremioStatus.isEmpty { TVNote(text: settings.stremioStatus) }
+        }
+    }
+}
+#endif

@@ -160,10 +160,14 @@ enum Tracking {
     }
 
     /// Trakt's `/sync/watched/movies` or `/sync/watched/shows` answer.
+    /// Trakt's `/sync/watched/…` answer, or Simkl's `/sync/all-items/…`
+    /// one (wrapped in {"movies": […]} or {"shows": […]}, an episode's time
+    /// in `watched_at`).
     static func readWatched(_ answer: Any?, series: Bool) -> [Watched] {
         let key = series ? "show" : "movie"
         var found: [Watched] = []
-        for entry in answer as? [Any] ?? [] {
+        let entries = answer as? [Any] ?? (answer as? [String: Any])?[series ? "shows" : "movies"] as? [Any] ?? []
+        for entry in entries {
             guard let entry = entry as? [String: Any], let title = entry[key], let imdb = imdb(title) else { continue }
             let name = (title as? [String: Any])?["title"] as? String ?? ""
             if !series {
@@ -175,7 +179,8 @@ enum Tracking {
                 for episode in (season as? [String: Any])?["episodes"] as? [Any] ?? [] {
                     guard let episodeNumber = TMDB.whole((episode as? [String: Any])?["number"]) else { continue }
                     found.append(Watched(imdb: imdb, title: name, episode: (Int(number), Int(episodeNumber)),
-                                         at: moment((episode as? [String: Any])?["last_watched_at"])))
+                                         at: moment((episode as? [String: Any])?["last_watched_at"]
+                                             ?? (episode as? [String: Any])?["watched_at"])))
                 }
             }
         }

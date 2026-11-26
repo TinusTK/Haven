@@ -99,7 +99,11 @@ struct TVHomePage: View {
 }
 
 enum HomeText {
+    #if ADDONS
+    static let empty = "Home fills with shelves of films and series from your media servers, your add-ons and the TMDB catalogue. Add a media server or a TMDB key in Settings, or install an add-on."
+    #else
     static let empty = "Home fills with shelves of films and series from your media servers and the TMDB catalogue. Add a media server or a TMDB key in Settings."
+    #endif
 }
 
 /// The banner: a few titles in turn, large, every 9 s while Home shows.

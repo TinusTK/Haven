@@ -89,6 +89,38 @@ extension Library {
         }
     }
 
+    /// Takes the watched marks an account no longer has off this device:
+    /// each (kind, IMDb id, video) under its IMDb id, and the same film or
+    /// episode of a media server's title linked to it (so it is not sent
+    /// back as watched). Partly watched videos keep their place. Says, for
+    /// each, whether anything was taken off.
+    func forgetWatched(_ gone: [(kind: String, titleID: String, videoID: String)]) -> [Bool] {
+        guard !gone.isEmpty else { return [] }
+        // Server titles' finished videos, as the services know them.
+        var links: [String: IMDbLink?] = [:]
+        var linked: [(row: WatchProgress, imdb: String, video: String)] = []
+        for row in ((try? store.allProgress()) ?? []) where row.finished && !TMDB.isIMDbID(row.titleID) {
+            let key = row.kind + "\u{1}" + row.titleID
+            if links[key] == nil { links[key] = .some(imdbLink(kind: row.kind, titleID: row.titleID)) }
+            guard let link = links[key] ?? nil, let ids = link.serviceIDs(kind: row.kind, videoID: row.videoID) else { continue }
+            linked.append((row, ids.titleID, ids.videoID))
+        }
+        return gone.map { item in
+            var any = false
+            let own = item.kind == "series" ? [item.videoID] : ((try? store.finishedVideos(kind: item.kind, titleID: item.titleID)) ?? [])
+            for video in own where (try? store.progress(kind: item.kind, titleID: item.titleID, videoID: video))??.finished == true {
+                if (try? store.removeVideoProgress(kind: item.kind, titleID: item.titleID, videoID: video)) != nil { any = true }
+            }
+            for entry in linked where entry.row.kind == item.kind && entry.imdb == item.titleID
+                && (item.kind != "series" || entry.video == item.videoID) {
+                if (try? store.removeVideoProgress(kind: entry.row.kind, titleID: entry.row.titleID, videoID: entry.row.videoID)) != nil {
+                    any = true
+                }
+            }
+            return any
+        }
+    }
+
     /// Queues what was watched on titles known by a media server's id that
     /// the accounts do not have yet (after a full pull, everything they
     /// have is kept under the IMDb id).

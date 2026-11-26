@@ -188,11 +188,14 @@ fn moment(text: Option<&Value>) -> i64 {
         .map_or(0, |moment| moment.timestamp())
 }
 
-/// Trakt's `/sync/watched/movies` or `/sync/watched/shows` answer.
+/// Trakt's `/sync/watched/movies` or `/sync/watched/shows` answer, or
+/// Simkl's `/sync/all-items/…` one (wrapped in {"movies": […]} or
+/// {"shows": […]}, an episode's time in `watched_at`).
 pub fn read_watched(answer: &Value, series: bool) -> Vec<Watched> {
     let key = if series { "show" } else { "movie" };
     let mut found = Vec::new();
-    for entry in answer.as_array().map(Vec::as_slice).unwrap_or_default() {
+    let entries = answer.as_array().or_else(|| answer.get(if series { "shows" } else { "movies" })?.as_array());
+    for entry in entries.map(Vec::as_slice).unwrap_or_default() {
         let Some(title) = entry.get(key) else { continue };
         let Some(imdb) = title.get("ids").and_then(|ids| ids.get("imdb")).and_then(Value::as_str).filter(|id| is_imdb_id(id)) else {
             continue;
@@ -210,7 +213,7 @@ pub fn read_watched(answer: &Value, series: bool) -> Vec<Watched> {
                     imdb: imdb.to_owned(),
                     title: name.clone(),
                     episode: Some((number as u32, episode_number as u32)),
-                    at: moment(episode.get("last_watched_at")),
+                    at: moment(episode.get("last_watched_at").or_else(|| episode.get("watched_at"))),
                 });
             }
         }
@@ -631,16 +634,21 @@ impl Client {
         }
     }
 
-    /// What the account has watched (Trakt only; Simkl answers empty).
+    /// What the account has watched: films, and each episode of a series.
+    /// Simkl: completed films, and the watched episodes of every series it
+    /// has (whatever its list), with when each was watched.
     pub async fn watched(&self, account: &Account) -> Result<Vec<Watched>> {
-        if account.service != Service::Trakt {
-            return Ok(Vec::new());
-        }
         let headers = self.headers(account)?;
         let mut found = Vec::new();
         for series in [false, true] {
             let what = if series { "shows" } else { "movies" };
-            let url = format!("{}/sync/watched/{what}", trakt_api());
+            let url = match account.service {
+                Service::Trakt => format!("{}/sync/watched/{what}", trakt_api()),
+                Service::Simkl if series => {
+                    simkl_url("/sync/all-items/shows?extended=full&episode_watched_at=yes", self.simkl_key()?)
+                }
+                Service::Simkl => simkl_url("/sync/all-items/movies/completed", self.simkl_key()?),
+            };
             let (status, answer) = self.call(account.service, &url, &headers, None).await?;
             if !(200..300).contains(&status) {
                 return Err(Error::Status(status));
@@ -723,6 +731,22 @@ fn read_trakt_token(answer: &Value, now: i64) -> Option<Account> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn simkls_watched_answer_is_read_like_trakts() {
+        let shows = json!({"shows": [{
+            "status": "watching",
+            "show": {"title": "A Show", "ids": {"simkl": 1, "imdb": "tt9"}},
+            "seasons": [{"number": 1, "episodes": [{"number": 2, "watched_at": "2026-11-20T10:00:00Z"}]}]
+        }]});
+        let found = read_watched(&shows, true);
+        assert_eq!(found.len(), 1);
+        assert_eq!((found[0].imdb.as_str(), found[0].episode), ("tt9", Some((1, 2))));
+        assert!(found[0].at > 0);
+        let films = json!({"movies": [{"last_watched_at": "2026-11-20T10:00:00Z", "movie": {"title": "A Film", "ids": {"imdb": "tt5"}}}]});
+        assert_eq!(read_watched(&films, false)[0].imdb, "tt5");
+        assert!(read_watched(&Value::Null, true).is_empty());
+    }
 
     #[test]
     fn simkl_addresses_carry_the_apps_name_and_version() {
