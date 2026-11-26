@@ -2,69 +2,61 @@ package net.haven.app
 
 import android.app.UiModeManager
 import android.content.res.Configuration
+import android.graphics.Color
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.size
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
+import androidx.compose.runtime.LaunchedEffect
+import net.haven.app.app.AppModel
+import net.haven.app.app.Core
+import net.haven.app.app.WhatsNew
+import net.haven.app.core.AppPaths
+import net.haven.app.core.Log
+import net.haven.app.pictures.Cache
+import net.haven.app.ui.CouldNotStart
+import net.haven.app.ui.HavenTheme
+import net.haven.app.ui.Shell
 
-/** Haven's one window. Section K0: shows that the app starts and libmpv
- *  loads; the real shell comes in K9. */
+/** Haven's one window. The app's state lives as long as the process (see
+ *  [HavenApp.model]), so turning the phone or resizing keeps everything. */
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
-        val tv = (getSystemService(UI_MODE_SERVICE) as UiModeManager).currentModeType ==
-            Configuration.UI_MODE_TYPE_TELEVISION
-        val mpv = Mpv.apiVersion()
-        // K1 check: Haven's data where the Rust build kept it.
-        val paths = net.haven.app.core.AppPaths.of(this)
-        net.haven.app.core.Log.start(paths.logFile)
-        val data = runCatching {
-            net.haven.app.core.Store.open(paths.database).use { store ->
-                "schema ${store.schemaVersion()} · ${store.servers().size} servers · " +
-                    "${store.watchlist().size} on the Watchlist · ${store.allProgress().size} watched · " +
-                    "${store.tvSources().size} Live TV sources · theme ${net.haven.app.core.Settings.load(store).theme}"
+        val tv = (getSystemService(UI_MODE_SERVICE) as UiModeManager).currentModeType == Configuration.UI_MODE_TYPE_TELEVISION
+        val started = HavenApp.model(this)
+        setContent {
+            val model = started.getOrNull()
+            val dark = model?.dark ?: true
+            LaunchedEffect(dark) {
+                val bars = if (dark) SystemBarStyle.dark(Color.TRANSPARENT) else SystemBarStyle.light(Color.TRANSPARENT, Color.TRANSPARENT)
+                enableEdgeToEdge(bars, bars)
             }
-        }.getOrElse { "could not open the data: ${it.message}" }
-        net.haven.app.core.Log.note("data: $data")
-        setContent { Starting(tv = tv, mpv = mpv, data = data) }
+            HavenTheme(dark = dark, tv = tv) {
+                if (model == null) {
+                    CouldNotStart(started.exceptionOrNull()?.message ?: "unknown error")
+                } else {
+                    LaunchedEffect(Unit) { model.start() }
+                    Shell(model)
+                }
+            }
+        }
     }
 }
 
-@Composable
-private fun Starting(tv: Boolean, mpv: Long?, data: String) {
-    Column(
-        modifier = Modifier.fillMaxSize().background(Color(0xFF0D0F14)),
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Image(painterResource(R.drawable.banner), contentDescription = null, modifier = Modifier.size(width = 320.dp, height = 180.dp))
-        Spacer(Modifier.height(16.dp))
-        Text("Haven", color = Color.White, fontSize = 32.sp, fontWeight = FontWeight.Bold)
-        Text(
-            "${BuildConfig.VERSION_NAME} build ${BuildConfig.HAVEN_BUILD} · Kotlin" +
-                (if (tv) " · Android TV" else "") +
-                (mpv?.let { " · libmpv ${it shr 16}.${it and 0xffff}" } ?: " · libmpv missing"),
-            color = Color(0xFFE8B94A),
-            fontSize = 14.sp,
-        )
-        Text(data, color = Color(0xFFB0B4BE), fontSize = 13.sp)
-    }
+/** Opens Haven's data once per process. */
+object HavenApp {
+    private var started: Result<AppModel>? = null
+
+    @Synchronized
+    fun model(activity: ComponentActivity): Result<AppModel> = started ?: runCatching {
+        val paths = AppPaths.of(activity)
+        Log.start(paths.logFile)
+        Log.note("Haven ${BuildConfig.VERSION_NAME} build ${BuildConfig.HAVEN_BUILD} (Kotlin) starting; libmpv ${Mpv.apiVersion()?.let { "${it shr 16}.${it and 0xffff}" } ?: "missing"}")
+        Cache.removeRustCache(paths)
+        val notes = runCatching { activity.assets.open("whats-new.json").bufferedReader().use { it.readText() } }
+            .getOrNull()?.let(WhatsNew::parse)
+        AppModel(Core.open(paths), notes)
+    }.onFailure { Log.note("could not start: ${it.message}") }.also { started = it }
 }

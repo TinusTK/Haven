@@ -97,6 +97,8 @@ android {
         res.srcDirs("../res", "src/main/res")
         // libmpv.so, from ../fetch-libmpv.sh (arm64-v8a/).
         jniLibs.srcDirs("../libmpv-jni")
+        // What's New, from the Rust build's file (one copy for every build).
+        assets.srcDirs(layout.buildDirectory.dir("generated/haven-assets"))
     }
 
     externalNativeBuild {
@@ -120,7 +122,11 @@ val copyLibmpv by tasks.registering(Copy::class) {
     from("../libmpv/arm64-v8a") { include("libmpv.so") }
     into("../libmpv-jni/arm64-v8a")
 }
-tasks.named("preBuild") { dependsOn(copyLibmpv) }
+val copyWhatsNew by tasks.registering(Copy::class) {
+    from("../../app/crates/haven-app/whats-new.json")
+    into(layout.buildDirectory.dir("generated/haven-assets"))
+}
+tasks.named("preBuild") { dependsOn(copyLibmpv, copyWhatsNew) }
 
 dependencies {
     val composeBom = platform("androidx.compose:compose-bom:2025.05.00")
