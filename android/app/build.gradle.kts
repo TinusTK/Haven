@@ -134,6 +134,9 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.8.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    // Chromecast: Google's Cast SDK, and MediaRouter to find the devices
+    implementation("com.google.android.gms:play-services-cast-framework:22.1.0")
+    implementation("androidx.mediarouter:mediarouter:1.7.0")
     // SQLite with the app: the shared database's tables are STRICT, which
     // Android's own SQLite reads only from Android 14 on.
     implementation("androidx.sqlite:sqlite:2.5.1")
