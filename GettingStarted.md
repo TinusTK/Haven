@@ -12,7 +12,9 @@
    also fill with what your servers hold and with the built-in Cinemeta
    catalogue, which needs no key.
 3. For Trakt or Simkl, add your own keys under Settings > Keys, then
-   connect your account under **Tracking**.
+   connect your account under **Tracking**. Link the same account on each
+   device and your Watchlist and what you have watched stay the same on
+   all of them, both ways (Settings › Sync options shows how it stands).
 
 Haven keeps your data (servers, Watchlist, settings) on your own device.
 
