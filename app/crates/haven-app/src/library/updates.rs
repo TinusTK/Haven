@@ -213,7 +213,9 @@ impl Library {
         #[cfg(debug_assertions)]
         let address = std::env::var("HAVEN_UPDATES_AT").unwrap_or(address);
         let http = self.http.clone();
-        let current = env!("CARGO_PKG_VERSION");
+        // This build, as releases are tagged ("0.2.6-build3").
+        let current = concat!(env!("CARGO_PKG_VERSION"), "-build", env!("HAVEN_BUILD"));
+        let shown_current = update::shown(current);
         self.tasks.spawn(async move {
             let headers = [("Accept", "application/vnd.github+json".to_owned())];
             let found = match http::send(&http, &address, &headers, None, 2 * 1024 * 1024).await {
@@ -230,13 +232,13 @@ impl Library {
                 let Some(ui) = library.ui.upgrade() else { return };
                 if let Ok(latest) = &found {
                     ui.set_update_notes(note_lines(&latest.notes));
-                    ui.set_update_notes_version(latest.version.as_str().into());
+                    ui.set_update_notes_version(update::shown(&latest.version).into());
                 }
                 match found {
                     Ok(latest) if update::newer(current, &latest.version) => {
-                        ui.set_update_version(latest.version.as_str().into());
+                        ui.set_update_version(update::shown(&latest.version).into());
                         ui.set_update_status(
-                            format!("Haven {} is out. You have {current}.", latest.version).into(),
+                            format!("Haven {} is out. You have {shown_current}.", update::shown(&latest.version)).into(),
                         );
                         *library.updates.found.borrow_mut() = Some(latest);
                     }
@@ -244,7 +246,7 @@ impl Library {
                         ui.set_update_version("".into());
                         *library.updates.found.borrow_mut() = None;
                         if asked {
-                            ui.set_update_status(format!("You have the newest Haven ({current}).").into());
+                            ui.set_update_status(format!("You have the newest Haven ({shown_current}).").into());
                         }
                     }
                     Err(why) => {
@@ -276,7 +278,7 @@ impl Library {
             return;
         }
         ui.set_update_busy(true);
-        ui.set_update_status(format!("Downloading Haven {}…", latest.version).into());
+        ui.set_update_status(format!("Downloading Haven {}…", update::shown(&latest.version)).into());
         // Beside the picture cache, in Haven's own data folder.
         let folder = self
             .picture_cache
@@ -284,7 +286,7 @@ impl Library {
             .map(|cache| cache.join("updates"))
             .unwrap_or_else(|| self.picture_cache.join("updates"));
         let http = self.http.clone();
-        let version = latest.version.clone();
+        let version = update::shown(&latest.version);
         self.tasks.spawn(async move {
             let said = version.clone();
             let fetched = fetch(&http, &download, folder, move |percent| {

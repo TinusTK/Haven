@@ -50,7 +50,31 @@ fn cut_for_build(source: &str, addons: bool) -> String {
     out
 }
 
+/// This build's number: `HAVEN_BUILD` when set, else `havenBuild` in
+/// android/gradle.properties (where every build's number is kept: the
+/// Kotlin Android app reads it too). Releases are "0.2.6 build N".
+fn build_number() -> String {
+    println!("cargo:rerun-if-env-changed=HAVEN_BUILD");
+    if let Ok(number) = std::env::var("HAVEN_BUILD") {
+        if let Ok(number) = number.trim().parse::<u32>() {
+            return number.to_string();
+        }
+    }
+    let properties = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../android/gradle.properties");
+    println!("cargo:rerun-if-changed={}", properties.display());
+    std::fs::read_to_string(&properties)
+        .ok()
+        .and_then(|text| {
+            text.lines()
+                .filter_map(|line| line.trim().strip_prefix("havenBuild="))
+                .find_map(|number| number.trim().parse::<u32>().ok())
+        })
+        .unwrap_or(1)
+        .to_string()
+}
+
 fn main() {
+    println!("cargo:rustc-env=HAVEN_BUILD={}", build_number());
     let ui = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("ui");
     println!("cargo:rerun-if-changed=ui/app.slint");
     let source = std::fs::read_to_string(ui.join("app.slint")).expect("ui/app.slint is missing");

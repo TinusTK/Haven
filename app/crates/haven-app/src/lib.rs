@@ -71,7 +71,7 @@ pub fn run(paths: AppPaths, phone: bool) -> Result<(), Box<dyn Error>> {
     if tv {
         ui.invoke_remote_start();
     }
-    ui.set_version(env!("CARGO_PKG_VERSION").into());
+    ui.set_version(concat!(env!("CARGO_PKG_VERSION"), " build ", env!("HAVEN_BUILD")).into());
     ui.set_data_path(paths.data_dir().display().to_string().into());
     ui.set_log_path(paths.data_dir().join("haven.log").display().to_string().into());
     ui.set_dark(settings.borrow().theme == ThemeChoice::Dark);

@@ -46,13 +46,37 @@ fn numbers(version: &str) -> Vec<u64> {
         .collect()
 }
 
-/// True if `other` is a later version than `current`.
+/// The build of a version: "0.2.6-build3" is build 3. A release with no
+/// build named ("v0.2.6") is the version's first build.
+fn build_of(version: &str) -> u64 {
+    let lower = version.trim().to_ascii_lowercase();
+    lower
+        .rsplit_once("-build")
+        .and_then(|(_, number)| number.trim().parse().ok())
+        .unwrap_or(1)
+}
+
+/// True if `other` is a later version than `current`. Releases of one
+/// version go by build ("v0.2.6-build4" is newer than "0.2.6-build3"),
+/// since the version is held while builds come out.
 pub fn newer(current: &str, other: &str) -> bool {
     let (mut a, mut b) = (numbers(current), numbers(other));
     let length = a.len().max(b.len());
     a.resize(length, 0);
     b.resize(length, 0);
-    b > a
+    if b != a {
+        return b > a;
+    }
+    build_of(other) > build_of(current)
+}
+
+/// A version as Haven shows it: "0.2.6-build3" reads "0.2.6 build 3".
+pub fn shown(version: &str) -> String {
+    let lower = version.to_ascii_lowercase();
+    match lower.rfind("-build") {
+        Some(at) => format!("{} build {}", &version[..at], &version[at + 6..]),
+        None => version.to_owned(),
+    }
 }
 
 /// What a download for `os` ("windows", "linux", "macos") ends in.
@@ -182,6 +206,16 @@ mod tests {
         assert!(!newer("0.1.8", "v0.1.7"));
         assert!(!newer("0.1.8", "libmpv-win-20261113"));
         assert!(!newer("0.1.8", ""));
+        // Builds of a held version (tags v0.2.6, v0.2.6-build2, …).
+        assert!(newer("0.2.6-build3", "v0.2.6-build4"));
+        assert!(newer("0.2.6", "v0.2.6-build2"));
+        assert!(!newer("0.2.6-build3", "v0.2.6-build3"));
+        assert!(!newer("0.2.6-build3", "v0.2.6-build2"));
+        assert!(!newer("0.2.6-build3", "v0.2.6"));
+        assert!(newer("0.2.6-build9", "v0.2.7"));
+        assert!(!newer("0.2.7", "v0.2.6-build9"));
+        assert_eq!(shown("0.2.6-build4"), "0.2.6 build 4");
+        assert_eq!(shown("0.2.6"), "0.2.6");
     }
 
     #[test]
