@@ -1,7 +1,8 @@
 name: Android (Kotlin)
 
-# The Kotlin Android app in android/ (HavenKotlinmemory.md): builds the
-# GitHub and Google Play flavours and runs the unit tests. The Rust Android
+# The Kotlin Android app in android/ (HavenKotlinmemory.md): runs the unit
+# tests, builds both flavours, and makes the signed GitHub APK and Google
+# Play bundle (artifacts haven-kotlin-android-apk / -store). The Rust Android
 # build stays in build.yml until the Kotlin one replaces it.
 on:
   push:
@@ -46,10 +47,58 @@ jobs:
         run: echo "y" | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;27.2.12479018" > /dev/null
       - name: Unit tests
         run: ./gradlew --no-daemon testGithubDebugUnitTest testPlayDebugUnitTest
-      - name: Build both flavours
+      - name: Build both flavours (debug)
         run: ./gradlew --no-daemon assembleGithubDebug assemblePlayDebug
       - uses: actions/upload-artifact@v4
         with:
           name: haven-kotlin-android-debug
           path: android/app/build/outputs/apk/*/debug/*.apk
+          if-no-files-found: error
+      # The release builds: the GitHub APK signed with Haven's own key (the
+      # Rust APK's, so the Kotlin app installs over it as an update) and the
+      # Google Play bundle signed with the Play upload key. Pull requests
+      # from forks get no secrets and skip this.
+      - name: Signing keys
+        id: keys
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          PLAY_UPLOAD_KEYSTORE_BASE64: ${{ secrets.PLAY_UPLOAD_KEYSTORE_BASE64 }}
+        run: |
+          if [ -z "$ANDROID_KEYSTORE_BASE64" ] || [ -z "$PLAY_UPLOAD_KEYSTORE_BASE64" ]; then
+            echo "No signing keys in this run (a pull request from a fork): no release builds."
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/haven-release.jks"
+          echo "$PLAY_UPLOAD_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/haven-upload.jks"
+          echo "signed=true" >> "$GITHUB_OUTPUT"
+      - name: Build the GitHub APK and the Google Play bundle
+        if: steps.keys.outputs.signed == 'true'
+        env:
+          HAVEN_ANDROID_KEYSTORE: ${{ runner.temp }}/haven-release.jks
+          HAVEN_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          HAVEN_PLAY_KEYSTORE: ${{ runner.temp }}/haven-upload.jks
+          HAVEN_PLAY_KEYSTORE_PASSWORD: ${{ secrets.PLAY_UPLOAD_KEYSTORE_PASSWORD }}
+        run: |
+          ./gradlew --no-daemon assembleGithubRelease bundlePlayRelease
+          rm -f "$RUNNER_TEMP/haven-release.jks" "$RUNNER_TEMP/haven-upload.jks"
+          version="$(sed -n 's/^havenVersion=//p' gradle.properties)-build$(sed -n 's/^havenBuild=//p' gradle.properties)"
+          mkdir -p out/github out/play
+          cp app/build/outputs/apk/github/release/app-github-release.apk "out/github/Haven-$version-android.apk"
+          cp app/build/outputs/bundle/playRelease/app-play-release.aab "out/play/Haven-$version-android-store.aab"
+          # Both must carry Haven's key (CN=Haven), or an update fails.
+          tools="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)"
+          "$tools/apksigner" verify --print-certs out/github/*.apk | grep "CN=Haven"
+          jarsigner -verify -verbose -certs out/play/*.aab | grep -m1 "CN=Haven"
+      - uses: actions/upload-artifact@v4
+        if: steps.keys.outputs.signed == 'true'
+        with:
+          name: haven-kotlin-android-apk
+          path: android/out/github/*.apk
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: steps.keys.outputs.signed == 'true'
+        with:
+          name: haven-kotlin-android-store
+          path: android/out/play/*.aab
           if-no-files-found: error
