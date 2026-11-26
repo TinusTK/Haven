@@ -1,0 +1,12 @@
+{
+  "metas": [
+    { "id": "tt0000001", "type": "movie", "name": "First Light", "poster": "https://images.example/poster/tt0000001.jpg", "releaseInfo": "2026", "imdbRating": "7.2", "description": "A made-up film." },
+    { "id": "tt0000002", "type": "movie", "name": "Second Wind", "poster": "https://images.example/poster/tt0000002.jpg", "releaseInfo": 2024 },
+    { "id": "tt0000003", "type": "movie", "name": "No Poster" },
+    { "id": "tt0000004", "type": "series", "name": "Long Runner", "poster": "https://images.example/poster/tt0000004.jpg", "releaseInfo": "2019-2025", "genres": ["Drama"] },
+    { "type": "movie", "name": "No id, must be skipped" },
+    "not an object"
+  ],
+  "hasMore": true,
+  "cacheMaxAge": 3600
+}

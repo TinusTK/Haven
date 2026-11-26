@@ -43,13 +43,21 @@ android {
         externalNativeBuild { cmake { arguments += "-DANDROID_STL=none" } }
     }
 
-    // Two builds, as today: the GitHub APK and the Google Play one. Both
-    // can bring add-ons in through the Stremio sign-in; Android shows no
-    // add-on screens. They differ in signing and where they go.
+    // Two builds: the GitHub APK has everything; the Google Play one has
+    // the Stremio sign-in (which brings the account's add-ons in) but no
+    // Add-ons page and no installing by address.
     flavorDimensions += "store"
     productFlavors {
-        create("github") { dimension = "store" }
-        create("play") { dimension = "store" }
+        create("github") {
+            dimension = "store"
+            // The Add-ons page and installing an add-on by its address.
+            buildConfigField("boolean", "ADDON_SCREENS", "true")
+        }
+        create("play") {
+            dimension = "store"
+            // Google Play: add-ons only through the Stremio sign-in.
+            buildConfigField("boolean", "ADDON_SCREENS", "false")
+        }
     }
 
     // Haven's Android key (the same one the Rust APK is signed with, so
