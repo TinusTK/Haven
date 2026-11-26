@@ -103,6 +103,8 @@ class Library(
     val serverBoard = ShelfBoard(Board.Servers)
     val catalogBoard = ShelfBoard(Board.Catalog)
     val searchBoard = ShelfBoard(Board.Search)
+    /** Explore's grid of one source at a time. */
+    val explore = Explore(this, scope)
     /** Why search shows nothing (nothing added that can be searched). */
     var searchNote by mutableStateOf("")
         private set
@@ -173,6 +175,7 @@ class Library(
         loadServers()
         startServerRefresh()
         reloadCatalog()
+        explore.rebuild()
     }
 
     fun reloadHistory() {
@@ -182,6 +185,7 @@ class Library(
     fun useKeys(keys: Secrets) {
         this.keys = keys
         reloadCatalog()
+        explore.rebuild()
     }
 
     /** Home came into view or left it: its loading goes on or waits. */
@@ -194,6 +198,7 @@ class Library(
 
     fun loadSources() {
         addons = runCatching { InstalledAddons.load(store) }.getOrDefault(InstalledAddons())
+        explore.rebuild()
     }
 
     /** Asks Cinemeta which catalogues it has now; Home is rebuilt if they changed. */
@@ -201,6 +206,7 @@ class Library(
         val fresh = runCatching { Cinemeta.refresh(store, builtin, catalogues) }.getOrNull() ?: return
         builtin = fresh
         reloadHome()
+        explore.rebuild()
     }
 
     // Shelves
@@ -358,6 +364,7 @@ class Library(
         val list = servers.enabled
         if (list.isEmpty()) {
             serverLibraries = emptyList()
+            explore.rebuild()
             fill(serverBoard, emptyList())
             return
         }
@@ -367,6 +374,7 @@ class Library(
         if (keptLists != null) {
             val plans = ServerAccounts.libraryPlans(keptLists)
             serverLibraries = keptLists.flatMap { (server, libraries) -> libraries.map { server to it } }
+            explore.rebuild()
             shown = plans.map { "${it.title}|${it.source}" }
             fill(serverBoard, plans.map(::plan))
         }
@@ -386,6 +394,7 @@ class Library(
             // The same shelves as the kept ones on screen: those stay.
             if (shown == plans.map { "${it.title}|${it.source}" }) return@launch
             serverLibraries = listed.flatMap { (server, libraries) -> libraries.map { server to it } }
+            explore.rebuild()
             fill(serverBoard, plans.map(::plan))
         }
     }

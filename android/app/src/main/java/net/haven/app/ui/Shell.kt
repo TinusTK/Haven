@@ -127,6 +127,7 @@ fun Shell(model: AppModel) {
 @Composable
 private fun PageView(model: AppModel) {
     if (model.page == Page.Home) return HomePage(model)
+    if (model.page == Page.Explore) return ExplorePage(model)
     val palette = LocalPalette.current
     val tv = LocalTV.current
     Column(Modifier.fillMaxSize().padding(horizontal = if (tv) 0.dp else 16.dp, vertical = 12.dp)) {
@@ -236,9 +237,10 @@ fun TVTabs(page: Page, detailOpen: Boolean, enabled: Boolean, select: (Page) -> 
     LaunchedEffect(enabled) { if (enabled) runCatching { start.requestFocus() } }
     Row(
         Modifier.fillMaxWidth().padding(bottom = 24.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterHorizontally),
+        horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        // Six tabs on one line, whatever the TV's size (they wrapped before).
         Page.entries.forEach { tab ->
             val selected = !detailOpen && page == tab
             val shape = RoundedCornerShape(50)
@@ -249,9 +251,9 @@ fun TVTabs(page: Page, detailOpen: Boolean, enabled: Boolean, select: (Page) -> 
                     .onFocusSelect(enabled) { if (page != tab) select(tab) }
                     .pressable(shape, role = Role.Tab, enabled = enabled) { select(tab) }
                     .semantics { this.selected = selected }
-                    .padding(horizontal = 26.dp, vertical = 12.dp),
+                    .padding(horizontal = 20.dp, vertical = 10.dp),
             ) {
-                Text(tab.label, style = Type.font(24.sp, FontWeight.Bold, if (selected) palette.text else palette.textDim))
+                Text(tab.label, style = Type.font(20.sp, FontWeight.Bold, if (selected) palette.text else palette.textDim), maxLines = 1, softWrap = false)
             }
         }
     }
