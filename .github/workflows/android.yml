@@ -1,0 +1,55 @@
+name: Android (Kotlin)
+
+# The Kotlin Android app in android/ (HavenKotlinmemory.md): builds the
+# GitHub and Google Play flavours and runs the unit tests. The Rust Android
+# build stays in build.yml until the Kotlin one replaces it.
+on:
+  push:
+    branches: [main]
+    paths: ["android/**", ".github/workflows/android.yml"]
+  pull_request:
+    paths: ["android/**", ".github/workflows/android.yml"]
+  workflow_dispatch:
+
+concurrency:
+  group: android-kotlin-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  # No TMDB key is built in: everyone adds their own in Settings › Keys.
+  HAVEN_TRAKT_CLIENT_ID: ${{ secrets.TRAKT_CLIENT_ID }}
+  HAVEN_TRAKT_CLIENT_SECRET: ${{ secrets.TRAKT_CLIENT_SECRET }}
+  HAVEN_SIMKL_CLIENT_ID: ${{ secrets.SIMKL_CLIENT_ID }}
+  HAVEN_OMDB_API_KEY: ${{ secrets.OMDB_API_KEY }}
+
+jobs:
+  android:
+    name: Build and test (GitHub and Google Play flavours)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: android
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: gradle/actions/setup-gradle@v4
+      # Haven's own player: libmpv, from the copy kept as a release of
+      # this repository.
+      - name: Fetch libmpv for Android
+        run: ./fetch-libmpv.sh
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - name: The NDK the bridge is built with
+        run: echo "y" | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;27.2.12479018" > /dev/null
+      - name: Unit tests
+        run: ./gradlew --no-daemon testGithubDebugUnitTest testPlayDebugUnitTest
+      - name: Build both flavours
+        run: ./gradlew --no-daemon assembleGithubDebug assemblePlayDebug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: haven-kotlin-android-debug
+          path: android/app/build/outputs/apk/*/debug/*.apk
+          if-no-files-found: error

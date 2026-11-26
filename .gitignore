@@ -25,6 +25,15 @@ CLAUDE.md
 
 # libmpv for the Android build is fetched, not kept in git
 /android/libmpv/
+/android/libmpv-jni/
+
+# Kotlin Android app: Gradle's own files and build output
+/android/.gradle/
+/android/.kotlin/
+/android/build/
+/android/app/build/
+/android/app/.cxx/
+/android/local.properties
 
 # Swift iPhone app: the Xcode project is made by XcodeGen from
 # iphone/project.yml; build output stays in iphone/build
