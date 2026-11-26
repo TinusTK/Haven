@@ -14,15 +14,24 @@ import net.haven.app.core.Log
 import net.haven.app.core.Settings
 import net.haven.app.core.Store
 import net.haven.app.core.Theme
+import net.haven.app.core.Keys
+import net.haven.app.core.Secrets
+import net.haven.app.library.Library
+import net.haven.app.library.Opening
+import net.haven.app.pictures.Cache
+import net.haven.app.pictures.Kept
+import net.haven.app.tracking.Tracker
 
-/** What Haven opens at start: the data folder and its database. `existing`
- *  is false on a fresh install (no settings saved yet). */
-class Core(val paths: AppPaths, val store: Store, val existing: Boolean) {
+/** What Haven opens at start: the data folder, its database, the service
+ *  keys and the cache. `existing` is false on a fresh install (no settings
+ *  saved yet). */
+class Core(val paths: AppPaths, val store: Store, val existing: Boolean, val secrets: Secrets, val kept: Kept) {
     companion object {
-        fun open(paths: AppPaths): Core {
+        fun open(paths: AppPaths, cacheDir: java.io.File): Core {
             val store = Store.open(paths.database)
             val existing = store.rawValue(Settings.KEY) != null
-            return Core(paths, store, existing)
+            val secrets = runCatching { Keys.load(store) }.getOrDefault(Keys()).resolved(Secrets.fromFile(paths.secretsFile))
+            return Core(paths, store, existing, secrets, Cache.kept(cacheDir))
         }
     }
 }
@@ -41,6 +50,15 @@ class AppModel(val core: Core, val notes: WhatsNew.Notes?) {
         private set
     /** A title's page is open over the pages (no tab is then highlighted). */
     var detailOpen by mutableStateOf(false)
+        private set
+    /** The title whose page is open (its page comes in K12). */
+    var opening by mutableStateOf<Opening?>(null)
+        private set
+    /** The Library's part showing: 0 Local, 1 Downloads, 2 Watchlist, 3 History. */
+    var libraryTab by mutableStateOf(0)
+
+    val tracker = Tracker(core.store, core.secrets)
+    val library = Library(core.store, core.secrets, kept = core.kept)
     /** Settings was tapped again while showing: back to its list (K17). */
     var settingsBackToList by mutableStateOf(0)
         private set
@@ -62,18 +80,71 @@ class AppModel(val core: Core, val notes: WhatsNew.Notes?) {
 
     private var started = false
 
+    init {
+        tracker.watchlistChanged = { scope.launch { library.reloadWatchlist() } }
+        // Marks brought in from the accounts.
+        tracker.watchedChanged = { scope.launch { library.marked() } }
+        // The services go by IMDb id: a title known by a media server's id is
+        // sent under its IMDb id (one with none is not sent).
+        library.queueSync = { what, kind, titleId, videoId ->
+            library.serviceIds(kind, titleId, videoId)?.let { (title, video) -> tracker.queue(what, kind, title, video) }
+        }
+        tracker.pulledAll = { scope.launch { library.sendMissingLinked() } }
+        // Marks taken off on another device go from linked server titles too.
+        tracker.forgetWatched = { gone -> library.forgetWatched(gone) }
+        library.open = { open(it) }
+    }
+
+    /** Starts what works behind the pages, in the Rust build's order. */
     fun start() {
         if (started) return
         started = true
+        library.homeShowing(page == Page.Home)
+        library.start()
+        startupProgress = { library.startupProgress(homeShowing = page == Page.Home && !detailOpen) }
+        tracker.start()
         runSplash()
+    }
+
+    /** Haven came back to the screen. */
+    fun cameBack() {
+        if (!started) return
+        tracker.cameBack()
+        library.cameBack()
+    }
+
+    /** Opens a title's page. */
+    fun open(title: Opening) {
+        opening = title
+        detailOpen = true
+        library.homeShowing(false)
+    }
+
+    fun closeTitle() {
+        opening = null
+        detailOpen = false
+        library.homeShowing(page == Page.Home)
+    }
+
+    /** Opens the Library on one of its parts (Home's row arrows). */
+    fun openLibrary(tab: Int) {
+        libraryTab = tab
+        select(Page.Library)
+    }
+
+    /** Home came into view or left it. */
+    fun homeAppeared(shown: Boolean) {
+        library.homeShowing(shown && !detailOpen)
     }
 
     // Pages
 
     fun select(new: Page) {
         if (new == Page.Settings && page == Page.Settings && !detailOpen) settingsBackToList += 1
+        opening = null
         detailOpen = false
         page = new
+        library.homeShowing(new == Page.Home)
         settings = settings.copy(lastPage = new.ordinal)
         save()
     }

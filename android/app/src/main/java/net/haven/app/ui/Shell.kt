@@ -99,10 +99,13 @@ fun Shell(model: AppModel) {
             }
         }
 
-        // Back steps back: a page other than Home goes to Home first, then
-        // Haven closes (Android's own Back).
-        BackHandler(enabled = model.splashGone && !model.whatsNewShown && model.page != Page.Home) {
-            model.select(Page.Home)
+        // A title's page (K12) lies over the pages.
+        model.opening?.let { TitleStandIn(it.title) { model.closeTitle() } }
+
+        // Back steps back: a title's page closes, a page other than Home goes
+        // to Home, then Haven closes (Android's own Back).
+        BackHandler(enabled = model.splashGone && !model.whatsNewShown && (model.page != Page.Home || model.opening != null)) {
+            if (model.opening != null) model.closeTitle() else model.select(Page.Home)
         }
 
         if (!model.splashGone) {
@@ -119,10 +122,11 @@ fun Shell(model: AppModel) {
     }
 }
 
-/** The page showing. Each page arrives in its own section (K10 Home, K11
- *  Explore, K14 Library, K15 Live TV, K16 Calendar, K17 Settings). */
+/** The page showing. Each page arrives in its own section (K11 Explore,
+ *  K14 Library, K15 Live TV, K16 Calendar, K17 Settings). */
 @Composable
 private fun PageView(model: AppModel) {
+    if (model.page == Page.Home) return HomePage(model)
     val palette = LocalPalette.current
     val tv = LocalTV.current
     Column(Modifier.fillMaxSize().padding(horizontal = if (tv) 0.dp else 16.dp, vertical = 12.dp)) {
@@ -256,3 +260,20 @@ fun TVTabs(page: Page, detailOpen: Boolean, enabled: Boolean, select: (Page) -> 
 /** Calls `select` when the remote lands on this. */
 private fun Modifier.onFocusSelect(enabled: Boolean, select: () -> Unit): Modifier =
     if (!enabled) this else this.onFocusChanged { if (it.isFocused) select() }
+
+/** Stands in for a title's page until K12: its name, and Close. */
+@Composable
+private fun TitleStandIn(title: String, close: () -> Unit) {
+    val palette = LocalPalette.current
+    val focus = remember { FocusRequester() }
+    LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
+    Column(
+        Modifier.fillMaxSize().background(palette.background).safeDrawingPadding().padding(24.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterVertically),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text(title, style = Type.heading(28.sp, palette.text))
+        Text("The title's page comes in the next section.", style = Type.font(14.sp, color = palette.textDim))
+        PrimaryButton("Close", Modifier.focusRequester(focus), onClick = close)
+    }
+}

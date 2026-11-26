@@ -2,7 +2,8 @@ package net.haven.app.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.interaction.collectIsPressedAsState
@@ -33,15 +34,16 @@ fun PageTitle(text: String, modifier: Modifier = Modifier) {
 
 /** Something that can be pressed: by touch it darkens a little while held;
  *  on a TV it shows a gold ring while the remote is on it. */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun Modifier.pressable(shape: Shape, role: Role = Role.Button, enabled: Boolean = true, onClick: () -> Unit): Modifier {
+fun Modifier.pressable(shape: Shape, role: Role = Role.Button, enabled: Boolean = true, onLongClick: (() -> Unit)? = null, onClick: () -> Unit): Modifier {
     val source = remember { MutableInteractionSource() }
     val pressed by source.collectIsPressedAsState()
     val focused by source.collectIsFocusedAsState()
     val palette = LocalPalette.current
     return this
         .border(if (focused) 3.dp else 0.dp, if (focused) palette.accent else Color.Transparent, shape)
-        .clickable(source, indication = null, enabled = enabled, role = role, onClick = onClick)
+        .combinedClickable(source, indication = null, enabled = enabled, role = role, onLongClick = onLongClick, onClick = onClick)
         .alpha(if (pressed) 0.75f else 1f)
 }
 
