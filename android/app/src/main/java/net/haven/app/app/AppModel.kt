@@ -74,6 +74,12 @@ class AppModel(val core: Core, val notes: WhatsNew.Notes?) {
     /** Chromecasts. */
     lateinit var cast: net.haven.app.cast.CastModel
         private set
+    /** Live TV and radio. */
+    val live = net.haven.app.livetv.LiveTVModel(core.store, scope)
+    /** A radio station started (true) or stopped (false): it keeps playing in
+     *  the background meanwhile. */
+    var radio: (Boolean) -> Unit = {}
+
     /** Hands a video to a player app on the phone; false if none could take it. */
     var openElsewhere: (net.haven.app.library.PlayRequest) -> Boolean = { false }
     /** Settings was tapped again while showing: back to its list (K17). */
@@ -118,6 +124,7 @@ class AppModel(val core: Core, val notes: WhatsNew.Notes?) {
         this.player = player
         this.cast = cast
         player.closed = { played ->
+            radio(false)
             library.playerClosed(played)
             // The watched mark goes out and other devices' changes come in.
             tracker.watchedSomething()
@@ -139,6 +146,7 @@ class AppModel(val core: Core, val notes: WhatsNew.Notes?) {
         val other = net.haven.app.player.PlayerRules.OtherPlayer.load(store)
         if (net.haven.app.player.PlayerRules.goesElsewhere(other, request.address)) {
             // Another app does not say how far it got: no resuming with it.
+            // (Radio and TV channels too go to it.)
             val opened = openElsewhere(request)
             if (fromTitle) page.playNote = if (opened) "Opened in your player." else "No player app could open this. Install one (VLC, say), or choose Haven's own player in Settings."
             return
@@ -154,6 +162,7 @@ class AppModel(val core: Core, val notes: WhatsNew.Notes?) {
             if (fromTitle) page.playNote = "Playing here: $why."
         }
         player.play(request)
+        radio(request.kind == "radio")
     }
 
     /** Starts what works behind the pages, in the Rust build's order. */
@@ -164,6 +173,8 @@ class AppModel(val core: Core, val notes: WhatsNew.Notes?) {
         library.start()
         startupProgress = { library.startupProgress(homeShowing = page == Page.Home && !detailOpen) }
         tracker.start()
+        live.play = { play(it) }
+        live.start()
         runSplash()
     }
 

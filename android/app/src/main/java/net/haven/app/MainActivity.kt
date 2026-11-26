@@ -40,13 +40,20 @@ class MainActivity : ComponentActivity() {
                 },
             )
             model.openElsewhere = { request -> openElsewhere(request.address, request.title) }
+            // A radio station keeps playing in the background, with a notification.
+            net.haven.app.player.RadioService.player = model.player
+            model.radio = { on ->
+                if (on) net.haven.app.player.RadioService.start(applicationContext) else net.haven.app.player.RadioService.stop(applicationContext)
+            }
             // A finished download shows in the device's other apps too.
             model.library.downloads.saved = { file -> android.media.MediaScannerConnection.scanFile(applicationContext, arrayOf(file.path), null, null) }
             // Debug builds only: `adb shell am start -n net.haven.app/.MainActivity
-            // --es haven.play <address>` plays an address, to try the player.
+            // --es haven.play <address> [--es haven.kind radio]` plays an
+            // address, to try the player (and radio in the background).
             if (BuildConfig.DEBUG) intent?.getStringExtra("haven.play")?.let { address ->
+                val kind = intent?.getStringExtra("haven.kind") ?: "movie"
                 window.decorView.postDelayed({
-                    model.player.play(net.haven.app.library.PlayRequest(address, "Player check", "", "movie", "debug:play", "debug:play", null, "adb", remember = false))
+                    model.play(net.haven.app.library.PlayRequest(address, "Player check", "", kind, "", "", null, "adb", remember = false))
                 }, 4_000)
             }
         }

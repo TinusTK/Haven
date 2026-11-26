@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Haven's radio icon (IconPaths "radio"), for the radio notification. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp" android:viewportWidth="24" android:viewportHeight="24">
+    <path android:strokeColor="#FFFFFFFF" android:strokeWidth="2" android:fillColor="#00000000"
+        android:pathData="M4 9 H20 a1 1 0 0 1 1 1 V19 a1 1 0 0 1 -1 1 H4 a1 1 0 0 1 -1 -1 V10 a1 1 0 0 1 1 -1 Z M6 9 L17 4 M15.5 12.5 a2.5 2.5 0 1 0 0 5 a2.5 2.5 0 1 0 0 -5 Z M6 13 H11 M6 16 H11" />
+</vector>
