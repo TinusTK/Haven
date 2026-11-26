@@ -59,7 +59,9 @@ jobs:
     concurrency:
       group: iphone-${{ github.ref }}
       cancel-in-progress: false
-    runs-on: macos-latest
+    # GitHub's Xcode 27 image (a preview, macOS 27): the App Store wants
+    # apps built with the iOS 27 / tvOS 27 SDK; macos-latest stops at Xcode 26.6.
+    runs-on: xcode-27
     steps:
       - uses: actions/checkout@v4
       # The newest Xcode on the machine: the App Store wants the newest
@@ -139,7 +141,9 @@ jobs:
     concurrency:
       group: tv-${{ github.ref }}
       cancel-in-progress: false
-    runs-on: macos-latest
+    # GitHub's Xcode 27 image (a preview, macOS 27): the App Store wants
+    # apps built with the iOS 27 / tvOS 27 SDK; macos-latest stops at Xcode 26.6.
+    runs-on: xcode-27
     steps:
       - uses: actions/checkout@v4
       - name: Use the newest Xcode
