@@ -59,6 +59,14 @@ class AppModel(val core: Core, val notes: WhatsNew.Notes?) {
 
     val tracker = Tracker(core.store, core.secrets)
     val library = Library(core.store, core.secrets, kept = core.kept)
+    /** Haven's own player (libmpv); made by the app with the engine for this device. */
+    lateinit var player: net.haven.app.player.PlayerModel
+        private set
+    /** Chromecasts. */
+    lateinit var cast: net.haven.app.cast.CastModel
+        private set
+    /** Hands a video to a player app on the phone; false if none could take it. */
+    var openElsewhere: (net.haven.app.library.PlayRequest) -> Boolean = { false }
     /** Settings was tapped again while showing: back to its list (K17). */
     var settingsBackToList by mutableStateOf(0)
         private set
@@ -93,6 +101,50 @@ class AppModel(val core: Core, val notes: WhatsNew.Notes?) {
         // Marks taken off on another device go from linked server titles too.
         tracker.forgetWatched = { gone -> library.forgetWatched(gone) }
         library.open = { open(it) }
+    }
+
+    /** Gives the app its player and Chromecast link (they need Android). */
+    fun attach(player: net.haven.app.player.PlayerModel, cast: net.haven.app.cast.CastModel) {
+        if (this::player.isInitialized) return
+        this.player = player
+        this.cast = cast
+        player.closed = { played ->
+            library.playerClosed(played)
+            // The watched mark goes out and other devices' changes come in.
+            tracker.watchedSomething()
+        }
+        player.next = { library.playNext(it) }
+        library.dismissPlayer = { player.dismiss() }
+        cast.closed = { played ->
+            library.playerClosed(played)
+            tracker.watchedSomething()
+        }
+        library.play = { play(it) }
+    }
+
+    /** Plays a film or episode: in the player app chosen in Settings, on the
+     *  Chromecast chosen under the places to watch, else in Haven's player. */
+    fun play(request: net.haven.app.library.PlayRequest) {
+        val page = library.title
+        val fromTitle = request.titleId.isNotEmpty()
+        val other = net.haven.app.player.PlayerRules.OtherPlayer.load(store)
+        if (net.haven.app.player.PlayerRules.goesElsewhere(other, request.address)) {
+            // Another app does not say how far it got: no resuming with it.
+            val opened = openElsewhere(request)
+            if (fromTitle) page.playNote = if (opened) "Opened in your player." else "No player app could open this. Install one (VLC, say), or choose Haven's own player in Settings."
+            return
+        }
+        if (cast.chosen != null) {
+            val why = cast.whyNot(request)
+            if (why == null) {
+                cast.cast(request)
+                if (fromTitle) page.playNote = "Playing on ${cast.deviceName}."
+                return
+            }
+            // The Chromecast cannot have this one: it plays here.
+            if (fromTitle) page.playNote = "Playing here: $why."
+        }
+        player.play(request)
     }
 
     /** Starts what works behind the pages, in the Rust build's order. */

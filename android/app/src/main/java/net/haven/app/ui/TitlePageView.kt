@@ -81,7 +81,7 @@ fun TitlePageView(model: AppModel) {
                 Modifier.offset(y = top).padding(horizontal = 12.dp).fillMaxWidth().height(maxOf(maxHeight - top - 10.dp, 0.dp))
                     .clip(shape).background(palette.surface.copy(alpha = 0.96f)).border(1.dp, palette.border, shape),
             ) {
-                if (page.sourcesShown) SourcesList(page, page.sources) else EpisodeList(page)
+                if (page.sourcesShown) SourcesList(page, page.sources, model.cast) else EpisodeList(page)
             }
         }
     }
@@ -297,7 +297,7 @@ private fun EpisodeItem(episode: EpisodeRow, open: () -> Unit, toggle: () -> Uni
 }
 
 @Composable
-private fun SourcesList(page: TitlePage, sources: SourcesPanel) {
+private fun SourcesList(page: TitlePage, sources: SourcesPanel, cast: net.haven.app.cast.CastModel) {
     val palette = LocalPalette.current
     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         PanelHeading(if (page.isSeries && page.episodeLabel.isNotEmpty()) page.episodeLabel else TitleRules.HEADING, page) {
@@ -314,7 +314,7 @@ private fun SourcesList(page: TitlePage, sources: SourcesPanel) {
         if (page.loading && !sources.loading) Text("Loading…", style = Type.font(13.sp, color = palette.textDim))
         if (sources.loading) Text(if (sources.rows.isEmpty()) TitleRules.ASKING else "More are still coming in…", style = Type.font(13.sp, color = palette.textDim))
         if (sources.note.isNotEmpty()) Text(sources.note, style = Type.font(14.sp, color = palette.textDim))
-        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(bottom = 8.dp)) {
+        LazyColumn(Modifier.weight(1f, fill = false), verticalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(bottom = 8.dp)) {
             items(sources.shownRows, key = { it.id }) { row ->
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (row.heading.isNotEmpty()) Text(row.heading, Modifier.padding(top = 6.dp), style = Type.font(13.sp, FontWeight.Bold, palette.accent))
@@ -323,6 +323,24 @@ private fun SourcesList(page: TitlePage, sources: SourcesPanel) {
                 }
             }
         }
+        PlayOn(cast)
+    }
+}
+
+/** Where it plays: this device, or a Chromecast found on the network. */
+@Composable
+private fun PlayOn(cast: net.haven.app.cast.CastModel) {
+    val palette = LocalPalette.current
+    if (LocalTV.current || !cast.available) return
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Box(Modifier.fillMaxWidth().height(1.dp).background(palette.border))
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            item { Text("Play on", style = Type.font(13.sp, color = palette.textDim)) }
+            item { Chip("This device", cast.target < 0) { cast.target = -1 } }
+            items(cast.devices.size) { at -> Chip(cast.devices[at].name, cast.target == at) { cast.target = at } }
+            item { Chip(if (cast.finding) "Looking…" else "Chromecast…", false, enabled = !cast.finding) { cast.find() } }
+        }
+        if (cast.note.isNotEmpty()) Text(cast.note, style = Type.font(12.sp, color = palette.textDim))
     }
 }
 

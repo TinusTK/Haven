@@ -176,6 +176,48 @@ class Library(
         updateWatchNow()
     }
 
+    // After playing
+
+    /** The player closed: what was watched is told to the server and the
+     *  linked accounts, and every tick and Continue Watching put right. */
+    fun playerClosed(played: net.haven.app.player.Played?) {
+        if (played != null) {
+            report(played)
+            if (played.finished) queueSync("watched", played.kind, played.titleId, played.videoId)
+        }
+        title.sources.autoplay = null
+        marked()
+        title.refreshTicks()
+    }
+
+    /** The player wants the next episode: it is opened on the title's page and
+     *  plays from the same place as the last as soon as that answers. False if
+     *  there is no next episode. */
+    fun playNext(played: net.haven.app.player.Played?): Boolean {
+        if (played != null) {
+            report(played)
+            if (played.finished) queueSync("watched", played.kind, played.titleId, played.videoId)
+        }
+        reloadContinue()
+        val next = title.nextVideo ?: return false
+        val last = lastPlayed ?: return false
+        next.season?.let { if (it != title.season) title.showSeason(it) }
+        title.sources.autoplay = last
+        title.openEpisode(next.id)
+        // Nothing to ask: the list is already showing instead.
+        return title.sources.autoplay != null || title.sources.stillAsking
+    }
+
+    /** Tells the media server how far its film or episode was watched. */
+    fun report(played: net.haven.app.player.Played) {
+        if (played.duration <= 0) return
+        val (server, item) = ServerAccounts.serverItem(played.serverItem ?: played.videoId, servers.enabled) ?: return
+        scope.launch {
+            runCatching { serverClient.report(server, item, played.position, played.duration, played.finished) }
+                .onFailure { Log.note("could not tell ${server.name} what was watched: ${Http.words(it)}") }
+        }
+    }
+
     /** Loads what was kept and starts filling Home, in the Rust build's order. */
     fun start() {
         loadSources()

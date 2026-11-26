@@ -66,7 +66,7 @@ import net.haven.app.app.Page
  *  over them the loading screen and What's New. A tap outside a text field
  *  closes the keyboard. */
 @Composable
-fun Shell(model: AppModel) {
+fun Shell(model: AppModel, pictureInPicture: Boolean = false) {
     val palette = LocalPalette.current
     val tv = LocalTV.current
     val focus = LocalFocusManager.current
@@ -99,8 +99,13 @@ fun Shell(model: AppModel) {
             }
         }
 
-        // A title's page lies over the pages.
+        // A title's page lies over the pages, and the player over everything.
         if (model.opening != null) TitlePageView(model)
+        if (model.player.open) {
+            PlayerView(model.player, pictureInPicture)
+            return@BoxWithConstraints
+        }
+        Box(Modifier.align(Alignment.BottomCenter).padding(bottom = if (layout == Layout.Phone) 84.dp else 12.dp).navigationBarsPadding()) { CastBar(model.cast) }
 
         // Back steps back: a title's page closes, a page other than Home goes
         // to Home, then Haven closes (Android's own Back).

@@ -9,4 +9,4 @@ set_target_properties(mpv PROPERTIES
     IMPORTED_NO_SONAME TRUE)
 
 add_library(havenmpv SHARED mpv_bridge.c)
-target_link_libraries(havenmpv mpv log android)
+target_link_libraries(havenmpv mpv log android EGL dl)
