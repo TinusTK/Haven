@@ -1,7 +1,5 @@
 //! Playing with another program instead of Haven's own player: VLC,
-//! mpv or any program the user names (Settings > Player). On Android
-//! the video is handed to whichever player app the user picks; on iOS
-//! to the player app chosen in Settings (VLC, Infuse or Outplayer).
+//! mpv or any program the user names (Settings > Player).
 //!
 //! Another program does not tell Haven how far it got, so there is no
 //! resuming, no Continue Watching and no next episode with it.
@@ -37,7 +35,6 @@ pub struct External {
 
 /// Where a program is usually found on this kind of computer; the
 /// first that exists is used, else the bare name (found on the PATH).
-#[cfg_attr(target_os = "android", allow(dead_code))]
 fn usual(kind: i32) -> Vec<&'static str> {
     match (kind, std::env::consts::OS) {
         (1, "windows") => vec![
@@ -60,7 +57,6 @@ fn usual(kind: i32) -> Vec<&'static str> {
 }
 
 /// The program and what it is told, for a choice and a video.
-#[cfg_attr(target_os = "android", allow(dead_code))]
 fn command(choice: &Choice, address: &str, title: &str) -> Result<(String, Vec<String>), String> {
     // VLC stands in when Haven's own player is chosen but cannot run.
     let kind = if choice.kind == 0 { 1 } else { choice.kind };
@@ -151,7 +147,6 @@ impl External {
         }
     }
 
-    #[cfg(not(target_os = "android"))]
     fn open(&self, address: &str, title: &str) -> Result<(), String> {
         let (program, arguments) = command(&self.choice.borrow(), address, title)?;
         std::process::Command::new(&program)
@@ -167,153 +162,6 @@ impl External {
             })
     }
 
-    /// Android: asks the system to show the video; it offers the player
-    /// apps that are installed (VLC, mpv and so on).
-    #[cfg(target_os = "android")]
-    fn open(&self, address: &str, title: &str) -> Result<(), String> {
-        view(address, Some(title))
-    }
-}
-
-/// Android: hands the app's Java machine to libmpv, which needs it for
-/// the phone's hardware video decoders and its sound output. Called once,
-/// before the player starts.
-#[cfg(all(target_os = "android", feature = "player"))]
-pub(crate) fn player_ready(app: &slint::android::AndroidApp) {
-    #[link(name = "mpv")]
-    unsafe extern "C" {
-        fn av_jni_set_java_vm(vm: *mut std::ffi::c_void, log: *mut std::ffi::c_void) -> i32;
-    }
-    unsafe {
-        av_jni_set_java_vm(app.vm_as_ptr(), std::ptr::null_mut());
-    }
-}
-
-/// Android: the address Haven's own player opens for `address`. A video
-/// from the phone's media list (`content://`) is opened here and handed
-/// over as an open file (`fdclose://<number>`, which mpv closes when it
-/// is done); anything else is returned as it is.
-#[cfg(all(target_os = "android", feature = "player"))]
-pub(crate) fn playable(address: &str) -> String {
-    if !address.starts_with("content://") {
-        return address.to_owned();
-    }
-    match open_content(address) {
-        Ok(fd) => format!("fdclose://{fd}"),
-        Err(why) => {
-            haven_core::diag::note(&format!("player: could not open {address}: {why}"));
-            address.to_owned()
-        }
-    }
-}
-
-/// Opens a `content://` address for reading through the ContentResolver
-/// and returns the file descriptor, now owned by the caller.
-#[cfg(all(target_os = "android", feature = "player"))]
-fn open_content(address: &str) -> Result<i32, String> {
-    use jni::objects::{JObject, JValue};
-    let app = crate::ANDROID.get().ok_or("Android is not ready")?;
-    let failed = |err: jni::errors::Error| format!("Android refused ({err})");
-    let vm = unsafe { jni::JavaVM::from_raw(app.vm_as_ptr().cast()) }.map_err(failed)?;
-    let mut env = vm.attach_current_thread().map_err(failed)?;
-    let activity = unsafe { JObject::from_raw(app.activity_as_ptr().cast()) };
-    let fd = (|| -> Result<i32, jni::errors::Error> {
-        let text = env.new_string(address)?;
-        let uri = env
-            .call_static_method("android/net/Uri", "parse", "(Ljava/lang/String;)Landroid/net/Uri;", &[JValue::Object(&text)])?
-            .l()?;
-        let resolver = env.call_method(&activity, "getContentResolver", "()Landroid/content/ContentResolver;", &[])?.l()?;
-        let mode = env.new_string("r")?;
-        let file = env
-            .call_method(
-                &resolver,
-                "openFileDescriptor",
-                "(Landroid/net/Uri;Ljava/lang/String;)Landroid/os/ParcelFileDescriptor;",
-                &[JValue::Object(&uri), JValue::Object(&mode)],
-            )?
-            .l()?;
-        env.call_method(&file, "detachFd", "()I", &[])?.i()
-    })();
-    if env.exception_check().unwrap_or(false) {
-        let _ = env.exception_clear();
-        return Err("the video could not be opened".to_owned());
-    }
-    fd.map_err(failed)
-}
-
-/// Android: asks the system to show an address. With a `title` it is a
-/// video for a player app; without, a page for the web browser.
-#[cfg(target_os = "android")]
-pub(crate) fn view(address: &str, title: Option<&str>) -> Result<(), String> {
-    {
-        use jni::objects::{JObject, JValue};
-        let app = crate::ANDROID.get().ok_or("Android is not ready")?;
-        let failed = |err: jni::errors::Error| format!("Android refused ({err})");
-        let vm = unsafe { jni::JavaVM::from_raw(app.vm_as_ptr().cast()) }.map_err(failed)?;
-        let mut env = vm.attach_current_thread().map_err(failed)?;
-        let activity = unsafe { JObject::from_raw(app.activity_as_ptr().cast()) };
-        let sent = (|| -> Result<(), jni::errors::Error> {
-            let text = env.new_string(address)?;
-            let uri = env
-                .call_static_method(
-                    "android/net/Uri",
-                    "parse",
-                    "(Ljava/lang/String;)Landroid/net/Uri;",
-                    &[JValue::Object(&text)],
-                )?
-                .l()?;
-            let action = env.new_string("android.intent.action.VIEW")?;
-            let intent =
-                env.new_object("android/content/Intent", "(Ljava/lang/String;)V", &[JValue::Object(&action)])?;
-            // A video from the phone's media list: the player app may read it.
-            if address.starts_with("content://") {
-                env.call_method(&intent, "addFlags", "(I)Landroid/content/Intent;", &[JValue::Int(1)])?;
-            }
-            match title {
-                Some(title) => {
-                    let kind = env.new_string("video/*")?;
-                    env.call_method(
-                        &intent,
-                        "setDataAndType",
-                        "(Landroid/net/Uri;Ljava/lang/String;)Landroid/content/Intent;",
-                        &[JValue::Object(&uri), JValue::Object(&kind)],
-                    )?;
-                    let (key, value) = (env.new_string("title")?, env.new_string(title)?);
-                    env.call_method(
-                        &intent,
-                        "putExtra",
-                        "(Ljava/lang/String;Ljava/lang/String;)Landroid/content/Intent;",
-                        &[JValue::Object(&key), JValue::Object(&value)],
-                    )?;
-                }
-                None => {
-                    env.call_method(
-                        &intent,
-                        "setData",
-                        "(Landroid/net/Uri;)Landroid/content/Intent;",
-                        &[JValue::Object(&uri)],
-                    )?;
-                }
-            }
-            env.call_method(
-                &activity,
-                "startActivity",
-                "(Landroid/content/Intent;)V",
-                &[JValue::Object(&intent)],
-            )?;
-            Ok(())
-        })();
-        // No app that takes it is the usual reason.
-        if env.exception_check().unwrap_or(false) {
-            let _ = env.exception_clear();
-            return Err(if title.is_some() {
-                "no app on this device plays videos: install VLC or mpv".to_owned()
-            } else {
-                "no app on this device opens web pages".to_owned()
-            });
-        }
-        sent.map_err(failed)
-    }
 }
 
 #[cfg(test)]

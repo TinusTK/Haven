@@ -1,6 +1,5 @@
 //! Haven's app: the window, its pages and what drives them. The desktop
-//! program (`main.rs`) and the Android app (`android_main` below) both
-//! start it with [`run`].
+//! program (`main.rs`) starts it with [`run`].
 
 use std::{cell::RefCell, error::Error, rc::Rc};
 
@@ -52,21 +51,16 @@ pub fn run(paths: AppPaths, phone: bool) -> Result<(), Box<dyn Error>> {
     }
 
     let ui = AppWindow::new()?;
-    // A phone or tablet: updates come as a new APK or IPA.
-    // An Android TV (or, for checks on a computer, HAVEN_TV in a debug build).
-    let tv = TV.load(std::sync::atomic::Ordering::Relaxed)
-        || (cfg!(debug_assertions) && std::env::var_os("HAVEN_TV").is_some());
-    ui.set_mobile(cfg!(target_os = "android"));
+    // The big-screen layout with the remote control, for checks on a
+    // computer: HAVEN_TV in a debug build.
+    let tv = cfg!(debug_assertions) && std::env::var_os("HAVEN_TV").is_some();
     ui.set_tv(tv);
     remote::connect(&ui);
-    // A store build (App Store, Google Play): no add-ons.
-    // Android never shows add-on screens: what a Stremio account uses comes
-    // in through the Stremio sign-in in Settings › Accounts instead.
-    ui.set_addons_hidden(library::NO_ADDONS || cfg!(target_os = "android"));
+    // A store build: no add-ons.
+    ui.set_addons_hidden(library::NO_ADDONS);
     ui.set_own_network_only(haven_servers::ONLY_OWN_NETWORK);
     ui.set_compact(phone);
     ui.global::<Theme>().set_phone(phone);
-    ui.global::<Theme>().set_touch(cfg!(target_os = "android") && !tv);
     ui.global::<Remote>().set_on(tv);
     if tv {
         ui.invoke_remote_start();
@@ -178,10 +172,6 @@ pub fn run(paths: AppPaths, phone: bool) -> Result<(), Box<dyn Error>> {
     #[cfg(feature = "player")]
     let own: Option<Rc<dyn Fn(library::PlayRequest)>> = player.clone().map(|playing| {
         Rc::new(move |request: library::PlayRequest| {
-            // Android: a video from the phone's media list is opened here
-            // and handed to the player as an open file.
-            #[cfg(target_os = "android")]
-            let request = library::PlayRequest { address: external::playable(&request.address), ..request };
             playing.play(request)
         }) as Rc<dyn Fn(library::PlayRequest)>
     });
@@ -191,13 +181,7 @@ pub fn run(paths: AppPaths, phone: bool) -> Result<(), Box<dyn Error>> {
     let play = {
         let (external, own) = (external.clone(), own.clone());
         move |request: library::PlayRequest| match &own {
-            // On a phone or tablet, other apps cannot open the files kept
-            // inside Haven (Downloads, and on an iPhone Library > Local):
-            // those always play in Haven's own player.
-            Some(own)
-                if !external.wanted()
-                    || (cfg!(target_os = "android") && !request.address.contains("://")) =>
-            {
+            Some(own) if !external.wanted() => {
                 external.clear();
                 own(request)
             }
@@ -254,40 +238,5 @@ pub fn run(paths: AppPaths, phone: bool) -> Result<(), Box<dyn Error>> {
 fn save(settings: &Settings, store: &Store) {
     if let Err(err) = settings.save(store) {
         eprintln!("haven: could not save settings: {err}");
-    }
-}
-
-/// Android's handle on the running app, for asking the system things.
-/// Haven runs on an Android TV: no touch screen, a remote control.
-static TV: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-
-#[cfg(target_os = "android")]
-static ANDROID: std::sync::OnceLock<slint::android::AndroidApp> = std::sync::OnceLock::new();
-
-/// Android starts Haven here.
-#[cfg(target_os = "android")]
-#[unsafe(no_mangle)]
-fn android_main(app: slint::android::AndroidApp) {
-    let data = app.internal_data_path();
-    let _ = ANDROID.set(app.clone());
-    #[cfg(feature = "player")]
-    external::player_ready(&app);
-    // An Android TV gets the big-screen layout and the remote control,
-    // whatever its size in dp (a 1080p TV counts as 540 dp across).
-    let tv = app.config().ui_mode_type() == slint::android::android_activity::ndk::configuration::UiModeType::Television;
-    TV.store(tv, std::sync::atomic::Ordering::Relaxed);
-    // Under 600 dp across its short side a screen is a phone's; a
-    // tablet has room for the layout a computer gets.
-    let phone = !tv && app.config().smallest_screen_width_dp().is_none_or(|across| across < 600);
-    if let Err(err) = slint::android::init(app) {
-        eprintln!("haven: could not start on Android: {err}");
-        return;
-    }
-    let paths = match data.map(AppPaths::at) {
-        Some(Ok(paths)) => paths,
-        _ => return eprintln!("haven: Android gave no folder for Haven's data"),
-    };
-    if let Err(err) = run(paths, phone) {
-        eprintln!("haven: {err}");
     }
 }

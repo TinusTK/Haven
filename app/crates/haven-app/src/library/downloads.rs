@@ -57,12 +57,6 @@ pub(super) fn downloads_root(data_dir: &Path) -> PathBuf {
     match home {
         Some(home) if cfg!(target_os = "macos") => home.join("Movies").join("Haven"),
         Some(home) if cfg!(any(windows, target_os = "linux")) => home.join("Videos").join("Haven"),
-        _ if cfg!(target_os = "android") => {
-            // The phone's Movies folder, where other apps see them too;
-            // Haven's own folder if Android does not allow it.
-            let movies = PathBuf::from("/storage/emulated/0/Movies/Haven");
-            if std::fs::create_dir_all(&movies).is_ok() { movies } else { data_dir.join("Downloads") }
-        }
         _ => data_dir.join("Downloads"),
     }
 }

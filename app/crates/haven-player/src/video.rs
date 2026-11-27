@@ -360,42 +360,14 @@ impl Video {
         self.incoming = Some(incoming);
         let wake = self.wake.clone();
         // mpv puts its stream cache here but does not make the folder.
-        #[cfg(not(target_os = "android"))]
         let cache = std::env::temp_dir().join("haven-stream");
-        // Android: the app's own cache folder (the system's temporary
-        // folder is not the app's to write to).
-        #[cfg(target_os = "android")]
-        let cache = android_cache().join("haven-stream");
         let _ = std::fs::create_dir_all(&cache);
         std::thread::spawn(move || {
             let made = Mpv::with_initializer(|init| {
                 init.set_property("vo", "libmpv")?;
                 // Decode on the GPU where possible, copy frames back to
                 // memory: no GL interop needed, so it works everywhere.
-                #[cfg(not(target_os = "android"))]
                 init.set_property("hwdec", "auto-copy")?;
-                // Android: the phone's own decoders (MediaCodec), copied
-                // back to memory like the line above. The emulator's
-                // decoder gives mpv no pictures, so it decodes in software.
-                #[cfg(target_os = "android")]
-                init.set_property("hwdec", if android_emulator() { "no" } else { "mediacodec-copy" })?;
-                // Android has no font list for subtitles: a few of the
-                // phone's own fonts (all 200 of them take seconds to look
-                // through, and the app stops answering meanwhile).
-                // Subtitles are sized to the picture, not the tall screen.
-                #[cfg(target_os = "android")]
-                {
-                    let fonts = android_fonts(&cache);
-                    let _ = init.set_property("sub-fonts-dir", fonts.display().to_string());
-                    let _ = init.set_property("osd-fonts-dir", fonts.display().to_string());
-                    let _ = init.set_property("sub-font", "Roboto");
-                    let _ = init.set_property("osd-font", "Roboto");
-                    let _ = init.set_property("sub-scale-by-window", "no");
-                    // A paused picture redrawn through mpv's default
-                    // half-float framebuffer came out black (seen on the
-                    // emulator); 8 bits per colour draws it everywhere.
-                    let _ = init.set_property("fbo-format", "rgba8");
-                }
                 // Don't let mpv's renderer sleep on the UI thread.
                 init.set_property("video-timing-offset", "0")?;
                 // The volume may go up to 200% (mpv stops at 130% unless told).
@@ -857,56 +829,4 @@ impl Video {
             };
         }
     }
-}
-
-/// Android: the app's cache folder, `cache` beside the `files` folder the
-/// system gives the app (`/data/user/0/<app>/cache`). Found from
-/// `/proc/self/cmdline` (the app's package name), so no Java call is needed.
-#[cfg(target_os = "android")]
-fn android_cache() -> std::path::PathBuf {
-    let package = std::fs::read("/proc/self/cmdline")
-        .ok()
-        .and_then(|line| line.split(|b| *b == 0).next().map(|name| String::from_utf8_lossy(name).into_owned()))
-        .unwrap_or_default();
-    let package = package.split(':').next().unwrap_or_default();
-    if package.is_empty() {
-        return std::env::temp_dir();
-    }
-    std::path::Path::new("/data/data").join(package).join("cache")
-}
-
-/// Android: a folder beside the stream cache that links to the phone's
-/// fonts subtitles need most (Latin, Chinese/Japanese/Korean, Arabic,
-/// Hebrew, Thai).
-#[cfg(target_os = "android")]
-fn android_fonts(cache: &std::path::Path) -> std::path::PathBuf {
-    let fonts = cache.with_file_name("haven-fonts");
-    let _ = std::fs::create_dir_all(&fonts);
-    for name in [
-        "Roboto-Regular.ttf",
-        "NotoSansCJK-Regular.ttc",
-        "NotoNaskhArabic-Regular.ttf",
-        "NotoSansHebrew-Regular.ttf",
-        "NotoSansThai-Regular.ttf",
-    ] {
-        let from = std::path::Path::new("/system/fonts").join(name);
-        let to = fonts.join(name);
-        if from.exists() && !to.exists() {
-            let _ = std::os::unix::fs::symlink(&from, &to);
-        }
-    }
-    fonts
-}
-
-/// Android: true on the Android emulator (the system says so in
-/// `ro.kernel.qemu`).
-#[cfg(target_os = "android")]
-fn android_emulator() -> bool {
-    unsafe extern "C" {
-        fn __system_property_get(name: *const std::ffi::c_char, value: *mut std::ffi::c_char) -> i32;
-    }
-    let mut value = [0 as std::ffi::c_char; 92];
-    // SAFETY: the buffer is PROP_VALUE_MAX (92) bytes, as the call needs.
-    let length = unsafe { __system_property_get(c"ro.kernel.qemu".as_ptr(), value.as_mut_ptr()) };
-    length > 0 && value[0] == b'1' as std::ffi::c_char
 }

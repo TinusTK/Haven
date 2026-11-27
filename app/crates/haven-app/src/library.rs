@@ -80,9 +80,8 @@ fn on_ui(work: impl FnOnce(&Rc<Library>) + Send + 'static) {
     });
 }
 
-// The App Store build has no add-ons. The Google Play build has them for
-// the Stremio sign-in (Android shows no add-on screens).
-#[cfg(all(feature = "store", feature = "addons", not(target_os = "android")))]
+// A store build has no add-ons.
+#[cfg(all(feature = "store", feature = "addons"))]
 compile_error!("the App Store build has no add-ons: build it with --no-default-features --features store");
 
 /// Picks the words for this build: `$store` where there are no add-ons,
@@ -230,9 +229,6 @@ impl Pause {
 /// Said when nothing knows the title that was opened.
 const NO_DETAILS: &str =
     words!("There are no details for this title.", "None of your add-ons has details for this title.");
-
-/// A phone or tablet build (updates come as a new APK or IPA).
-pub(crate) const MOBILE: bool = cfg!(target_os = "android");
 
 /// A build without add-ons (the App Store build): no
 /// add-on code, no Add-ons page, never a word about add-ons. Every other

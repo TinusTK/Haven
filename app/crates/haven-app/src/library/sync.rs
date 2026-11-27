@@ -31,16 +31,12 @@ use serde::{Deserialize, Serialize};
 use super::{Library, on_ui};
 
 const OPTIONS: &str = "sync_options";
-/// A phone or tablet, where sync is paced to save battery.
-const PHONE: bool = cfg!(target_os = "android");
-/// How long after a change the queue is sent (on a phone, so changes
-/// travel together).
-const AFTER_A_CHANGE: Duration = Duration::from_secs(if PHONE { 20 } else { 2 });
+/// How long after a change the queue is sent.
+const AFTER_A_CHANGE: Duration = Duration::from_secs(2);
 /// How long after start the first sync runs (Home loads first).
-const AFTER_START: Duration = Duration::from_secs(if PHONE { 8 } else { 3 });
-/// Bring things in this often while Haven is open: a quarter of an hour
-/// on a computer, half an hour on a phone.
-const PULL_WHILE_OPEN: Duration = Duration::from_secs(if PHONE { 30 * 60 } else { 15 * 60 });
+const AFTER_START: Duration = Duration::from_secs(3);
+/// Bring things in this often while Haven is open: a quarter of an hour.
+const PULL_WHILE_OPEN: Duration = Duration::from_secs(15 * 60);
 /// How long after a video closes what the accounts hold is brought in
 /// (the watched mark goes out first, with it).
 const AFTER_WATCHING: Duration = Duration::from_secs(5);
@@ -445,12 +441,8 @@ impl Library {
         ui.set_sync_busy(self.sync.running.get());
         ui.set_sync_linked(!syncing.is_empty());
         ui.set_sync_note(
-            if PHONE {
-                "Changes go out in one go shortly after they happen. Haven brings in your accounts' Watchlist and what you watched when it opens, after you watch something, and every half hour while it is open. What you take off or mark unwatched on one device goes on the others too. Nothing runs while Haven is closed, so it barely touches the battery."
-            } else {
-                "Changes go out straight away. Haven brings in your accounts' Watchlist and what you watched when it starts, after you watch something, and every 15 minutes while it is open. What you take off or mark unwatched on one device goes on the others too."
-            }
-            .into(),
+            "Changes go out straight away. Haven brings in your accounts' Watchlist and what you watched when it starts, after you watch something, and every 15 minutes while it is open. What you take off or mark unwatched on one device goes on the others too."
+                .into(),
         );
     }
 }

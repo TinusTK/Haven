@@ -15,8 +15,3 @@ thiserror.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
-
-# Android: the system's certificate check needs Java glue Haven's APK
-# does not carry, so the certificate authorities come built in instead.
-[target.'cfg(target_os = "android")'.dependencies]
-webpki-roots = "1"

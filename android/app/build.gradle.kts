@@ -93,11 +93,9 @@ android {
     }
 
     sourceSets["main"].apply {
-        // Haven's icons, shared with the Rust build until it goes.
-        res.srcDirs("../res", "src/main/res")
         // libmpv.so, from ../fetch-libmpv.sh (arm64-v8a/).
         jniLibs.srcDirs("../libmpv-jni")
-        // What's New, from the Rust build's file (one copy for every build).
+        // What's New, from the desktop app's file (one copy for every build).
         assets.srcDirs(layout.buildDirectory.dir("generated/haven-assets"))
     }
 
@@ -116,8 +114,7 @@ android {
 // Compiled for Java 17 by whichever JDK runs Gradle (21 here and in CI).
 kotlin { compilerOptions { jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17) } }
 
-// jniLibs wants ABI folders only: libmpv's arm64-v8a, without the Rust
-// build's link stand-in (../libmpv/stub).
+// jniLibs wants ABI folders only: libmpv's arm64-v8a.
 val copyLibmpv by tasks.registering(Copy::class) {
     from("../libmpv/arm64-v8a") { include("libmpv.so") }
     into("../libmpv-jni/arm64-v8a")

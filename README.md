@@ -2,9 +2,9 @@
 
 A media player for your own **Jellyfin, Emby and Plex** servers and for
 **IPTV**, and a **film and TV show tracker**. One app for Windows, macOS,
-Linux, Android, iPhone, iPad and Apple TV. The computer and Android apps
-are written in Rust with [Slint](https://slint.dev); the iPhone, iPad and
-Apple TV apps in Swift.
+Linux, Android, iPhone, iPad and Apple TV. The computer apps are written in
+Rust with [Slint](https://slint.dev), the Android app in Kotlin, and the
+iPhone, iPad and Apple TV apps in Swift.
 
 Haven plays what you already have: it does not host, sell or supply any
 films, shows or channels.

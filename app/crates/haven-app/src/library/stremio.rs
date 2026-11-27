@@ -18,15 +18,12 @@ use super::{Library, on_ui};
 use crate::AppWindow;
 
 const KEY: &str = "stremio_account";
-/// On a computer: the add-on addresses the account brought in.
+/// The add-on addresses the account brought in.
 const FOLLOWED: &str = "stremio_followed";
 
 /// Whether this build offers the Stremio sign-in: every build with add-ons
-/// (Android, where the add-on screens are hidden, and computers; user
-/// 2026-11-25).
+/// (user 2026-11-25).
 pub(crate) const SHOWN: bool = true;
-/// Android: the whole installed list is the account's.
-const WHOLE_LIST: bool = cfg!(target_os = "android");
 
 impl Library {
     pub(super) fn start_stremio(self: &Rc<Self>, ui: &AppWindow) {
@@ -123,14 +120,9 @@ impl Library {
     /// Makes what is installed match the account's list.
     fn follow_stremio(&self, listed: &[Listed]) {
         let have: Vec<String> = self.store.addons().unwrap_or_default().into_iter().map(|a| a.url).collect();
-        let (add, remove) = if WHOLE_LIST {
-            stremio::changes(&have, listed)
-        } else {
-            let followed: Vec<String> = self.store.get(FOLLOWED).ok().flatten().unwrap_or_default();
-            let (add, remove, kept) = stremio::followed_changes(&have, &followed, listed);
-            let _ = if kept.is_empty() { self.store.remove(FOLLOWED) } else { self.store.put(FOLLOWED, &kept) };
-            (add, remove)
-        };
+        let followed: Vec<String> = self.store.get(FOLLOWED).ok().flatten().unwrap_or_default();
+        let (add, remove, kept) = stremio::followed_changes(&have, &followed, listed);
+        let _ = if kept.is_empty() { self.store.remove(FOLLOWED) } else { self.store.put(FOLLOWED, &kept) };
         if add.is_empty() && remove.is_empty() {
             return;
         }

@@ -52,7 +52,7 @@ fn cut_for_build(source: &str, addons: bool) -> String {
 
 /// This build's number: `HAVEN_BUILD` when set, else `havenBuild` in
 /// android/gradle.properties (where every build's number is kept: the
-/// Kotlin Android app reads it too). Releases are "0.2.6 build N".
+/// Android app reads it too). Releases are "0.2.6 build N".
 fn build_number() -> String {
     println!("cargo:rerun-if-env-changed=HAVEN_BUILD");
     if let Ok(number) = std::env::var("HAVEN_BUILD") {
@@ -97,27 +97,6 @@ fn main() {
                 println!("cargo:rustc-link-arg=-Wl,-rpath,{}", own.display());
             }
         }
-    }
-
-    // Android: Haven's library laid out for 16 KB memory pages, which
-    // Google Play requires of apps for Android 15 and newer (it runs on
-    // 4 KB phones too). Set here because cargo-apk overrides RUSTFLAGS.
-    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("android") {
-        println!("cargo:rustc-link-arg=-Wl,-z,max-page-size=16384");
-    }
-
-    // Android: libmpv from android/fetch-libmpv.sh, packed into the APK
-    // beside Haven (`runtime_libs` in Cargo.toml). Haven links against the
-    // stand-in made next to it, which has only mpv's own functions.
-    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("android")
-        && std::env::var_os("CARGO_FEATURE_PLAYER").is_some()
-    {
-        let own = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../android/libmpv");
-        println!("cargo:rerun-if-changed={}", own.display());
-        if !own.join("arm64-v8a/libmpv.so").exists() || !own.join("stub/libmpv.so").exists() {
-            panic!("no libmpv for Android: run android/fetch-libmpv.sh first");
-        }
-        println!("cargo:rustc-link-search=native={}", own.join("stub").display());
     }
 
     // Put the icon inside haven.exe (File Explorer, taskbar, Alt+Tab).

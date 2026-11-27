@@ -22,18 +22,7 @@ pub enum HttpError {
 pub fn client() -> Result<reqwest::Client, HttpError> {
     // Fails only if a provider is already installed, which is fine.
     let _ = rustls::crypto::ring::default_provider().install_default();
-    let builder = reqwest::Client::builder();
-    // Android: check servers against the built-in list of certificate
-    // authorities (the system's own check cannot be reached from here).
-    #[cfg(target_os = "android")]
-    let builder = {
-        let mut roots = rustls::RootCertStore::empty();
-        roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-        let mut tls = rustls::ClientConfig::builder().with_root_certificates(roots).with_no_client_auth();
-        tls.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
-        builder.tls_backend_preconfigured(tls)
-    };
-    Ok(builder
+    Ok(reqwest::Client::builder()
         .user_agent(concat!("Haven/", env!("CARGO_PKG_VERSION")))
         .connect_timeout(Duration::from_secs(10))
         .timeout(Duration::from_secs(30))

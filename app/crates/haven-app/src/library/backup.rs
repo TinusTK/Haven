@@ -60,24 +60,12 @@ fn backup_folder() -> (PathBuf, String) {
             return (PathBuf::from(folder).join("backup"), "the test data folder".to_owned());
         }
     }
-    #[cfg(target_os = "android")]
-    {
-        let shared = PathBuf::from("/storage/emulated/0/Documents/Haven");
-        if std::fs::create_dir_all(&shared).is_ok() {
-            return (shared, "Documents › Haven on this phone".to_owned());
-        }
-        let own = PathBuf::from("/storage/emulated/0/Android/data/net.haven.app/files");
-        return (own, "Android › data › net.haven.app on this phone".to_owned());
-    }
-    #[cfg(not(target_os = "android"))]
-    {
-        let documents = directories::UserDirs::new()
-            .and_then(|dirs| dirs.document_dir().map(PathBuf::from))
-            .unwrap_or_else(|| PathBuf::from("."));
-        let folder = documents.join("Haven");
-        let words = folder.display().to_string();
-        (folder, words)
-    }
+    let documents = directories::UserDirs::new()
+        .and_then(|dirs| dirs.document_dir().map(PathBuf::from))
+        .unwrap_or_else(|| PathBuf::from("."));
+    let folder = documents.join("Haven");
+    let words = folder.display().to_string();
+    (folder, words)
 }
 
 fn when(at: i64) -> String {
@@ -131,14 +119,7 @@ impl Library {
             format!("Last backed up {} to {place}.", when(last))
         };
         ui.set_backup_status(status.into());
-        ui.set_backup_where(
-            if cfg!(target_os = "android") {
-                "On this phone"
-            } else {
-                "Documents folder"
-            }
-            .into(),
-        );
+        ui.set_backup_where("Documents folder".into());
         ui.set_backup_busy(self.backup.busy.get());
     }
 
