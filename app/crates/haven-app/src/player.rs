@@ -98,6 +98,8 @@ pub struct Player {
     fit: Cell<i32>,
     subtitle_delay: Cell<f64>,
     ticker: Timer,
+    /// When the sound was last written to the log.
+    sound_noted: Cell<Option<std::time::Instant>>,
 }
 
 impl Player {
@@ -133,6 +135,7 @@ impl Player {
             fit: Cell::new(0),
             subtitle_delay: Cell::new(0.0),
             ticker: Timer::default(),
+            sound_noted: Cell::new(None),
         });
         player.show_settings();
         ui.set_player_audio(ModelRc::from(player.audio.clone()));
@@ -285,6 +288,24 @@ impl Player {
             preferences.volume = volume.clamp(0.0, preferences.top());
             preferences.muted = false;
         });
+        self.note_sound();
+    }
+
+    /// Writes what mpv does with the sound to the log, at most once a
+    /// second while the volume is dragged (a volume that changes nothing
+    /// on one machine: user, Windows, 2026-11-27).
+    fn note_sound(&self) {
+        let now = std::time::Instant::now();
+        if self.sound_noted.get().is_some_and(|last| now.duration_since(last).as_secs_f64() < 1.0) {
+            return;
+        }
+        self.sound_noted.set(Some(now));
+        if let Some(report) = self.video.borrow().sound_report() {
+            haven_core::diag::note(&format!(
+                "sound: asked {:.0}% -> {report}",
+                self.preferences.get().volume * 100.0
+            ));
+        }
     }
 
     fn toggle_mute(&self) {

@@ -747,6 +747,28 @@ impl Video {
         }
     }
 
+    /// One line on what happens to the sound, for the log: the volume
+    /// mpv holds, whether it is muted, the sound output and the format
+    /// the sound reaches it in (an `spdif-…` format is passed through
+    /// to a receiver untouched, so the volume cannot change it).
+    pub fn sound_report(&self) -> Option<String> {
+        let mpv = self.mpv?;
+        let text = |name: &str| mpv.get_property::<String>(name).unwrap_or_else(|_| "-".to_owned());
+        Some(format!(
+            "volume={} mute={} volume-max={} ao={} ao-volume={} out={} {} codec={} spdif=\"{}\" af=\"{}\"",
+            text("volume"),
+            text("mute"),
+            text("volume-max"),
+            text("current-ao"),
+            text("ao-volume"),
+            text("audio-out-params/format"),
+            text("audio-out-params/hr-channels"),
+            text("audio-codec-name"),
+            text("audio-spdif"),
+            text("af"),
+        ))
+    }
+
     pub fn set_muted(&self, muted: bool) {
         if let Some(mpv) = self.mpv {
             let _ = mpv.set_property("mute", muted);
