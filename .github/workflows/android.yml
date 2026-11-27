@@ -1,9 +1,9 @@
-name: Android (Kotlin)
+name: Android
 
-# The Kotlin Android app in android/ (HavenKotlinmemory.md): runs the unit
-# tests, builds both flavours, and makes the signed GitHub APK and Google
-# Play bundle (artifacts haven-kotlin-android-apk / -store). The Rust Android
-# build stays in build.yml until the Kotlin one replaces it.
+# The Android app in android/ (Kotlin): runs the unit tests, builds both
+# flavours, and makes the signed GitHub APK and Google Play bundle
+# (artifacts haven-android-apk / haven-android-store). It runs only when
+# android/ or this file changes, so the desktop and iPhone builds don't.
 on:
   push:
     branches: [main]
@@ -51,7 +51,7 @@ jobs:
         run: ./gradlew --no-daemon assembleGithubDebug assemblePlayDebug
       - uses: actions/upload-artifact@v4
         with:
-          name: haven-kotlin-android-debug
+          name: haven-android-debug
           path: android/app/build/outputs/apk/*/debug/*.apk
           if-no-files-found: error
       # The release builds: the GitHub APK signed with Haven's own key (the
@@ -93,12 +93,12 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: steps.keys.outputs.signed == 'true'
         with:
-          name: haven-kotlin-android-apk
+          name: haven-android-apk
           path: android/out/github/*.apk
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         if: steps.keys.outputs.signed == 'true'
         with:
-          name: haven-kotlin-android-store
+          name: haven-android-store
           path: android/out/play/*.aab
           if-no-files-found: error

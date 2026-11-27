@@ -27,6 +27,9 @@ env:
 
 # The iPhone and iPad app is the Swift one in iphone/, built by
 # iphone.yml. The old Rust iOS code was removed (0.2.6 build 3).
+# The Android app is the Kotlin one in android/, built by android.yml;
+# this workflow no longer builds Android, so a push that changes only
+# android/ runs none of these builds.
 jobs:
   # Which builds this run needs. The shared Rust code (app/) or this file
   # runs all five; a platform's own folder runs only that platform.
@@ -38,7 +41,6 @@ jobs:
       windows: ${{ steps.pick.outputs.windows }}
       linux: ${{ steps.pick.outputs.linux }}
       macos: ${{ steps.pick.outputs.macos }}
-      android: ${{ steps.pick.outputs.android }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -57,7 +59,6 @@ jobs:
           pick windows '^windows/'
           pick linux '^linux/'
           pick macos '^mac/'
-          pick android '^android/'
 
   windows:
     name: Windows
@@ -258,152 +259,4 @@ jobs:
         with:
           name: haven-macos-dmg
           path: app/target/macos/*.dmg
-          if-no-files-found: error
-
-  android:
-    name: Android
-    needs: changes
-    if: needs.changes.outputs.android == 'true'
-    concurrency:
-      group: build-android-${{ github.ref }}
-      cancel-in-progress: true
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: app
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-linux-android
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: app
-          key: android
-      - name: Install cargo-apk
-        run: cargo install cargo-apk --locked
-      # Haven's own player: libmpv, from the copy kept as a release of
-      # this repository.
-      - name: Fetch libmpv for Android
-        run: ../android/fetch-libmpv.sh
-        env:
-          GH_TOKEN: ${{ github.token }}
-      # The APK is signed with Haven's own key, kept in the repository's
-      # secrets, so that a newer one installs over an older one. Pull
-      # requests from forks get no secrets: their APK is signed with a
-      # throwaway key made here, fine for testing but it cannot update
-      # a real Haven. The build machine already has the Android SDK and NDK.
-      - name: Build the APK
-        id: apk
-        env:
-          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-          CARGO_APK_RELEASE_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-        run: |
-          keystore="$RUNNER_TEMP/haven-release.jks"
-          if [ -n "$ANDROID_KEYSTORE_BASE64" ]; then
-            echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$keystore"
-            suffix=android
-            echo "signed=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "No signing key in this run (a pull request from a fork): signing with a throwaway key."
-            export CARGO_APK_RELEASE_KEYSTORE_PASSWORD="throwaway"
-            keytool -genkeypair -keystore "$keystore" -storepass throwaway -keypass throwaway \
-              -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 1 -dname "CN=Haven test build"
-            suffix=android-test
-          fi
-          export CARGO_APK_RELEASE_KEYSTORE="$keystore"
-          cargo apk build -p haven-app --lib --release --features player
-          rm -f "$keystore"
-          version="$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json,sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"]=="haven-app"))')"
-          mkdir -p target/android
-          cp target/release/apk/haven_app.apk "target/android/Haven-$version-$suffix.apk"
-      - name: Check the APK's signature
-        if: steps.apk.outputs.signed == 'true'
-        run: |
-          tools="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)"
-          "$tools/apksigner" verify --print-certs target/android/*.apk | grep "CN=Haven"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: haven-android-apk
-          path: app/target/android/*.apk
-          if-no-files-found: error
-
-  android-store:
-    name: Android (Google Play build)
-    needs: changes
-    if: needs.changes.outputs.android == 'true'
-    concurrency:
-      group: build-android-store-${{ github.ref }}
-      cancel-in-progress: true
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: app
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-linux-android
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: app
-          key: android-store
-      - name: Install cargo-apk
-        run: cargo install cargo-apk --locked
-      # Haven's own player: libmpv, from the copy kept as a release of
-      # this repository.
-      - name: Fetch libmpv for Android
-        run: ../android/fetch-libmpv.sh
-        env:
-          GH_TOKEN: ${{ github.token }}
-      # Signed with the Google Play upload key from the secrets when there
-      # is one, else with a throwaway key (fine for testing only).
-      - name: Build the store APK
-        env:
-          PLAY_UPLOAD_KEYSTORE_BASE64: ${{ secrets.PLAY_UPLOAD_KEYSTORE_BASE64 }}
-          PLAY_UPLOAD_KEYSTORE_PASSWORD: ${{ secrets.PLAY_UPLOAD_KEYSTORE_PASSWORD }}
-        run: |
-          keystore="$RUNNER_TEMP/haven-upload.jks"
-          if [ -n "$PLAY_UPLOAD_KEYSTORE_BASE64" ]; then
-            echo "$PLAY_UPLOAD_KEYSTORE_BASE64" | base64 -d > "$keystore"
-            export CARGO_APK_RELEASE_KEYSTORE_PASSWORD="$PLAY_UPLOAD_KEYSTORE_PASSWORD"
-            suffix=android-store
-          else
-            echo "No Google Play upload key in the secrets: signing with a throwaway key."
-            export CARGO_APK_RELEASE_KEYSTORE_PASSWORD="throwaway"
-            keytool -genkeypair -keystore "$keystore" -storepass throwaway -keypass throwaway \
-              -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 1 -dname "CN=Haven test build"
-            suffix=android-store-test
-          fi
-          export CARGO_APK_RELEASE_KEYSTORE="$keystore"
-          # Google Play: like the GitHub APK (media servers at any address,
-          # the Stremio sign-in), but built separately and signed with the
-          # Play upload key. Android shows no add-on screens or wording.
-          cargo apk build -p haven-app --lib --release --no-default-features --features player,addons
-          version="$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json,sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"]=="haven-app"))')"
-          mkdir -p target/android-store
-          cp target/release/apk/haven_app.apk "target/android-store/Haven-$version-$suffix.apk"
-          # Google Play takes an app bundle (AAB), which cargo-apk does not
-          # make: the APK's parts are turned into a bundle's with aapt2 and
-          # bundletool (Google's, checksum-pinned), then signed with the
-          # same key. Haven has no Java code, so Play's automatic
-          # protection must stay off for it.
-          tools="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)"
-          curl -sSfL -o "$RUNNER_TEMP/bundletool.jar" https://github.com/google/bundletool/releases/download/1.18.3/bundletool-all-1.18.3.jar
-          echo "a099cfa1543f55593bc2ed16a70a7c67fe54b1747bb7301f37fdfd6d91028e29  $RUNNER_TEMP/bundletool.jar" | sha256sum -c -
-          work="$RUNNER_TEMP/aab" && rm -rf "$work" && mkdir -p "$work/base"
-          "$tools/aapt2" convert --output-format proto -o "$work/proto.apk" target/release/apk/haven_app.apk
-          (cd "$work/base" && unzip -q ../proto.apk && mkdir manifest && mv AndroidManifest.xml manifest/ && rm -rf META-INF && zip -qr ../base.zip .)
-          aab="target/android-store/Haven-$version-$suffix.aab"
-          java -jar "$RUNNER_TEMP/bundletool.jar" build-bundle --modules="$work/base.zip" --output="$aab"
-          alias="$(keytool -list -keystore "$keystore" -storepass "$CARGO_APK_RELEASE_KEYSTORE_PASSWORD" | awk -F, '/PrivateKeyEntry/ {print $1; exit}')"
-          jarsigner -keystore "$keystore" -storepass "$CARGO_APK_RELEASE_KEYSTORE_PASSWORD" -sigalg SHA256withRSA -digestalg SHA-256 "$aab" "$alias"
-          jarsigner -verify "$aab" | tail -1
-          rm -f "$keystore"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: haven-android-store
-          path: |
-            app/target/android-store/*.apk
-            app/target/android-store/*.aab
           if-no-files-found: error
